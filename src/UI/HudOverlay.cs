@@ -1,0 +1,205 @@
+using Godot;
+
+namespace Ridgeline;
+
+/// <summary>Draws the sight picture (red dot or 4x scope) where the weapon actually points, plus the compass.</summary>
+public partial class HudOverlay : Control
+{
+    /// <summary>A world position to mark on the compass (the KOTH zone).</summary>
+    public static Vector3? Marker;
+
+    static readonly string[] Cardinals = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
+
+    public override void _Draw()
+    {
+        var hud = Hud.I;
+        if (hud == null) return;
+        var p = hud.P;
+        if (p == null || !IsInstanceValid(p) || !p.Alive) return;
+        var w = p.Weapon;
+        var size = GetViewportRect().Size;
+
+        if (p.Ride != null)
+        {
+            DrawVehicle(size, p);
+            DrawCompass(size, p.Heading);
+            if (Marker is Vector3 vm) DrawMarker(size, p, vm);
+            return;
+        }
+        var aimPoint = p.Cam.GlobalPosition + w.AimDir * 300f;
+        var c = p.Cam.IsPositionBehind(aimPoint) ? size / 2f : p.Cam.UnprojectPosition(aimPoint);
+
+        if (w.Def.Guided && w.AimT > 0.55f)
+        {
+            // Seeker: a box on whatever it's tracking, solid when locked.
+            if (w.LockTarget is Vehicle lt && !p.Cam.IsPositionBehind(lt.Center))
+            {
+                var q = p.Cam.UnprojectPosition(lt.Center);
+                var col = w.LockProgress >= 1f ? new Color(1f, 0.25f, 0.2f) : new Color(1f, 0.85f, 0.3f, 0.5f + 0.5f * w.LockProgress);
+                DrawRect(new Rect2(q - new Vector2(18, 18), new Vector2(36, 36)), col, false, 2f);
+                DrawString(ThemeDB.FallbackFont, q + new Vector2(22, 5), w.LockProgress >= 1f ? "LOCK" : "tracking", HorizontalAlignment.Left, -1, 13, col);
+            }
+            DrawArc(c, 40f, 0f, Mathf.Tau, 48, new Color(0.1f, 1f, 0.3f, 0.6f), 1.2f);
+        }
+        else if (w.Def.Explosive && w.AimT > 0.55f) DrawLadder(c, size, p.Cam.Fov, (w.AimT - 0.55f) / 0.45f, w.Def);
+        else if (w.Def.Scoped && w.AimT > 0.92f) DrawScope(c, size, p.Cam.Fov);
+        else if (!w.Def.Scoped && w.AimT > 0.55f)
+        {
+            float a = (w.AimT - 0.55f) / 0.45f;
+            DrawCircle(c, 5f, new Color(1f, 0.1f, 0.05f, 0.25f * a));
+            DrawCircle(c, 2f, new Color(1f, 0.15f, 0.1f, a));
+        }
+        DrawCompass(size, p.Heading);
+        if (Marker is Vector3 m) DrawMarker(size, p, m);
+    }
+
+    /// <summary>
+    /// The 40 mm leaf sight: a mark per range. Put the mark for the target's range on
+    /// the target. Zeroed at 100 m, so nearer marks sit above the centre, further below.
+    /// </summary>
+    void DrawLadder(Vector2 c, Vector2 size, float fov, float a, WeaponDef def)
+    {
+        float pxPerRad = size.Y * 0.5f / MathF.Tan(Mathf.DegToRad(fov * 0.5f));
+        float v = def.MuzzleVel;
+        float El(float r) => def.Drag > 0f ? Ballistics.ZeroAngle(v, def.Drag, r) : 0.5f * MathF.Asin(Mathf.Clamp(9.81f * r / (v * v), 0f, 1f));
+        float zero = El(def.ZeroM);
+        var ink = new Color(0.1f, 1f, 0.3f, 0.85f * a);
+        DrawLine(c + new Vector2(0, -12), c + new Vector2(0, 12), ink, 1.2f);
+        foreach (int r in def.Rocket ? new[] { 100, 150, 200, 250, 300, 400 } : new[] { 50, 100, 150, 200, 250, 300 })
+        {
+            float y = (El(r) - zero) * pxPerRad;
+            float half = r % 100 == 0 ? 14f : 8f;
+            DrawLine(c + new Vector2(-half, y), c + new Vector2(half, y), ink, 1.5f);
+            DrawString(ThemeDB.FallbackFont, c + new Vector2(half + 4, y + 5), $"{r}", HorizontalAlignment.Left, -1, 12, ink);
+        }
+    }
+
+    /// <summary>In a vehicle: the state of it, and for the gunner the sight — crosshair where you look, a ring where the gun actually points.</summary>
+    void DrawVehicle(Vector2 size, Player p)
+    {
+        var v = p.Ride!;
+        var font = ThemeDB.FallbackFont;
+        var seat = v.Def.Seats[p.SeatIdx];
+        var cam = GetViewport().GetCamera3D();
+        var lines = new List<string>
+        {
+            $"{v.Def.Name} ({v.Def.ClassName}) · {MathF.Abs(v.Speed) * 3.6f:0} km/h · hull {v.Status()}",
+            "seats: " + string.Join("  ", v.Def.Seats.Select((st, i) => $"[{i + 1}] {(st.Role == SeatRole.Driver ? "DRV" : st.Role == SeatRole.Gunner ? "GUN" : "PAX")}{(v.Occupants[i] == null ? "" : v.Occupants[i] == p ? " (you)" : " ■")}")),
+        };
+        if (seat.Role == SeatRole.Gunner && cam != null)
+        {
+            var t = v.Turrets[seat.Turret];
+            var c = size / 2f;
+            var ink = new Color(0.1f, 1f, 0.3f, 0.9f);
+            DrawLine(c + new Vector2(-40, 0), c + new Vector2(-8, 0), ink, 1.5f);
+            DrawLine(c + new Vector2(40, 0), c + new Vector2(8, 0), ink, 1.5f);
+            DrawLine(c + new Vector2(0, 8), c + new Vector2(0, 40), ink, 1.5f);
+            var gunPt = t.Muzzle.GlobalPosition + t.Forward * 400f;
+            if (!cam.IsPositionBehind(gunPt))
+            {
+                var g = cam.UnprojectPosition(gunPt);
+                DrawArc(g, 10f, 0f, Mathf.Tau, 24, new Color(1f, 0.9f, 0.3f, 0.9f), 1.5f);
+            }
+            bool coax = p.GunSel >= t.Def.Ammo.Length;
+            string ammo = coax
+                ? $"{t.Def.Coax!.Name} {t.CoaxLoaded}/{t.Def.Coax.Mag} +{t.CoaxStock}{(t.CoaxReloadT > 0f ? $"  RELOADING {t.CoaxReloadT:0.0}s" : "")}"
+                : $"{t.Weapon.Name} {t.Loaded[t.AmmoIdx]}{(t.Weapon.Mag > 1 ? $"/{t.Weapon.Mag}" : "")} +{t.Stock[t.AmmoIdx]}{(t.Reloading ? $"  LOADING {t.ReloadT:0.0}s" : "")}";
+            if (t.Def.Indirect && t.AimAt is Vector3 lay)
+                lines.Add($"laying on {lay.DistanceTo(t.YawNode.GlobalPosition):0} m, bearing {Mathf.PosMod(-Mathf.RadToDeg(MathF.Atan2(lay.X - t.YawNode.GlobalPosition.X, -(lay.Z - t.YawNode.GlobalPosition.Z))), 360f):000} · {(t.Laid ? "ON TARGET — fire" : "laying...")} · look at the spot to aim");
+            lines.Add($"{ammo} · [V] ammo · [R] reload · [RMB] zoom{(v.TurretDown[seat.Turret] ? " · TURRET JAMMED" : "")}");
+        }
+        else if (seat.Role == SeatRole.Driver && v.Def.Air)
+        {
+            lines.Add($"alt {v.Agl:0} m · {v.AirSpeed * 3.6f:0} km/h · climb {v.Velocity3.Y:+0.0;-0.0} m/s · collective {v.Collective * 100:0}% · flares {v.FlaresLeft}" +
+                      (seat.Turret >= 0 ? $" · rockets {v.Turrets[seat.Turret].Loaded[0]}" : "") + (v.Landed ? " · ON THE GROUND" : ""));
+            lines.Add("[mouse] cyclic · [W/S] collective · [A/D] pedals · [Space] hover assist · [X] flares · [Alt] look" + (seat.Turret >= 0 ? " · [LMB] rockets" : ""));
+            if (Clock.Now - v.MissileWarning < 4.0)
+            {
+                bool blink = (int)(Clock.Now * 4) % 2 == 0;
+                DrawString(font, new Vector2(size.X / 2f - 120f, size.Y * 0.3f), "MISSILE LAUNCH — [X] FLARES", HorizontalAlignment.Left, -1, 22, blink ? Colors.Red : Colors.Orange);
+            }
+            // Where the rockets will go: along the pods.
+            if (seat.Turret >= 0 && cam != null)
+            {
+                var pt = v.Turrets[seat.Turret].Muzzle.GlobalPosition + v.Turrets[seat.Turret].Forward * 700f;
+                if (!cam.IsPositionBehind(pt))
+                {
+                    var q = cam.UnprojectPosition(pt);
+                    DrawArc(q, 12f, 0f, Mathf.Tau, 20, new Color(0.1f, 1f, 0.3f, 0.9f), 1.5f);
+                    DrawLine(q + new Vector2(-20, 0), q + new Vector2(-12, 0), new Color(0.1f, 1f, 0.3f, 0.9f), 1.5f);
+                    DrawLine(q + new Vector2(20, 0), q + new Vector2(12, 0), new Color(0.1f, 1f, 0.3f, 0.9f), 1.5f);
+                }
+            }
+        }
+        else if (seat.Role == SeatRole.Driver) lines.Add("[W/S] drive · [A/D] steer · [Space] brake · [F] get out");
+        float y = size.Y - 30f - lines.Count * 20f;
+        foreach (var l in lines)
+        {
+            DrawString(font, new Vector2(20, y + 1), l, HorizontalAlignment.Left, -1, 16, Colors.Black);
+            DrawString(font, new Vector2(19, y), l, HorizontalAlignment.Left, -1, 16, new Color(0.9f, 0.95f, 0.85f));
+            y += 20f;
+        }
+    }
+
+    void DrawScope(Vector2 c, Vector2 size, float fov)
+    {
+        float r = size.Y * 0.44f;
+        // Everything outside the eyepiece is black: one very thick ring.
+        DrawArc(c, r + 1500f, 0f, Mathf.Tau, 256, Colors.Black, 3000f);
+        DrawArc(c, r, 0f, Mathf.Tau, 256, new Color(0, 0, 0, 0.55f), 14f);
+
+        var ink = new Color(0, 0, 0, 0.92f);
+        float inner = r * 0.12f;
+        DrawLine(c + new Vector2(-r, 0), c + new Vector2(-inner, 0), ink, 4f);
+        DrawLine(c + new Vector2(r, 0), c + new Vector2(inner, 0), ink, 4f);
+        DrawLine(c + new Vector2(0, r), c + new Vector2(0, inner), ink, 4f);
+        DrawLine(c + new Vector2(0, -r), c + new Vector2(0, -inner), ink, 4f);
+        DrawLine(c + new Vector2(-inner, 0), c + new Vector2(inner, 0), ink, 1.2f);
+        DrawLine(c + new Vector2(0, -inner), c + new Vector2(0, inner), ink, 1.2f);
+
+        // Mil dots for holdover: 1 mil = 1 m at 1000 m.
+        float pxPerMil = size.Y * 0.5f / MathF.Tan(Mathf.DegToRad(fov * 0.5f)) * 0.001f;
+        for (int k = 1; k <= 5; k++)
+        {
+            float o = k * pxPerMil;
+            if (o > inner) break;
+            DrawCircle(c + new Vector2(0, o), 1.8f, ink);
+            DrawCircle(c + new Vector2(0, -o), 1.8f, ink);
+            DrawCircle(c + new Vector2(o, 0), 1.8f, ink);
+            DrawCircle(c + new Vector2(-o, 0), 1.8f, ink);
+        }
+    }
+
+    void DrawMarker(Vector2 size, Player p, Vector3 target)
+    {
+        var d = target - p.FeetPos;
+        float bearing = (Mathf.RadToDeg(MathF.Atan2(d.X, -d.Z)) + 360f) % 360f;
+        float rel = BotAim.Wrap(bearing - p.Heading);
+        const float span = 90f, width = 520f;
+        float x = size.X / 2f + Mathf.Clamp(rel, -span / 2f, span / 2f) / span * width;
+        var c = new Vector2(x, 12f);
+        var col = new Color(1f, 0.85f, 0.2f, MathF.Abs(rel) > span / 2f ? 0.45f : 1f);
+        DrawColoredPolygon(new[] { c + new Vector2(0, -6), c + new Vector2(6, 0), c + new Vector2(0, 6), c + new Vector2(-6, 0) }, col);
+    }
+
+    void DrawCompass(Vector2 size, float heading)
+    {
+        var font = ThemeDB.FallbackFont;
+        const float span = 90f, width = 520f, y = 18f;
+        float cx = size.X / 2f;
+        var col = new Color(1, 1, 1, 0.75f);
+        int start = (int)MathF.Floor((heading - span / 2f) / 5f) * 5;
+        for (int deg = start; deg <= heading + span / 2f + 5f; deg += 5)
+        {
+            float x = cx + (deg - heading) / span * width;
+            if (x < cx - width / 2f || x > cx + width / 2f) continue;
+            int n = ((deg % 360) + 360) % 360;
+            bool major = n % 15 == 0;
+            DrawLine(new Vector2(x, y), new Vector2(x, y + (major ? 10f : 5f)), col, 1.5f);
+            string? label = n % 45 == 0 ? Cardinals[n / 45] : major ? n.ToString() : null;
+            if (label != null) DrawString(font, new Vector2(x - 20f, y + 26f), label, HorizontalAlignment.Center, 40f, 13, col);
+        }
+        DrawLine(new Vector2(cx, y - 6f), new Vector2(cx, y + 12f), new Color(1f, 0.7f, 0.2f), 2f);
+        DrawString(font, new Vector2(cx - 30f, y + 44f), $"{heading:000}°", HorizontalAlignment.Center, 60f, 12, col);
+    }
+}
