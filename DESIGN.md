@@ -69,6 +69,21 @@ It's the same bot with the same state either way; only the fidelity changes.
 - **Later.** Occlusion by terrain and buildings, crack direction from the Mach
   cone, and aggregating many distant shots into a "battle bed".
 
+### Acoustics, part 2: the space you're in (built)
+
+- **Bands are dry.** A gun's or explosion's distance bands hold only what the air and the ground do to it (absorption, the ground-reflection dip), with no reverb baked in. The rifle source has a shorter, brighter roar and a brief thump, so far off it stays a "pop" and doesn't turn into a boom.
+- **Live reverb of the listener's space** (Tail bus: a reverb whose room size, damping and pre-delay follow the listener, eased over ~0.5 s):
+  - a room: small, dense, bright, scaled to the building;
+  - a street: a quick slap and flutter;
+  - forest: short and soft;
+  - open ground: sparse and late.
+  Outdoors, the reverberant share grows with distance.
+- **Real first reflections outdoors.** Rays from the source find walls and cliffs within 260 m that the listener can see. Each is an echo played from that surface's direction, delayed by the extra path, with spreading and absorption losses (walls reflect more than broken ground). The strongest three are kept, within a budget of about 30 a second.
+- **Buildings as acoustic spaces** (`Rooms`). Every enterable building registers its interior box and its openings. Between inside and outside (or two buildings), sound takes the shortest clear way through openings: the listener hears it from the window or doorway, later and a bit quieter. A closed door costs 14 dB and the highs. With no way through, only the walls' low thump gets in.
+- **Doors** (`Door`). Real hinged doors in outside doorways, about half left open. Use key to open or close. Bots open doors in their way and leave them open. A closed door blocks movement, sight and bullets. Doors have their own physics layer, so the navmesh treats doorways as open. An open door swings back flat against the inside wall.
+- **Behind you.** Sounds from behind go through a gentle high-shelf cut (head and ear shadow), the main front/back cue on headphones.
+- F3 shows which acoustic space you're in.
+
 ## Milestones
 
 1. **Feel prototype (done).** Firing range: carbine and marksman rifle,

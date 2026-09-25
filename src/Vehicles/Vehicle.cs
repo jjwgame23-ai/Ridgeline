@@ -136,18 +136,21 @@ public partial class Vehicle : CharacterBody3D
             Stream = SoundSynth.Muffle(loop, Def.Air ? 520f : Def.Heavy ? 260f : 340f, Def.Heavy ? 55f : Def.Air ? 90f : 75f), Bus = "World",
         };
         AddChild(_cabin);
-        _engine = new AudioStreamPlayer3D
-        {
-            Stream = loop, Bus = "World",
-            // Right next to it, it's loud but not a blast: the cap stops the near field climbing past this.
-            MaxDb = Def.Air ? 3f : -3f,
-            UnitSize = Def.Air ? 45f : Def.Heavy ? 14f : 8f, MaxDistance = Def.Air ? 3500f : Def.Heavy ? 700f : 400f,
-            VolumeDb = -8f, AttenuationFilterCutoffHz = Def.Air ? 5000f : 3000f, AttenuationFilterDb = -12f, Autoplay = !Def.Static,
-        };
+        _engine = new AudioStreamPlayer3D { Stream = loop, Bus = "World", VolumeDb = -8f, Autoplay = !Def.Static };
         AddChild(_engine);
+        // Its share of the reverb of wherever the listener is (SoundWorld.ShapeLoop drives both).
+        var tail = new AudioStreamPlayer3D
+        {
+            Stream = loop, Bus = "Tail", PanningStrength = 0.35f, AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.Disabled,
+            MaxDistance = 0f, DopplerTracking = AudioStreamPlayer3D.DopplerTrackingEnum.Disabled,
+        };
+        AddChild(tail);
+        // Full level within RefDist of it (a big thing, not a point), then spreading loss.
+        _sound = new SoundWorld.LoopShape { Tail = tail, RefDist = Def.Air ? 40f : Def.Heavy ? 12f : 7f, Falloff = Def.Air ? 18f : 20f };
     }
 
     bool _init;
+    SoundWorld.LoopShape _sound = null!;
 
     /// <summary>
     /// Aboard, you hear the engine through the hull (low, droning, and quieter than the
@@ -157,6 +160,12 @@ public partial class Vehicle : CharacterBody3D
     float _outside = 1f;
 
     void CabinSound()
+    {
+        CabinMix();
+        if (SoundWorld.I != null && !Destroyed) SoundWorld.I.ShapeLoop(_engine, Center, _sound);
+    }
+
+    void CabinMix()
     {
         bool inside = !Destroyed && Player.I is { } p && p.Ride == this;
         float dt = (float)GetPhysicsProcessDeltaTime();
@@ -222,7 +231,7 @@ public partial class Vehicle : CharacterBody3D
         foreach (var w in _rig.Wheels) w.Rotation = new Vector3(-_wheelSpin, 0f, 0f);
         float load = Mathf.Clamp(MathF.Abs(Speed) / MathF.Max(1f, Def.MaxSpeed), 0f, 1f);
         _engine.PitchScale = (driven ? 0.85f : 0.75f) + load * 0.65f + MathF.Abs(Throttle) * 0.1f;
-        _engine.VolumeDb = driven ? -6f + load * 5f : -20f;
+        _engine.VolumeDb = driven ? -11f + load * 5f : -25f;
         CabinSound();
         foreach (var kv in _ranOver.Where(kv => Clock.Now - kv.Value > 2.0).ToList()) _ranOver.Remove(kv.Key);
     }
@@ -531,6 +540,7 @@ public partial class Vehicle : CharacterBody3D
         Hp = 0f;
         _engine.Stop();
         _cabin.Stop();
+        _sound.Tail?.Stop();
         var c = Center;
         Grenade.Detonate(c, Vector3.Up, by, Def.Heavy ? 40 : 20, 0f, Def.Heavy ? 6f : 2f, Def.Name + " cook-off");
         // In the air the fire goes with the wreck (FallWreck); on the ground it burns here.

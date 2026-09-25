@@ -85,6 +85,8 @@ public partial class Valley : Node3D, IGround
         Spec = spec ?? Spec;
         Current = this;
         Seed = seed;
+        Rooms.Clear();
+        Door.Clear();
         var rng = new RandomNumberGenerator { Seed = (ulong)seed };
         float k = SizeScale;
 
@@ -221,7 +223,7 @@ public partial class Valley : Node3D, IGround
         };
         Terrain.Plant(seed);
         BuildSeconds = (Time.GetTicksMsec() - t0) / 1000.0;
-        GD.Print($"[map] {Spec.Name} {Size:0} m {Spec.Biome}: {Sites.Count} sites, {batch.Boxes} boxes ({batch.Shapes} solid), {Terrain.TreeCount} trees, {Perches.Count} perches"
+        GD.Print($"[map] {Spec.Name} {Size:0} m {Spec.Biome}: {Sites.Count} sites, {batch.Boxes} boxes ({batch.Shapes} solid), {Terrain.TreeCount} trees, {Perches.Count} perches, {Rooms.Count} rooms, {Door.All.Count} doors"
                  + (City != null ? $", city {City.Buildings} buildings ({City.Enterable} enterable), {City.Blocks.Count} blocks" : "") + $", built in {BuildSeconds:0.0}s");
 
         // The navmesh: tiles over the whole playable square. Bigger maps get bigger tiles.

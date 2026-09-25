@@ -80,7 +80,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     int _pathIdx;
     Vector3 _goal, _rawGoal, _lastProgressPos;
     bool _hasGoal, _reloadEmpty, _partial;
-    float _routeCheckT;
+    float _routeCheckT, _doorT;
     float _lean, _cool, _reloadT, _reloadDur, _senseT, _thinkT, _stuckT, _repathT, _walkPhase, _crouchT, _rangeErr;
     int _reloadStage, _stuckCount;
     double _stepAt, _unstickUntil, _lastRepath = -99;
@@ -406,6 +406,9 @@ public partial class Bot : CharacterBody3D, ICombatant
             }
         }
         if (Clock.Now < _unstickUntil) wish = _unstickDir;
+        // A shut door in the way: open it (and leave it open, as people do).
+        _doorT -= dt;
+        if (_doorT <= 0f && wish.LengthSquared() > 0.01f) { _doorT = 0.25f; Door.OpenAhead(this, pos, wish.Normalized()); }
 
         // Out of breath: jog until you've got some wind back (people don't sprint again the moment they can).
         if (Stamina < 0.05f) _winded = true;

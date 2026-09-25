@@ -274,6 +274,31 @@ public sealed class Builder
     }
 
     /// <summary>
+    /// The openings of an outside wall, for sound: each window and doorway becomes a portal
+    /// of the building's acoustic space, and each doorway gets a real door (hinged at one
+    /// side, swinging inward), about half of them left open.
+    /// </summary>
+    void Openings(RoomBox room, Opening[] os, bool alongX, float fixedC, float start, Vector3 n, float y)
+    {
+        foreach (var o in os)
+        {
+            float at = start + o.At;
+            var local = alongX ? new Vector3(at, y + (o.Bottom + o.Top) / 2f, fixedC) : new Vector3(fixedC, y + (o.Bottom + o.Top) / 2f, at);
+            var portal = new Portal { Pos = L(local.X, local.Y, local.Z), Out = Dir(n.X, n.Z) };
+            if (o.Bottom < 0.5f)
+            {
+                // Hinge at one side of the doorway, the leaf along the wall.
+                var along = alongX ? new Vector3(1, 0, 0) : new Vector3(0, 0, 1);
+                var hingeL = (alongX ? new Vector3(at, y, fixedC) : new Vector3(fixedC, y, at)) - along * (o.Width / 2f - 0.02f);
+                var hinge = L(hingeL.X, hingeL.Y, hingeL.Z);
+                bool open = Mathf.PosMod(hinge.X * 3.13f + hinge.Z * 1.71f, 1f) < 0.5f;
+                portal.Door = Ridgeline.Door.Make(Parent, hinge, Dir(along.X, along.Z), -Dir(n.X, n.Z), o.Width - 0.04f, o.Top - 0.05f, open, Mats.Wood);
+            }
+            room.Portals.Add(portal);
+        }
+    }
+
+    /// <summary>
     /// A single-storey building at local (cx, cz), w along local X, d along local Z.
     /// Door and window sides are letters in the building's own frame: F front (-Z), B back, L, R.
     /// </summary>
@@ -295,10 +320,16 @@ public sealed class Builder
             return list.ToArray();
         }
 
-        Wall(x0, z0, x1, z0, H, T, wall, For('F', w));
-        Wall(x0, z1, x1, z1, H, T, wall, For('B', w));
-        Wall(x0, z0 + T / 2f, x0, z1 - T / 2f, H, T, wall, For('L', d - T));
-        Wall(x1, z0 + T / 2f, x1, z1 - T / 2f, H, T, wall, For('R', d - T));
+        var fo = For('F', w); var bo = For('B', w); var lo = For('L', d - T); var ro = For('R', d - T);
+        Wall(x0, z0, x1, z0, H, T, wall, fo);
+        Wall(x0, z1, x1, z1, H, T, wall, bo);
+        Wall(x0, z0 + T / 2f, x0, z1 - T / 2f, H, T, wall, lo);
+        Wall(x1, z0 + T / 2f, x1, z1 - T / 2f, H, T, wall, ro);
+        var room = Rooms.Add(Origin, _rot, x0, x1, z0, z1, H);
+        Openings(room, fo, true, z0, x0, new Vector3(0, 0, -1), 0f);
+        Openings(room, bo, true, z1, x0, new Vector3(0, 0, 1), 0f);
+        Openings(room, lo, false, x0, z0 + T / 2f, new Vector3(-1, 0, 0), 0f);
+        Openings(room, ro, false, x1, z0 + T / 2f, new Vector3(1, 0, 0), 0f);
         if (partition) Wall(cx, z0 + T / 2f, cx, z1 - T / 2f, H, 0.2f, wall, Door((d - T) / 2f));
         Box(W(cx, cz) + Vector3.Up * (H + 0.1f), new Vector3(w + 0.4f, 0.2f, d + 0.4f), YawDeg, roof ?? Mats.Roof);
         Points.Add(W(cx, cz + (partition ? d * 0.25f : 0f)));
@@ -376,6 +407,7 @@ public sealed class Builder
             return list.ToArray();
         }
 
+        var room = Rooms.Add(Origin, _rot, x0, x1, z0, z1, floors * S - 0.2f);
         for (int k = 0; k < floors; k++)
         {
             float y = k * S, bot = k == 0 ? -0.2f : 0f;
@@ -387,6 +419,10 @@ public sealed class Builder
             WallAt(y, bot, x0, z1, x1, z1, S, T, wall, back);
             WallAt(y, bot, x0, z0 + T / 2f, x0, z1 - T / 2f, S, T, wall, left);
             WallAt(y, bot, x1, z0 + T / 2f, x1, z1 - T / 2f, S, T, wall, right);
+            Openings(room, front, true, z0, x0, new Vector3(0, 0, -1), y);
+            Openings(room, back, true, z1, x0, new Vector3(0, 0, 1), y);
+            Openings(room, left, false, x0, z0 + T / 2f, new Vector3(-1, 0, 0), y);
+            Openings(room, right, false, x1, z0 + T / 2f, new Vector3(1, 0, 0), y);
 
             // Every window is somewhere to shoot from: stand 0.7 m back from it.
             void Win(Opening[] os, bool alongX, float fixedC, float start, Vector3 n)

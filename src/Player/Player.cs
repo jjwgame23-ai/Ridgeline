@@ -251,7 +251,7 @@ public partial class Player : CharacterBody3D, ICombatant
         HurtFlash = Mathf.MoveToward(HurtFlash, 0f, dt * 1.5f);
         if (Downed) { DownedView(dt); return; }
         if (Ride != null) { VehicleProcess(dt); return; }
-        if (Alive && Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsActionJustPressed("use") && TryBoard()) return;
+        if (Alive && Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsActionJustPressed("use") && (TryBoard() || Door.Use(this, Cam.GlobalPosition, -Cam.GlobalBasis.Z))) return;
         if (!Alive) { DeathCam(dt); return; }
         bool captured = Input.MouseMode == Input.MouseModeEnum.Captured;
         _stanceLock = Mathf.Max(0f, _stanceLock - dt);

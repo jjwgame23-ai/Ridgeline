@@ -217,7 +217,7 @@ public partial class Hud : CanvasLayer
             $"Health {P.Health:0}   {P.Stance}  {P.Speed:0.0} m/s  stamina {P.Stamina * 100:0}%  breath {P.Breath * 100:0}%{(P.HoldingBreath ? " (holding)" : "")}\n" +
             $"Suppression {P.Suppression * 100:0}%\n" +
             $"Range to aim point: {range}\n" +
-            $"Sound: {SoundWorld.I.ActiveVoices} voices playing, {SoundWorld.I.PendingCount} still travelling\n" +
+            $"Sound: {SoundWorld.I.ActiveVoices} voices playing, {SoundWorld.I.PendingCount} still travelling, space: {SoundWorld.I.SpaceName}\n" +
             $"Bullets in flight: {Ballistics.I.LiveCount}\n" +
             $"F4 sniper drill: {(Drill?.Active == true ? "ON" : "off")}   F5 distant battle: {(War?.Enabled == true ? "ON" : "off")}" +
             last;

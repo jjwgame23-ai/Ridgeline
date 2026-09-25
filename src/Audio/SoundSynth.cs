@@ -131,9 +131,12 @@ public static class SoundSynth
         var b = new Buf(0.45f, seed);
         float k = 0.92f + b.Rnd() * 0.16f;
         Blast(b, 1.0f, 0.00045f * weight * k, 1.3f);
+        // The pressure punch: the slower part of the blast wave. Almost all low frequencies,
+        // which the air barely absorbs, so it's what still hits at a distance under the crack.
+        Blast(b, 0.45f, 0.0022f * weight * k, 1.1f);
         Noise(b, 0.55f, 0.0025f, 14000f);                                     // gas turbulence
-        Noise(b, 0.40f, 0.016f * weight, 2600f / weight, attack: 0.0006f);    // the roar
-        Tone(b, 150f / weight * k, 48f / weight, 0.015f, 0.45f, 0.035f * weight); // body thump
+        Noise(b, 0.45f, 0.012f * weight, 3000f / weight, attack: 0.0005f);    // the roar: short and bright, it's what carries as the "pop"
+        Tone(b, 150f / weight * k, 55f / weight, 0.012f, 0.36f, 0.026f * weight); // body thump: a punch, kept short so far off it doesn't smear into a boom
         // The action: bolt carrier slamming back and forward, only audible up close.
         float cyc = 0.045f + b.Rnd() * 0.01f;
         Noise(b, 0.05f, 0.003f, 6000f, start: cyc);
@@ -215,14 +218,46 @@ public static class SoundSynth
         };
     }
 
+    const int LoopFade = Rate / 5;
+
+    /// <summary>
+    /// A seamless loop from a buffer generated LoopFade samples longer than the loop: the
+    /// overrun is crossfaded (equal power, for noise) into the start, so the sample after the
+    /// last one is exactly what followed it when it was made. No click, no jump at the seam.
+    /// </summary>
+    static AudioStreamWav LoopWav(float[] s)
+    {
+        int n = s.Length - LoopFade;
+        var o = new float[n];
+        Array.Copy(s, o, n);
+        for (int i = 0; i < LoopFade; i++)
+        {
+            float t = (i + 0.5f) / LoopFade;
+            o[i] = s[i] * MathF.Sqrt(t) + s[n + i] * MathF.Sqrt(1f - t);
+        }
+        float peak = o.Max(MathF.Abs) + 1e-6f;
+        var bytes = new byte[n * 2];
+        for (int i = 0; i < n; i++)
+        {
+            short q = (short)Math.Clamp((int)(o[i] / peak * 0.8f * 32767f), -32768, 32767);
+            bytes[2 * i] = (byte)(q & 0xff);
+            bytes[2 * i + 1] = (byte)((q >> 8) & 0xff);
+        }
+        return new AudioStreamWav
+        {
+            Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = Rate, Stereo = false, Data = bytes,
+            LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = n,
+        };
+    }
+
     public static AudioStreamWav EngineLoop(bool tracked, bool heavy)
     {
         // A diesel idling: firing pulses overlap (many cylinders), so it's a buzzy rumble,
         // not separate thumps. The fundamental sits high enough that even pitched down for
         // idle it stays a drone, never a helicopter's chop. Everything repeats a whole
         // number of times in the loop, so it loops without a seam.
-        const float seconds = 2f;
-        int n = (int)(seconds * Rate);
+        const float seconds = 3f;
+        int n = (int)(seconds * Rate) + LoopFade;
         var s = new float[n];
         var r = new Random(heavy ? 31 : 17);
         float f0 = heavy ? 62f : 88f;
@@ -248,19 +283,7 @@ public static class SoundSynth
             }
             s[i] = v;
         }
-        float peak = s.Max(MathF.Abs) + 1e-6f;
-        var bytes = new byte[n * 2];
-        for (int i = 0; i < n; i++)
-        {
-            short q = (short)Math.Clamp((int)(s[i] / peak * 0.8f * 32767f), -32768, 32767);
-            bytes[2 * i] = (byte)(q & 0xff);
-            bytes[2 * i + 1] = (byte)((q >> 8) & 0xff);
-        }
-        return new AudioStreamWav
-        {
-            Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = Rate, Stereo = false, Data = bytes,
-            LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = n,
-        };
+        return LoopWav(s);
     }
 
     /// <summary>
@@ -269,8 +292,8 @@ public static class SoundSynth
     /// </summary>
     public static AudioStreamWav RotorLoop(bool gunship)
     {
-        const float seconds = 2f;
-        int n = (int)(seconds * Rate);
+        const float seconds = 4f;
+        int n = (int)(seconds * Rate) + LoopFade;
         var s = new float[n];
         var r = new Random(gunship ? 53 : 41);
         float slap = gunship ? 18f : 16f;   // blade passes per second (whole number in the loop)
@@ -288,19 +311,7 @@ public static class SoundSynth
                  + w * 1.4f                                                              // rotor wash
                  + (float)(Math.Sin(2 * Math.PI * whine * t) * 0.05 + Math.Sin(2 * Math.PI * whine * 1.5 * t) * 0.025); // turbines
         }
-        float peak = s.Max(MathF.Abs) + 1e-6f;
-        var bytes = new byte[n * 2];
-        for (int i = 0; i < n; i++)
-        {
-            short q = (short)Math.Clamp((int)(s[i] / peak * 0.8f * 32767f), -32768, 32767);
-            bytes[2 * i] = (byte)(q & 0xff);
-            bytes[2 * i + 1] = (byte)((q >> 8) & 0xff);
-        }
-        return new AudioStreamWav
-        {
-            Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = Rate, Stereo = false, Data = bytes,
-            LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = n,
-        };
+        return LoopWav(s);
     }
 
     /// <summary>A mortar: a deep, hollow cough out of the tube.</summary>
@@ -376,6 +387,36 @@ public static class SoundSynth
             Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = Rate, Stereo = false, Data = bytes,
             LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = n,
         };
+    }
+
+    /// <summary>A door: the latch, a creak of the hinges (opening), or the bang of it shutting.</summary>
+    public static AudioStreamWav DoorSound(int seed, bool open)
+    {
+        var b = new Buf(open ? 0.7f : 0.45f, seed);
+        float k = 0.9f + b.Rnd() * 0.2f;
+        Noise(b, 0.25f, 0.004f, 5000f);                             // latch
+        Tone(b, 1900f * k, 1800f * k, 0.01f, 0.08f, 0.01f);
+        if (open)
+        {
+            // Hinge creak: a scratchy tone sliding up, stick-slip, as the door swings.
+            double ph = 0;
+            for (int i = (int)(0.06f * Rate); i < b.S.Length; i++)
+            {
+                float t = i / (float)Rate - 0.06f;
+                float env = MathF.Min(1f, t / 0.05f) * MathF.Exp(-t / 0.25f);
+                float f = (380f + 260f * t) * k;
+                ph += 2 * Math.PI * f / Rate;
+                float stick = MathF.Sin(t * 70f) > 0.3f ? 1f : 0.35f;
+                b.S[i] += (float)Math.Sin(ph) * env * stick * 0.12f + (b.Rnd() * 2f - 1f) * env * 0.03f;
+            }
+        }
+        else
+        {
+            Blast(b, 0.6f, 0.004f, 2f, 0.02f);                      // it meets the frame
+            Tone(b, 110f * k, 80f, 0.02f, 0.5f, 0.06f, start: 0.02f);
+            Noise(b, 0.3f, 0.04f, 900f, start: 0.02f);
+        }
+        return Finish(b);
     }
 
     /// <summary>A seeker's lock tone.</summary>

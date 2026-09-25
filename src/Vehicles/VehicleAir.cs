@@ -164,7 +164,7 @@ public partial class Vehicle
         // heard across the map.
         bool idle = _landed && (Driver == null || Collective < 0.15f);
         _engine.PitchScale = idle ? (Driver == null ? 0.45f : 0.6f) : 0.85f + load * 0.3f;
-        _engine.VolumeDb = idle ? (Driver == null ? -34f : -18f) : -2f + load * 4f;
+        _engine.VolumeDb = idle ? (Driver == null ? -36f : -21f) : -5f + load * 4f;
         CabinSound();
     }
 
