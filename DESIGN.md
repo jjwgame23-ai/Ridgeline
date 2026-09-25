@@ -256,6 +256,33 @@ It's the same bot with the same state either way; only the fidelity changes.
   - Command: `-- mode=spec5 verbose shot=x.png frames=N` with `--headless --fixed-fps 60`.
   - It logs every kill, per-bot shots, hits, blocked shots and wide misses, and a status dump every 30 s.
 
+## Drones (built)
+
+- **The drone team** (`SquadKind.Drone`: two drone operators and a rifleman for security). The commander posts it 350-700 m back from the attack it supports (or from the most threatened front point), out of sight, watching the objective.
+  - The first operator flies the quad (a Mavic-class camera drone with two grenades under it); the second flies FPVs. Alone, one man does both.
+- **Quad** (`Drone`, `DroneOps`)
+  - Orbits ~80 m around the objective at ~105 m above whatever is below it. At that height it is a speck: bots hear it, but only shoot once it comes down.
+  - Its camera sees down and out to ~130 m, but not through roofs or canopy. Everything it sees goes to the side's intel picture and to nearby squads' spotting (it feeds the mortars, the map and the FPVs), and vehicles get called in on the radio.
+  - Anyone who has gone to ground (stopped, and no friendlies within 30 m) gets a bomb run: it comes down to ~55 m, settles over the target, and drops.
+  - It waits 10 s between drops to see where the last one landed, and comes home to swap batteries and re-arm: the battery lasts 8 minutes, and re-arming takes 25 s.
+- **FPV**: a strike drone with a shaped charge. It waits for a target worth one:
+  - armour called in on the radio (by anyone, the quads included) comes first;
+  - otherwise a group of enemies the side has eyes on.
+  - It climbs straight up clear of cover, and its fuse arms 2 s out. It flies out low (35 m), then in the last ~260 m dives in, leading its target. A shaped charge against vehicles hits wherever it comes in (the top, the rear).
+- **Stocks** (per operator: 2 quads, 8 grenades, 4 FPVs). Only a logistics truck or a FOB refills them; an ammo bearer can't.
+  - Drone shortage counts as low ammo, so logistics runs go to the drone team.
+  - An operator short of drones walks to a parked logistics truck within 150 m.
+- **Counter-drone**
+  - Bots hear an FPV from ~150 m and a quad from ~140 m and call it out. They shoot it with lead (a quad only inside ~100 m, and after ~15 s of missing most give up on it for a while) (one hit brings any drone down; an FPV may go off).
+  - About a third of bots get under a roof or canopy away from a quad's camera instead.
+  - An FPV diving at a bot from under 45 m makes it dive out of the line.
+  - Vehicle anti-air guns engage drones out to 2 km (FPVs within 300 m first); MGs engage them within 350 m.
+- **Player** (drone operator kit)
+  - H flies the quad (it lands at your feet when you let go), and J flies an FPV.
+  - You watch a video feed (snow grows with range past ~900 m) while hearing with your own ears.
+  - Getting hit takes you off the sticks.
+  - The map shows friendly drones and each quad's camera footprint.
+
 ## Big-map notes (3a)
 
 - The navmesh is baked in 240 m tiles in parallel and cached in `user://navcache` (about 5 s on first launch, 0.3 s after that).

@@ -61,6 +61,8 @@ public partial class SoundWorld : Node3D
     int _worldBus;
 
     public Vector3 ListenerPos { get; private set; }
+    /// <summary>Where the player's ears are when that isn't the camera (flying a drone off a screen).</summary>
+    public static Node3D? Ears;
     public int PendingCount => _pending.Count;
     public List<Heard> History => _history;
     public int ActiveVoices { get { int n = 0; foreach (var v in _voices) if (v.Playing) n++; return n; } }
@@ -230,7 +232,7 @@ public partial class SoundWorld : Node3D
         int stale = 0;
         while (stale < _history.Count && now - _history[stale].T0 > 5.0) stale++;
         if (stale > 0) _history.RemoveRange(0, stale);
-        var cam = GetViewport().GetCamera3D();
+        Node3D? cam = Ears is { } ears && IsInstanceValid(ears) && ears.IsInsideTree() ? ears : GetViewport().GetCamera3D();
         if (cam != null) { ListenerPos = cam.GlobalPosition; _listenerFwd = -cam.GlobalBasis.Z; }
         UpdateSpace((float)delta);
         for (int i = _echoes.Count - 1; i >= 0; i--)

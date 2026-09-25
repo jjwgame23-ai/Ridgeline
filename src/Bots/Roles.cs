@@ -1,10 +1,10 @@
 namespace Ridgeline;
 
 /// <summary>What one soldier does in their squad.</summary>
-public enum Role { Leader, Rifleman, AutoRifleman, Grenadier, Medic, Marksman, Engineer, Ammo, AntiTank, HeavyAT, Crewman, AntiAir }
+public enum Role { Leader, Rifleman, AutoRifleman, Grenadier, Medic, Marksman, Engineer, Ammo, AntiTank, HeavyAT, Crewman, AntiAir, DroneOperator }
 
 /// <summary>What a squad is for.</summary>
-public enum SquadKind { Rifle, Weapons, Recon, Engineer, Logistics, AntiTank, Armor, Transport, Air, Mortar }
+public enum SquadKind { Rifle, Weapons, Recon, Engineer, Logistics, AntiTank, Armor, Transport, Air, Mortar, Drone }
 
 /// <summary>Loadouts, names and how a faction is split into squads.</summary>
 public static class Roles
@@ -23,13 +23,14 @@ public static class Roles
         Role.HeavyAT => "Heavy anti-tank",
         Role.Crewman => "Vehicle crewman",
         Role.AntiAir => "Anti-air (MANPADS)",
+        Role.DroneOperator => "Drone operator",
         _ => r.ToString(),
     };
 
     public static string Short(Role r) => r switch
     {
         Role.Leader => "SL", Role.Rifleman => "RIF", Role.AutoRifleman => "AR", Role.Grenadier => "GL",
-        Role.Medic => "MED", Role.Marksman => "MM", Role.Engineer => "ENG", Role.Ammo => "AMMO", Role.AntiTank => "LAT", Role.HeavyAT => "HAT", Role.Crewman => "CRW", Role.AntiAir => "AA", _ => "?",
+        Role.Medic => "MED", Role.Marksman => "MM", Role.Engineer => "ENG", Role.Ammo => "AMMO", Role.AntiTank => "LAT", Role.HeavyAT => "HAT", Role.Crewman => "CRW", Role.AntiAir => "AA", Role.DroneOperator => "UAV", _ => "?",
     };
 
     public static string Name(SquadKind k) => k switch
@@ -44,6 +45,7 @@ public static class Roles
         SquadKind.Transport => "Transport crew",
         SquadKind.Air => "Aircrew",
         SquadKind.Mortar => "Mortar team",
+        SquadKind.Drone => "Drone team",
         _ => k.ToString(),
     };
 
@@ -81,6 +83,7 @@ public static class Roles
         Role.AntiTank or Role.HeavyAT => "2: anti-tank launcher — go for the sides and rear",
         Role.AntiAir => "2: guided anti-air missile — aim at a helicopter until the tone locks, then fire",
         Role.Leader => "M map: click a point to order your squad · B: squad on you / work the objective",
+        Role.DroneOperator => "H: fly the quad (LMB drops a grenade, H again sends it home) · J: fly an FPV strike drone (mouse steers, W/S throttle, LMB detonates)",
         _ => "",
     };
 
@@ -89,6 +92,7 @@ public static class Roles
         (SquadKind.Rifle, new[] { Role.Leader, Role.Rifleman, Role.AutoRifleman, Role.Grenadier, Role.Medic, Role.AntiTank }, 3),
         (SquadKind.Recon, new[] { Role.Marksman, Role.Marksman }, 2),
         (SquadKind.Rifle, new[] { Role.Leader, Role.Rifleman, Role.AutoRifleman, Role.Grenadier, Role.Medic, Role.AntiTank }, 3),
+        (SquadKind.Drone, new[] { Role.DroneOperator, Role.DroneOperator, Role.Rifleman }, 2),
         (SquadKind.AntiTank, new[] { Role.HeavyAT, Role.HeavyAT, Role.AntiAir }, 2),
         (SquadKind.Weapons, new[] { Role.Leader, Role.AutoRifleman, Role.AutoRifleman, Role.Ammo }, 3),
         (SquadKind.Engineer, new[] { Role.Engineer, Role.Engineer, Role.Engineer }, 2),

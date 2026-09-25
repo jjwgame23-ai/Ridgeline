@@ -40,6 +40,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     public BotAim Aim = null!;
     public BotSenses Senses = null!;
     public BotBrain Brain = null!;
+    /// <summary>A drone operator's drones and stocks.</summary>
+    public DroneOps? Ops;
     public CrewBrain Crew = null!;
     public Vehicle? Ride { get; private set; }
     public int SeatIdx { get; private set; } = -1;
@@ -108,6 +110,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         Aim = new BotAim(this, _rng.Randf() * 10f);
         Senses = new BotSenses(this);
         Brain = new BotBrain(this);
+        if (Role == Role.DroneOperator) Ops = new DroneOps(this);
         Crew = new CrewBrain(this);
         _senseT = _rng.Randf() * 0.1f; // stagger so bots don't all think on the same frame
         _thinkT = _rng.Randf() * 0.2f;
@@ -591,7 +594,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     public Role RoleOf => Role;
     Role ICombatant.Role => Role;
     public float Hp => Health;
-    public float AmmoLevel => Def.Mags == 0 ? 1f : Mags / (float)Def.Mags;
+    public float AmmoLevel => MathF.Min(Def.Mags == 0 ? 1f : Mags / (float)Def.Mags, Ops?.StockLevel ?? 1f);
 
     void Stock()
     {
@@ -614,6 +617,14 @@ public partial class Bot : CharacterBody3D, ICombatant
     public bool Resupply()
     {
         if (!Alive) return false;
+        // Drones, grenades for them and batteries come up on the logistics truck or sit at a FOB, not in an ammo bearer's pack.
+        if (Ops != null && (Vehicle.All.Any(v => !v.Destroyed && v.Def.Kind == VKind.Logistics && v.Team == Team && v.GlobalPosition.DistanceTo(FeetPos) < 20f)
+                            || Fob.All.Any(f => f.Team == Team && f.GlobalPosition.DistanceTo(FeetPos) < 25f)) && Ops.Restock())
+        {
+            SoundWorld.I.Emit(Snd.Bag, EyePos, 0f, this);
+            Comms.Say(this, "Drones restocked.");
+            return true;
+        }
         bool need = Mags < Def.Mags || Grenades < Roles.Frags(Role) || (Role == Role.Grenadier && LauncherRounds < 8)
                     || (Rockets < (RocketDef?.Mags ?? -1) + 1) || (Role == Role.Medic && Medkits < 10) || (Role == Role.Engineer && Sandbags < 3);
         if (!need || !Alive) return false;

@@ -18,6 +18,7 @@ public partial class HudOverlay : Control
         if (p == null || !IsInstanceValid(p) || !p.Alive) return;
         var w = p.Weapon;
         var size = GetViewportRect().Size;
+        if (p.Piloting is { } dr && IsInstanceValid(dr)) { DrawDrone(size, p, dr); return; }
 
         if (p.Ride != null)
         {
@@ -180,6 +181,68 @@ public partial class HudOverlay : Control
         var c = new Vector2(x, 12f);
         var col = new Color(1f, 0.85f, 0.2f, MathF.Abs(rel) > span / 2f ? 0.45f : 1f);
         DrawColoredPolygon(new[] { c + new Vector2(0, -6), c + new Vector2(6, 0), c + new Vector2(0, 6), c + new Vector2(-6, 0) }, col);
+    }
+
+    /// <summary>The drone's screen: a reticle, the flight data, and the grain of a cheap video link.</summary>
+    void DrawDrone(Vector2 size, Player p, Drone d)
+    {
+        var font = ThemeDB.FallbackFont;
+        var c = size / 2f;
+        var ink = new Color(1f, 1f, 1f, 0.85f);
+        var pos = d.GlobalPosition;
+        var hit = d.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, pos + Vector3.Down * 500f, Layers.World | Layers.Trees));
+        float agl = hit.Count > 0 ? pos.Y - hit["position"].AsVector3().Y : 0f;
+        float range = ((pos - p.FeetPos) with { Y = 0f }).Length();
+        // The link gets worse with range: snow.
+        float snow = Mathf.Clamp((range - 900f) / 1500f, 0f, 0.8f) + (d.Kind == DroneKind.Fpv ? 0.08f : 0.02f);
+        var rng = new RandomNumberGenerator();
+        rng.Seed = (ulong)Time.GetTicksMsec();
+        int n = (int)(snow * 900);
+        for (int i = 0; i < n; i++)
+        {
+            var at = new Vector2(rng.Randf() * size.X, rng.Randf() * size.Y);
+            float g = rng.Randf();
+            DrawRect(new Rect2(at, new Vector2(rng.RandfRange(1f, 4f), 1.5f)), new Color(g, g, g, 0.35f));
+        }
+        if (d.Kind == DroneKind.Quad)
+        {
+            DrawLine(c + new Vector2(-24, 0), c + new Vector2(-6, 0), ink, 1.5f);
+            DrawLine(c + new Vector2(24, 0), c + new Vector2(6, 0), ink, 1.5f);
+            DrawLine(c + new Vector2(0, -24), c + new Vector2(0, -6), ink, 1.5f);
+            DrawLine(c + new Vector2(0, 24), c + new Vector2(0, 6), ink, 1.5f);
+            // Straight down: where a grenade let go of now would land (near enough, from low and slow).
+            var cam = GetViewport().GetCamera3D();
+            if (cam != null && hit.Count > 0)
+            {
+                var fall = MathF.Sqrt(2f * MathF.Max(agl, 0f) / 9.81f);
+                var land = hit["position"].AsVector3() + (d.Vel with { Y = 0f }) * fall * 0.5f;
+                if (!cam.IsPositionBehind(land))
+                {
+                    var q = cam.UnprojectPosition(land);
+                    DrawArc(q, 9f, 0f, Mathf.Tau, 24, new Color(1f, 0.3f, 0.2f, 0.9f), 1.5f);
+                    DrawLine(q + new Vector2(-4, 0), q + new Vector2(4, 0), new Color(1f, 0.3f, 0.2f, 0.9f), 1.5f);
+                }
+            }
+        }
+        else
+        {
+            DrawArc(c, 10f, 0f, Mathf.Tau, 24, ink, 1.5f);
+            DrawLine(c + new Vector2(-60, 0), c + new Vector2(-20, 0), ink, 1.2f);
+            DrawLine(c + new Vector2(60, 0), c + new Vector2(20, 0), ink, 1.2f);
+        }
+        string kind = d.Kind == DroneKind.Quad ? "QUAD" : "FPV";
+        var lines = new List<string>
+        {
+            $"{kind}   ALT {agl:0} m   SPD {d.Vel.Length() * 3.6f:0} km/h   DIST {range:0} m",
+            d.Kind == DroneKind.Quad ? $"BATT {d.Battery * 100f:0}%   GRENADES {d.Bombs}   CAM {d.CamPitch:0}°" : $"THROTTLE {d.Throttle * 100f:0}%   PITCH {d.CamPitch:0}°",
+            $"stock: {p.DroneQuads} quad · {p.DroneBombs} grenades · {p.DroneFpvs} FPV",
+            d.Kind == DroneKind.Quad ? "WASD fly (Shift fast) · Space/C up/down · LMB drop · H send it home" : "mouse steer · W/S throttle · LMB detonate · H ditch",
+        };
+        for (int i = 0; i < lines.Count; i++)
+            DrawString(font, new Vector2(24, size.Y - 100 + i * 20), lines[i], HorizontalAlignment.Left, -1, 15, i == 3 ? new Color(1, 1, 1, 0.55f) : ink);
+        if (d.Kind == DroneKind.Quad && d.Battery < 0.2f)
+            DrawString(font, c + new Vector2(-60, -60), "LOW BATTERY", HorizontalAlignment.Left, -1, 18, new Color(1f, 0.3f, 0.2f));
+        DrawCompass(size, ((-d.Yaw) % 360f + 360f) % 360f);
     }
 
     void DrawCompass(Vector2 size, float heading)

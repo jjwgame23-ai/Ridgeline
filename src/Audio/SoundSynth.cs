@@ -428,6 +428,38 @@ public static class SoundSynth
         return Finish(b);
     }
 
+    /// <summary>
+    /// A small drone's motors and props: four rotors each spinning a little differently, so
+    /// their blade-pass tones beat against each other — the quad's angry-hornet drone. The FPV
+    /// is the same at twice the pitch and harsher: a scream.
+    /// </summary>
+    public static AudioStreamWav DroneLoop(bool fpv)
+    {
+        const float seconds = 3f;
+        int n = (int)(seconds * Rate) + LoopFade;
+        var s = new float[n];
+        var r = new Random(fpv ? 91 : 73);
+        float f0 = fpv ? 380f : 190f;
+        var fr = new[] { f0 * 0.985f, f0 * 1.0f, f0 * 1.013f, f0 * 1.027f };
+        var ph = new double[4];
+        float y = 0f;
+        for (int i = 0; i < n; i++)
+        {
+            float v = 0f;
+            for (int k = 0; k < 4; k++)
+            {
+                ph[k] += fr[k] / Rate;
+                float p = (float)(ph[k] % 1.0);
+                // A blade pass: a sharpish pulse, rich in harmonics (the buzz).
+                v += MathF.Exp(-p * (fpv ? 9f : 6f)) - 0.2f;
+            }
+            float noise = (float)r.NextDouble() * 2f - 1f;
+            y += 0.3f * (noise - y);                  // prop wash
+            s[i] = v * 0.25f + y * (fpv ? 0.35f : 0.2f);
+        }
+        return LoopWav(s);
+    }
+
     /// <summary>A seeker's lock tone.</summary>
     public static AudioStreamWav Beep(int seed)
     {

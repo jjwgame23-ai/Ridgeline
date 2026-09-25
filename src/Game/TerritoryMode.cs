@@ -151,7 +151,7 @@ public partial class TerritoryMode : Node, IMatch
     /// <summary>Enemies our recon teams have reported: (team that knows, where, when). Shown on the map.</summary>
     public readonly List<(int Team, Vector3 Pos, double At)> Intel = new();
     /// <summary>The roles a player can pick (squad leader stays a bot's job for now).</summary>
-    public static readonly Role[] PlayerRoles = { Role.Leader, Role.Rifleman, Role.AutoRifleman, Role.Grenadier, Role.Medic, Role.Marksman, Role.Engineer, Role.Ammo, Role.AntiTank, Role.HeavyAT, Role.AntiAir, Role.Crewman };
+    public static readonly Role[] PlayerRoles = { Role.Leader, Role.Rifleman, Role.AutoRifleman, Role.Grenadier, Role.Medic, Role.Marksman, Role.Engineer, Role.Ammo, Role.AntiTank, Role.HeavyAT, Role.AntiAir, Role.Crewman, Role.DroneOperator };
     public MotorPool Motor = null!;
     readonly HashSet<Squad> _bound = new();
 
@@ -215,6 +215,8 @@ public partial class TerritoryMode : Node, IMatch
         Squad.Engagements = Squad.Assaults = Squad.Hunts = 0;
         Squad.ResetAll();
         Squad.Orps = Squad.Deploys = Squad.BuddySwaps = 0;
+        Drone.Clear();
+        Drone.Log = Log;
         Bot.StuckEvents = 0;
         CrewBrain.MortarRounds = 0;
         Fortifications.Clear();
@@ -694,6 +696,27 @@ public partial class TerritoryMode : Node, IMatch
                     if (sq.Vehicle != null && (sq.Objective is not PointObjective pm || pm.Center.DistanceTo(sq.Vehicle.GlobalPosition) > 10f))
                         sq.Order(null, new PointObjective { Center = sq.Vehicle.GlobalPosition, Watch = sq.Vehicle.GlobalPosition }, false, sq.Kind == SquadKind.Mortar ? "Man" : "Fly", sq.Vehicle.Def.Name);
                     break;
+                case SquadKind.Drone:
+                {
+                    // Well back and out of sight (350-700 m from the target): the drones do the looking.
+                    // Setting up takes time: stay on the current job while it's still one (an attack, or the front).
+                    int td = _posts.TryGetValue(sq, out var cur) ? IndexOf(cur.Site) : -1;
+                    if (td >= 0 && !(attacks.Contains(td) || OnFront(team, td))) td = -1;
+                    if (td < 0)
+                        td = attacks.Count > 0 ? LeastBacked(attacks, Dist)
+                            : Enumerable.Range(0, Points.Length).Where(i => OnFront(team, i)).DefaultIfEmpty(-1).OrderBy(i => i < 0 ? 0f : Dist(i)).First();
+                    if (td < 0) td = Enumerable.Range(0, Points.Length).OrderBy(Dist).First();
+                    Back(td);
+                    var site = Points[td].Site;
+                    if (!_posts.TryGetValue(sq, out var post) || post.Site != site)
+                    {
+                        post = (site, FindPost(team, Points[td].Center, 350f, 700f));
+                        _posts[sq] = post;
+                        sq.Order(site, new PointObjective { Center = post.Post, Watch = Points[td].Center }, false, "Drone ops over", site.Name);
+                        Log($"[{Clock.Now:0}s] {sq.Name} (drones): {sq.OrderText} from {post.Post.DistanceTo(Points[td].Center):0} m");
+                    }
+                    break;
+                }
                 case SquadKind.Transport:
                     if (sq.Objective == null) sq.Order(null, new PointObjective { Center = Map.Bases[team], Watch = Map.Bases[team] }, false, "Transport", "duty");
                     break;
@@ -942,7 +965,12 @@ public partial class TerritoryMode : Node, IMatch
             }
             Log("     points: " + string.Join("  ", Points.Select((p, i) => $"{p.Site.Name}={(Owner[i] < 0 ? "-" : KothMode.TeamNames[Owner[i]][..1])}{Progress[i] * 100:0}[{Inside[i, 0]}/{Inside[i, 1]}/{Inside[i, 2]}]"
                 + (Front ? "{" + string.Concat(Enumerable.Range(0, 3).Where(t => CanTake(t, i)).Select(t => KothMode.TeamNames[t][..1])) + "}" : ""))));
-            Log($"     stuck events {Bot.StuckEvents}, squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, ORPs {Squad.Orps}, deployed {Squad.Deploys}, buddy swaps {Squad.BuddySwaps}, marching {string.Join(" ", Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Rifle && s.Alive > 0).GroupBy(s => s.MarchOrder).Select(g => $"{g.Key}:{g.Count()}"))}, drills {Squad.Drills} (flank {Squad.Flanks}, break {Squad.Breaks}, indirect {Squad.Indirects}, consolidate {Squad.Consolidations}), gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
+            foreach (var sq in Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Drone))
+                foreach (var m in sq.Members.OfType<Bot>().Where(m => m.Alive && m.Ops != null))
+                    Log($"     {sq.Name} {m.Callsign}: {m.Brain.State} ({m.Brain.Note}) stock {m.Ops!.Quads}q/{m.Ops.Bombs}b/{m.Ops.Fpvs}f"
+                        + (m.Ops.Quad is { Dead: false } q ? $", quad {q.GlobalPosition.DistanceTo(m.FeetPos):0} m out, {q.Bombs} bombs, batt {q.Battery:P0}, sees {q.Seen.Count(kv => Clock.Now - kv.Value < 3)}" : "")
+                        + (m.Ops.Fpv is { Dead: false } f ? $", FPV {f.GlobalPosition.DistanceTo(f.TargetPoint()):0} m to target" : ""));
+            Log($"     stuck events {Bot.StuckEvents}, squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, drones {Drone.Launched} up, {Drone.Spots} spots, {Drone.BombsDropped} bombs, {Drone.FpvStrikes} FPV hits, {Drone.ShotDown} shot down, ORPs {Squad.Orps}, deployed {Squad.Deploys}, buddy swaps {Squad.BuddySwaps}, marching {string.Join(" ", Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Rifle && s.Alive > 0).GroupBy(s => s.MarchOrder).Select(g => $"{g.Key}:{g.Count()}"))}, drills {Squad.Drills} (flank {Squad.Flanks}, break {Squad.Breaks}, indirect {Squad.Indirects}, consolidate {Squad.Consolidations}), gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
                 $"medevac'd {Motor.Evacuated}, air assaults {Motor.AirAssaults}, mortar rounds {CrewBrain.MortarRounds}, vehicles {Vehicle.All.Count(v => !v.Destroyed)} live / {Vehicle.All.Count(v => v.Destroyed)} wrecks, FOBs {Fob.All.Count}, rockets {BotBrain.Rockets}, " +
                 $"heals {BotBrain.Heals} (revives {BotBrain.Revives}, self-aid {BotBrain.SelfAids}), resupplies {BotBrain.Resupplies}, sandbags {BotBrain.Builds}, 40mm {BotBrain.Launches}, intel {Intel.Count}");
             foreach (var s in Motor.Slots)
@@ -1064,7 +1092,7 @@ public partial class TerritoryMode : Node, IMatch
         string zone = hit.Zone.ToString().ToLowerInvariant();
         _hud.AddKill(hit.Shooter, victim, $"{zone}, {hit.Distance:0} m");
         bool tk = hit.Shooter != null && hit.Shooter != victim && hit.Shooter.Team == victim.Team;
-        Log($"[{Clock.Now:0}s] {killer} killed {victim.Callsign} — {zone}, {hit.Distance:0} m{(tk ? "  TEAMKILL" : "")}");
+        Log($"[{Clock.Now:0}s] {killer} ({hit.Weapon}) killed {victim.Callsign} — {zone}, {hit.Distance:0} m{(tk ? "  TEAMKILL" : "")}");
         Spend(victim.Team, 1);
         _kills++;
 

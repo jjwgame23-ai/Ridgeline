@@ -367,7 +367,7 @@ public partial class TerritoryMap : Control
                 DrawArc(P(po.Center), 5f, 0f, Mathf.Tau, 12, col, 1.5f);
                 DrawLine(P(po.Center), P(po.Watch), col with { A = 0.3f }, 1f);
             }
-            string kind = sq.Kind switch { SquadKind.Weapons => " MG", SquadKind.Recon => " recon", SquadKind.Engineer => " eng", SquadKind.Logistics => " log", _ => "" };
+            string kind = sq.Kind switch { SquadKind.Weapons => " MG", SquadKind.Recon => " recon", SquadKind.Engineer => " eng", SquadKind.Logistics => " log", SquadKind.Drone => " UAV", _ => "" };
             DrawString(font, P(at) + new Vector2(6, -6), sq.Name + kind, HorizontalAlignment.Left, -1, 12, mine ? Colors.White : Team[0]);
         }
         // Vehicles: ours as boxes with a class letter; theirs only as reported on the radio.
@@ -377,6 +377,16 @@ public partial class TerritoryMap : Control
             var q = P(v.GlobalPosition);
             DrawRect(new Rect2(q - new Vector2(5, 4), new Vector2(10, 8)), Team[0]);
             DrawString(font, q + new Vector2(7, 4), VehLetter(v.Def.Kind), HorizontalAlignment.Left, -1, 11, Team[0]);
+        }
+        // Our drones in the air: a small cross, and what the quads' cameras cover.
+        foreach (var d in Drone.All)
+        {
+            if (d.Dead || d.Team != 0 || !IsInstanceValid(d)) continue;
+            var q = P(d.GlobalPosition);
+            DrawLine(q + new Vector2(-4, -4), q + new Vector2(4, 4), Team[0], 1.5f);
+            DrawLine(q + new Vector2(-4, 4), q + new Vector2(4, -4), Team[0], 1.5f);
+            if (d.Kind == DroneKind.Quad) DrawArc(q, (P(d.GlobalPosition + new Vector3(130f, 0f, 0f)) - q).Length(), 0f, Mathf.Tau, 32, Team[0] with { A = 0.25f }, 1f);
+            else DrawString(font, q + new Vector2(6, 4), "FPV", HorizontalAlignment.Left, -1, 10, Team[0]);
         }
         foreach (var r in Radio.Log)
         {

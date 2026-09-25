@@ -1,0 +1,298 @@
+using Godot;
+
+namespace Ridgeline;
+
+public enum DroneKind { Quad, Fpv }
+
+/// <summary>
+/// A small drone, the two kinds modern infantry actually use:
+/// - Quad (a civilian quadcopter, Mavic-type): slow (~15 m/s), hovers 60-100 m up, a camera
+///   looking down. What it sees goes to the whole side's intel picture (the map, nearby
+///   squads, the mortars' targeting). It carries a couple of grenades with impact fuses to
+///   drop on people who've gone to ground. About 8 minutes of battery.
+/// - FPV: a racing drone with a shaped charge and an impact fuse, flown fast (~38 m/s) and
+///   low, then dived into a vehicle or a position. One-way.
+/// Both are tiny and hard to hit, but a rifle round brings them down; you hear them before
+/// you see them (the quad's drone and the FPV's scream).
+/// </summary>
+public partial class Drone : Node3D
+{
+    public static readonly List<Drone> All = new();
+    public static int Launched, BombsDropped, FpvStrikes, ShotDown, Spots;
+    /// <summary>The mode's event log (verbose runs).</summary>
+    public static Action<string>? Log;
+
+    public DroneKind Kind;
+    public int Team;
+    public ICombatant Operator = null!;
+    public Vector3 Vel;
+    public bool Dead;
+    public float Battery = 1f;
+    public int Bombs;
+    /// <summary>Autopilot: where to be, and how high above the ground.</summary>
+    public Vector3? Goal;
+    public float GoalAgl = 90f;
+    /// <summary>FPV: what it's going for (a vehicle, a man, or just a point).</summary>
+    public Vehicle? TargetV;
+    public ICombatant? TargetC;
+    public Vector3 AimAt;
+    public bool Terminal;
+    /// <summary>Flown by the player: stick inputs instead of the autopilot.</summary>
+    public bool Manual;
+    public Vector3 StickMove;
+    public float StickClimb, Yaw, CamPitch, Throttle = 0.7f;
+    public double LaunchedAt;
+    /// <summary>Who the camera has picked out lately.</summary>
+    public readonly Dictionary<ICombatant, double> Seen = new();
+
+    float MaxSpeed => Kind == DroneKind.Fpv ? 38f : 15f;
+    float Accel => Kind == DroneKind.Fpv ? 26f : 6f;
+    StaticBody3D _hit = null!;
+    AudioStreamPlayer3D _snd = null!;
+    SoundWorld.LoopShape _shape = null!;
+    Node3D _visual = null!;
+    MeshInstance3D[] _props = Array.Empty<MeshInstance3D>();
+    double _scanAt, _deadAt;
+    static AudioStreamWav? _quadLoop, _fpvLoop;
+
+    public static void Clear()
+    {
+        foreach (var d in All.ToArray()) if (IsInstanceValid(d)) d.QueueFree();
+        All.Clear();
+        Launched = BombsDropped = FpvStrikes = ShotDown = Spots = 0;
+    }
+
+    public override void _Ready()
+    {
+        All.Add(this);
+        Launched++;
+        LaunchedAt = Clock.Now;
+        var dark = new StandardMaterial3D { AlbedoColor = new Color(0.16f, 0.16f, 0.17f), Roughness = 0.8f };
+        var prop = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.3f, 0.3f, 0.35f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha };
+        _visual = new Node3D();
+        AddChild(_visual);
+        float arm = Kind == DroneKind.Fpv ? 0.14f : 0.18f;
+        _visual.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = Kind == DroneKind.Fpv ? new Vector3(0.1f, 0.05f, 0.22f) : new Vector3(0.1f, 0.07f, 0.2f) }, MaterialOverride = dark });
+        if (Kind == DroneKind.Fpv) // the charge strapped under it
+            _visual.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.04f, Height = 0.3f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.34f, 0.24f) }, Position = new Vector3(0f, -0.05f, 0.05f), RotationDegrees = new Vector3(90f, 0f, 0f) });
+        var props = new List<MeshInstance3D>();
+        foreach (var (x, z) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1) })
+        {
+            _visual.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.02f, 0.02f, arm * 1.5f) }, MaterialOverride = dark, Position = new Vector3(x * arm * 0.5f, 0f, z * arm * 0.5f), RotationDegrees = new Vector3(0f, x * z * 45f, 0f) });
+            var p = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = arm * 0.55f, BottomRadius = arm * 0.55f, Height = 0.005f, RadialSegments = 12 }, MaterialOverride = prop, Position = new Vector3(x * arm, 0.03f, z * arm) };
+            _visual.AddChild(p);
+            props.Add(p);
+        }
+        _props = props.ToArray();
+
+        // Something for bullets to hit (and nothing else: characters and the navmesh ignore it).
+        _hit = new StaticBody3D { CollisionLayer = Layers.Drones, CollisionMask = 0 };
+        AddChild(_hit);
+        _hit.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = Kind == DroneKind.Fpv ? 0.16f : 0.2f } });
+
+        _quadLoop ??= SoundSynth.DroneLoop(false);
+        _fpvLoop ??= SoundSynth.DroneLoop(true);
+        _snd = new AudioStreamPlayer3D { Stream = Kind == DroneKind.Fpv ? _fpvLoop : _quadLoop, Bus = "World", Autoplay = true };
+        AddChild(_snd);
+        var tail = new AudioStreamPlayer3D { Stream = _snd.Stream, Bus = "Tail", PanningStrength = 0.35f, AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.Disabled, MaxDistance = 0f };
+        AddChild(tail);
+        // A small thing: loud up close, gone past a few hundred metres (the FPV carries further, it screams).
+        _shape = new SoundWorld.LoopShape { Tail = tail, RefDist = 2f, Falloff = 24f };
+    }
+
+    public override void _ExitTree() => All.Remove(this);
+
+    /// <summary>The ground (or roof, or treetop) under a point.</summary>
+    float GroundAt(Vector3 p)
+    {
+        var hit = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(p + Vector3.Up * 200f, p + Vector3.Down * 400f, Layers.World | Layers.Trees));
+        return hit.Count > 0 ? hit["position"].AsVector3().Y : Effects.Ground?.HeightAt(p.X, p.Z) ?? 0f;
+    }
+
+    public override void _PhysicsProcess(double delta)
+    {
+        float dt = (float)delta;
+        var pos = GlobalPosition;
+        if (Dead)
+        {
+            // Down: it falls, and lies there a while.
+            Vel += Vector3.Down * 9.81f * dt;
+            var n = pos + Vel * dt;
+            var h = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, n, Layers.World | Layers.Trees));
+            if (h.Count > 0) { Vel = Vector3.Zero; GlobalPosition = h["position"].AsVector3(); }
+            else GlobalPosition = n;
+            if (Clock.Now - _deadAt > 30.0) QueueFree();
+            return;
+        }
+        if (Kind == DroneKind.Quad) Battery -= dt / 480f;
+        if (Battery <= 0f) { Crash(); return; }
+        if (Operator is { Dead: true } && !Manual && Kind == DroneKind.Fpv) { Crash(); return; }
+
+        // Where we want to be going.
+        Vector3 want;
+        if (Manual && Kind == DroneKind.Quad)
+            want = StickMove * MaxSpeed + Vector3.Up * StickClimb * 5f;
+        else if (Manual && Kind == DroneKind.Fpv)
+            want = Basis.FromEuler(new Vector3(Mathf.DegToRad(CamPitch), Mathf.DegToRad(Yaw), 0f)) * Vector3.Forward * (MaxSpeed * Mathf.Clamp(Throttle, 0.25f, 1f));
+        else if (Kind == DroneKind.Fpv && (Terminal || TargetPoint().DistanceTo(pos) < 260f))
+        {
+            // Terminal dive: straight at the target, leading it.
+            Terminal = true;
+            var tp = TargetPoint();
+            float tof = tp.DistanceTo(pos) / MaxSpeed;
+            if (TargetV != null) tp += TargetV.Velocity3 * tof;
+            else if (TargetC != null) tp += TargetC.Vel * tof;
+            want = (tp - pos).Normalized() * MaxSpeed;
+        }
+        else if (Goal is Vector3 g)
+        {
+            var flat = (g - pos) with { Y = 0f };
+            float dist = flat.Length();
+            var h = dist > 0.5f ? flat / dist * MathF.Min(MaxSpeed, dist * 0.7f) : Vector3.Zero;
+            // Just launched: straight up clear of whatever's around before going anywhere.
+            if (Clock.Now - LaunchedAt < 6.0 && pos.Y - GroundAt(pos) < MathF.Min(15f, GoalAgl * 0.5f)) h = Vector3.Zero;
+            // Hold height over whatever's below, and look a little ahead for rising ground.
+            float ground = MathF.Max(GroundAt(pos), GroundAt(pos + h * 2f));
+            float climb = Mathf.Clamp((ground + GoalAgl - pos.Y) * 0.8f, Kind == DroneKind.Fpv ? -12f : -4f, Kind == DroneKind.Fpv ? 12f : 5f);
+            want = h + Vector3.Up * climb;
+        }
+        else want = Vector3.Zero;
+
+        Vel = Vel.MoveToward(want, Accel * dt);
+        var next = pos + Vel * dt;
+        // The FPV's fuse arms a couple of seconds out, clear of the man who launched it.
+        bool armed = Kind == DroneKind.Fpv && Clock.Now - LaunchedAt > 2.0;
+        uint mask = Layers.World | Layers.Trees | Layers.Vehicles | Layers.Doors | (armed ? Layers.Characters : 0u);
+        var excl = new Godot.Collections.Array<Rid> { _hit.GetRid() };
+        var hit = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, next, mask, excl));
+        if (hit.Count > 0)
+        {
+            if (Kind == DroneKind.Fpv && !armed) { Crash(); return; }
+            if (Kind == DroneKind.Fpv) Detonate(hit["position"].AsVector3(), hit["normal"].AsVector3(), hit["collider"].AsGodotObject());
+            else Crash();
+            return;
+        }
+        GlobalPosition = next;
+        // Close enough to a man it was going for: the fuse.
+        if (armed && TargetC is { Alive: true } tc && tc.ChestPos.DistanceTo(next) < 1.2f) { Detonate(next, Vector3.Up, tc as GodotObject); return; }
+
+        // Attitude: tilt into the direction of travel; props spin.
+        var hv = Vel with { Y = 0f };
+        if (!Manual && hv.LengthSquared() > 0.5f) Yaw = Mathf.RadToDeg(MathF.Atan2(-hv.X, -hv.Z));
+        float tilt = MathF.Min(25f, hv.Length() * (Kind == DroneKind.Fpv ? 1.2f : 1.6f));
+        _visual.Rotation = new Vector3(-Mathf.DegToRad(tilt), Mathf.DegToRad(Yaw), 0f);
+        foreach (var p in _props) p.RotateY(dt * 90f);
+
+        if (Kind == DroneKind.Quad && Clock.Now > _scanAt) { _scanAt = Clock.Now + 0.4; Scan(); }
+
+        _snd.VolumeDb = Kind == DroneKind.Fpv ? -2f : -8f;
+        _snd.PitchScale = Kind == DroneKind.Fpv ? 0.85f + Vel.Length() / MaxSpeed * 0.35f : 0.95f + Vel.Length() / MaxSpeed * 0.1f;
+        SoundWorld.I?.ShapeLoop(_snd, GlobalPosition, _shape);
+    }
+
+    public Vector3 TargetPoint() =>
+        TargetV is { Destroyed: false } v && IsInstanceValid(v) ? v.Center + Vector3.Up * 0.8f
+        : TargetC is { Alive: true } c ? c.ChestPos
+        : AimAt;
+
+    /// <summary>
+    /// The quad's camera, looking down and out to ~120 m: everyone it can see (no roof or
+    /// canopy in the way) goes on the side's intel picture and to friendlies nearby.
+    /// Vehicles get called in on the radio.
+    /// </summary>
+    void Scan()
+    {
+        var pos = GlobalPosition;
+        var space = GetWorld3D().DirectSpaceState;
+        var excl = new Godot.Collections.Array<Rid> { _hit.GetRid() };
+        double now = Clock.Now;
+        foreach (var c in Combatants.All)
+        {
+            if (!c.Alive || c.Team == Team) continue;
+            var d = c.ChestPos - pos;
+            float horiz = new Vector2(d.X, d.Z).Length();
+            if (horiz > 130f || d.Y > 0f) continue;
+            var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, c.ChestPos, Layers.World | Layers.Trees | Layers.Vehicles, excl));
+            if (h.Count > 0) continue;
+            if (!Seen.ContainsKey(c) || now - Seen[c] > 5.0)
+            {
+                Spots++;
+                Intel.Report(Team, c, c.FeetPos);
+                Squad.ReportSpotted(Team, c, c.FeetPos);
+            }
+            Seen[c] = now;
+        }
+        foreach (var v in Vehicle.All)
+        {
+            if (v.Destroyed || !v.Crewed || v.CrewTeam == Team) continue;
+            var d = v.Center - pos;
+            if (new Vector2(d.X, d.Z).Length() > 180f) continue;
+            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, v.Center, Layers.World | Layers.Trees, excl)).Count > 0) continue;
+            if (Operator.Alive) Radio.Report(Operator, RadioKind.Armor, v.Center, v);
+        }
+    }
+
+    /// <summary>Let go of a grenade: it falls with the drone's own drift, and goes off on impact.</summary>
+    public bool Drop()
+    {
+        if (Kind != DroneKind.Quad || Bombs <= 0 || Dead) return false;
+        Bombs--;
+        BombsDropped++;
+        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s quad dropped a grenade from {GlobalPosition.Y - GroundAt(GlobalPosition):0} m");
+        var p = GlobalPosition + Vector3.Down * 0.25f;
+        var dir = (Vel * 0.5f + Vector3.Down * 2f);
+        Ballistics.I.Fire(p, dir.Normalized(), dir.Length(), 0.01f, Operator, 0f, "drone-dropped grenade",
+                          ignore: _hit.GetRid(), silent: true, explosive: true, armM: 0f, pen: 20f, vehDamage: 40f, crater: 0.5f, frags: 45);
+        SoundWorld.I?.Emit(Snd.Click, GlobalPosition, -4f);
+        return true;
+    }
+
+    void Detonate(Vector3 at, Vector3 normal, GodotObject? what)
+    {
+        if (Dead) return;
+        FpvStrikes++;
+        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s FPV hit {(what is Vehicle hv ? hv.Def.Name : what is ICombatant hc ? hc.Callsign : "the ground")}{(TargetV != null ? $" (going for a {TargetV.Def.Name})" : TargetC != null ? $" (going for {TargetC.Callsign})" : "")}, {(Operator != null ? Operator.FeetPos.DistanceTo(at) : 0f):0} m from its pilot");
+        var dir = Vel.LengthSquared() > 1f ? Vel.Normalized() : Vector3.Down;
+        if (what is Vehicle)
+            // A shaped charge on the hull: the same armour model as an RPG, but from wherever the pilot came in (the top, the rear).
+            Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 400f, vehDamage: 420f, crater: 0.4f, frags: 25);
+        else
+            Grenade.Detonate(at + normal * 0.2f, normal, Operator, 55, 0.7f, 3f, "FPV drone", power: 1.5f);
+        Dead = true;
+        QueueFree();
+    }
+
+    /// <summary>The pilot sets it off.</summary>
+    public void Blow() => Detonate(GlobalPosition, Vector3.Up, null);
+
+    /// <summary>A camera riding on it shouldn't see its own arms and props.</summary>
+    public void OwnCamera(Camera3D cam)
+    {
+        const uint Own = 1u << 19;
+        foreach (var n in _visual.GetChildren())
+            if (n is MeshInstance3D m) m.Layers = Own;
+        cam.CullMask &= ~Own;
+    }
+
+    /// <summary>Out of battery, into a wall, or shot: it falls.</summary>
+    public void Crash()
+    {
+        if (Dead) return;
+        Dead = true;
+        _deadAt = Clock.Now;
+        _snd.Stop();
+        _shape.Tail?.Stop();
+        Vel = Vel * 0.3f;
+        SoundWorld.I?.Emit(Snd.Impact, GlobalPosition, -2f);
+    }
+
+    /// <summary>A round hit it. A quad goes down; an FPV's charge may go off where it is.</summary>
+    public void Hit(ICombatant? by)
+    {
+        if (Dead) return;
+        ShotDown++;
+        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s {(Kind == DroneKind.Fpv ? "FPV" : "quad")} shot down by {by?.Callsign ?? "?"}{(by?.Ride != null ? $" ({by.Ride.Def.Name})" : "")}, {(by != null ? by.EyePos.DistanceTo(GlobalPosition) : 0f):0} m, {GlobalPosition.Y - GroundAt(GlobalPosition):0} m up");
+        if (Kind == DroneKind.Fpv && GD.Randf() < 0.5f) { Detonate(GlobalPosition, Vector3.Up, null); return; }
+        Crash();
+    }
+}

@@ -112,6 +112,17 @@ public sealed class CrewBrain
                 float score = 200f - d * 0.2f + (ev.Who.Def.Heavy ? 40f : 0f) + (air && aaGun ? 300f : 0f);
                 if (score > bestScore) { bestScore = score; best = ev.Who; }
             }
+            // Drones: the AA gun's proximity rounds make short work of them; an MG will try at short range.
+            bool aaGun2 = t.Def.Ammo.Any(a => a.Prox);
+            foreach (var dr in Drone.All)
+            {
+                if (dr.Dead || dr.Team == v.CrewTeam || !GodotObject.IsInstanceValid(dr)) continue;
+                float dd = dr.GlobalPosition.DistanceTo(v.Center);
+                if (dd > (aaGun2 ? 2000f : 350f)) continue;
+                if (v.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(t.Muzzle.GlobalPosition, dr.GlobalPosition, Layers.World | Layers.Trees)).Count > 0) continue;
+                float score = (aaGun2 ? 320f : 60f) - dd * 0.1f + (dr.Kind == DroneKind.Fpv && dd < 300f ? 200f : 0f);
+                if (score > bestScore) { bestScore = score; best = dr; }
+            }
             foreach (var th in _b.Senses.Threats)
             {
                 if (!th.Visible || !th.Who.Alive) continue;
@@ -132,6 +143,7 @@ public sealed class CrewBrain
         {
             Vehicle ev when GodotObject.IsInstanceValid(ev) && !ev.Destroyed => _b.Senses.Vehicles.Find(x => x.Who == ev) is { } known ? (known.Visible ? known.AimPoint : known.LastKnownPos) : ev.Center,
             ICombatant c when c.Alive => c.ChestPos,
+            Drone dr when !dr.Dead && GodotObject.IsInstanceValid(dr) => dr.GlobalPosition,
             _ => null,
         };
         if (point is not Vector3 p)
@@ -146,6 +158,8 @@ public sealed class CrewBrain
         // Aircraft: lead them by where they'll be when the rounds get there.
         if (Target is Vehicle { Def.Air: true } ac)
             p += ac.Velocity3 * (dist / MathF.Max(t.Weapon.Speed, 1f)) + Vector3.Up * (9.81f * MathF.Pow(dist / MathF.Max(t.Weapon.Speed, 1f), 2f) * 0.5f);
+        else if (Target is Drone tdr)
+            p += tdr.Vel * (dist / MathF.Max(t.Weapon.Speed, 1f)) + Vector3.Up * (9.81f * MathF.Pow(dist / MathF.Max(t.Weapon.Speed, 1f), 2f) * 0.5f);
         // The lay settles over a couple of seconds, faster for better gunners.
         _settle = MathF.Max(0f, _settle - dt * (0.4f + _b.P.Skill * 0.6f));
         var err = _err * (dist * 0.012f * _settle + dist * 0.0015f * (1.2f - _b.P.Skill));
@@ -154,7 +168,7 @@ public sealed class CrewBrain
         bool armor = Target is Vehicle;
         // The round for the job.
         int want = -1;
-        bool vsAir = Target is Vehicle { Def.Air: true, Landed: false };
+        bool vsAir = Target is Vehicle { Def.Air: true, Landed: false } or Drone;
         for (int i = 0; i < t.Def.Ammo.Length; i++)
             if (vsAir ? t.Def.Ammo[i].Prox : armor ? t.Def.Ammo[i].AntiArmor : t.Def.Ammo[i].Explosive) { want = i; break; }
         if (want < 0 && vsAir) want = 0;

@@ -75,7 +75,7 @@ public partial class WeaponRig : Node3D
         _t += dt;
         var s = _slots[_cur];
         var d = s.Def;
-        bool canAct = P.Alive && P.Ride == null && Input.MouseMode == Input.MouseModeEnum.Captured
+        bool canAct = P.Alive && P.Ride == null && P.Piloting == null && Input.MouseMode == Input.MouseModeEnum.Captured
                       && Time.GetTicksMsec() - Hud.CapturedAtMs > 150
                       && !P.StanceLocked;
 

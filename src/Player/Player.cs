@@ -143,7 +143,7 @@ public partial class Player : CharacterBody3D, ICombatant
             MoveAndSlide();
             return;
         }
-        bool captured = Input.MouseMode == Input.MouseModeEnum.Captured;
+        bool captured = Input.MouseMode == Input.MouseModeEnum.Captured && Piloting == null;
         _stoodThisFrame = false;
         HandleStance(captured);
 
@@ -249,6 +249,7 @@ public partial class Player : CharacterBody3D, ICombatant
         float dt = (float)delta;
         _t += dt;
         HurtFlash = Mathf.MoveToward(HurtFlash, 0f, dt * 1.5f);
+        if (Piloting != null) { PilotProcess(dt); if (Piloting != null) return; }
         if (Downed) { DownedView(dt); return; }
         if (Ride != null) { VehicleProcess(dt); return; }
         if (Alive && Input.MouseMode == Input.MouseModeEnum.Captured && Input.IsActionJustPressed("use") && (TryBoard() || Door.Use(this, Cam.GlobalPosition, -Cam.GlobalBasis.Z))) return;
@@ -338,6 +339,7 @@ public partial class Player : CharacterBody3D, ICombatant
         }
         _gadgetCool -= dt;
         if (captured && Input.IsActionJustPressed("gadget") && _gadgetCool <= 0f && !Sprinting) UseGadget();
+        DroneTick(dt, captured);
         SelfAidInput(captured, dt);
         if (Kit == Role.Ammo) SupplyAround(dt);
         if (captured && Input.IsActionJustPressed("check_ammo")) Hud.Toast(Weapon.Describe(), 3f);
@@ -482,6 +484,9 @@ public partial class Player : CharacterBody3D, ICombatant
                 break;
             case Role.Ammo:
                 Hud.Toast("You hand out ammo to anyone close by, automatically", 2f);
+                break;
+            case Role.DroneOperator:
+                FlyQuad();
                 break;
             default:
                 if (Kit != null) Hud.Toast($"{Roles.Name(Kit.Value)}: no special tool", 1.5f);

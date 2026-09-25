@@ -291,6 +291,11 @@ public partial class Ballistics : Node3D
         var normal = hit["normal"].AsVector3();
         var collider = hit["collider"].AsGodotObject();
 
+        if (collider is Node { } dn && dn.GetParent() is Drone drone)
+        {
+            drone.Hit(p.Shooter);
+            return;
+        }
         if (collider is Vehicle veh)
         {
             veh.TakeProjectile(p, pos, normal);

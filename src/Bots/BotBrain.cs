@@ -205,6 +205,8 @@ public sealed class BotBrain
         }
 
         if (Sq != null && Sq.Leader == _b) Sq.UpdateMarch(_b, InZone);
+        if (DroneWork(t)) return;
+        if (TryAntiDrone(t)) return;
         if (RunDrill(t)) return;
         // The squad leader's calls: flank a contact at a sensible range; get out if it's hopeless.
         if (Sq != null && Sq.Leader == _b && Sq.Engaged && Now > _breakCheckAt)
@@ -868,6 +870,139 @@ public sealed class BotBrain
         return false;
     }
 
+    // ================================================================ drones
+
+    /// <summary>A drone operator at his post flies; if the fight comes to him, he fights (the drones hold or come home on their own).</summary>
+    bool DroneWork(Threat? t)
+    {
+        if (_b.Ops == null || Objective == null) return false;
+        var area = Watch ?? Objective.Center;
+        bool contact = t is { Visible: true } && _b.FeetPos.DistanceTo(t.LastKnownPos) < 70f;
+        // Drones in the air keep flying (and come home) whatever he's doing; new ones only go up from the post.
+        _b.Ops.Think(area, launch: InZone && !contact);
+        if (contact) return false;
+        // Short of drones and the logistics truck's close: go and get more off it.
+        if (_b.Ops.StockLevel < 0.5f && !_b.Ops.Flying
+            && Vehicle.All.Where(v => !v.Destroyed && v.Def.Kind == VKind.Logistics && v.Team == _b.Team && v.Velocity3.Length() < 1f)
+                          .OrderBy(v => v.GlobalPosition.DistanceTo(_b.FeetPos)).FirstOrDefault() is { } truck
+            && truck.GlobalPosition.DistanceTo(_b.FeetPos) < 150f)
+        {
+            if (truck.GlobalPosition.DistanceTo(_b.FeetPos) < 12f) { _b.Resupply(); return false; }
+            if (State != BotState.Advance || Now > _fetchAt) { _fetchAt = Now + 3.0; SetState(BotState.Advance, "fetching drones off the truck"); GoTo(truck.GlobalPosition); }
+            return true;
+        }
+        if (!InZone || !_b.Ops.Flying) return false;
+        if (State != BotState.Hold) SetState(BotState.Hold, "flying a drone");
+        _holdUntil = Now + 1.0;
+        _b.Stop();
+        return true;
+    }
+
+    double _droneAt, _droneCallAt, _fetchAt, _droneSince, _droneQuitUntil;
+    Drone? _droneTarget;
+
+    /// <summary>
+    /// Counter-drone. A quad overhead or an FPV coming in is heard before it's seen: the FPV's
+    /// scream from ~150 m, the quad's drone from ~120 m (and it has to be in view to shoot).
+    /// - An FPV diving at us, close: get out of its path and down.
+    /// - Otherwise shoot it (a rifle round brings any of them down; they're hard to hit), or,
+    ///   for some, get under a roof or into the trees where the camera can't see.
+    /// A man shooting at us close by comes first.
+    /// </summary>
+    bool TryAntiDrone(Threat? t)
+    {
+        if (t is { Visible: true } && _b.FeetPos.DistanceTo(t.LastKnownPos) < 60f) return false;
+        if (Now < _droneQuitUntil) return false;
+        if (Now < _droneAt && _droneTarget is { Dead: false } && GodotObject.IsInstanceValid(_droneTarget)) return EngageDrone(_droneTarget);
+        _droneTarget = null;
+        var space = _b.GetWorld3D().DirectSpaceState;
+        var eye = _b.EyePos;
+        Drone? best = null;
+        float bestD = float.MaxValue;
+        foreach (var d in Drone.All)
+        {
+            if (d.Dead || d.Team == _b.Team || !GodotObject.IsInstanceValid(d)) continue;
+            float dist = d.GlobalPosition.DistanceTo(eye);
+            if (dist > (d.Kind == DroneKind.Fpv ? 150f : 140f) || dist >= bestD) continue;
+            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, d.GlobalPosition, Layers.World | Layers.Trees)).Count > 0) continue;
+            best = d;
+            bestD = dist;
+        }
+        if (best == null) { _droneSince = 0; return false; }
+        // A quad circling at 100 m is a hard shot: after a quarter of a minute of missing, most give up on it for a while.
+        if (_droneSince == 0) _droneSince = Now;
+        else if (best.Kind == DroneKind.Quad && Now - _droneSince > 15.0)
+        {
+            _droneSince = 0;
+            _droneQuitUntil = Now + 40.0;
+            return false;
+        }
+        _droneTarget = best;
+        _droneAt = Now + 3.0;
+        if (Now > _droneCallAt) { _droneCallAt = Now + 8.0; Say(best.Kind == DroneKind.Fpv ? "FPV! FPV incoming!" : "Drone overhead!"); }
+        // An FPV coming at us: dive out of its line.
+        var rel = eye - best.GlobalPosition;
+        if (best.Kind == DroneKind.Fpv && bestD < 45f && best.Vel.Dot(rel.Normalized()) > best.Vel.Length() * 0.8f && State != BotState.Evade)
+        {
+            var side = rel.Cross(Vector3.Up).Normalized() * (_rng.Randf() < 0.5f ? -1f : 1f);
+            SetState(BotState.Evade, "FPV! get down");
+            _evadeUntil = Now + 1.5;
+            _b.MoveTo(_b.FeetPos + side * 7f, MoveMode.Sprint);
+            return true;
+        }
+        // A quad watching us: about a third of us get under cover it can't see through; the rest shoot.
+        if (best.Kind == DroneKind.Quad && (_b.GetInstanceId() % 3 == 0) && State is not (BotState.TakeCover or BotState.InCover) && HideFromAbove())
+            return true;
+        // High up, a quad is a speck: heard, called out, not worth the rounds until it comes down.
+        if (best.Kind == DroneKind.Quad && bestD > 100f) { _droneAt = 0; return false; }
+        return EngageDrone(best);
+    }
+
+    bool EngageDrone(Drone d)
+    {
+        var eye = _b.EyePos;
+        var p = d.GlobalPosition;
+        float dist = p.DistanceTo(eye);
+        if (_b.Reloading || _b.Ammo <= 0) return true;
+        // Lead it by the round's time of flight.
+        float tof = dist / MathF.Max(_b.Def.MuzzleVel, 1f);
+        var aim = p + d.Vel * tof;
+        _b.Aim.Goal = aim;
+        _b.Aim.Tracking = true;
+        _b.Aim.GoalVel = d.Vel;
+        _b.SetCrouch(false);
+        if (State is BotState.Advance or BotState.Search) { SetState(BotState.Hold, "shooting at a drone"); _holdUntil = Now + 3.0; _b.Stop(); }
+        if (Mathf.RadToDeg(_b.Aim.Dir.AngleTo(aim - eye)) < 1.2f && Now >= _nextShotAt && !FriendlyInLine(eye, aim))
+        {
+            if (_burstLeft <= 0) StartBurst(dist, false);
+            FireMode = "at a drone";
+            Shoot(dist);
+        }
+        return true;
+    }
+
+    /// <summary>Somewhere within 15 m with a roof or a canopy overhead: out of the drone's camera.</summary>
+    bool HideFromAbove()
+    {
+        var space = _b.GetWorld3D().DirectSpaceState;
+        var origin = _b.FeetPos;
+        for (int k = 0; k < 14; k++)
+        {
+            float a = _rng.Randf() * Mathf.Tau, r = _rng.RandfRange(2f, 15f);
+            var p = origin + new Vector3(MathF.Cos(a), 0f, MathF.Sin(a)) * r;
+            if (!CoverFinder.Standable(space, p, origin.Y, out var g)) continue;
+            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(g + Vector3.Up * 1.8f, g + Vector3.Up * 30f, Layers.World | Layers.Trees)).Count == 0) continue;
+            SetState(BotState.TakeCover, "hiding from the drone");
+            Cover = new CoverSpot { Pos = g, PeekPos = g };
+            _b.MoveTo(g, MoveMode.Sprint);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>What an ammo bearer can do something about: rifle ammo, not a drone team's drones.</summary>
+    static float Carried(ICombatant c) => c is Bot { Ops: not null } cb ? (cb.Def.Mags == 0 ? 1f : cb.Mags / (float)cb.Def.Mags) : c.AmmoLevel;
+
     /// <summary>Ammo bearers top up anyone who comes near, without stopping what they're doing.</summary>
     void PassiveSupply()
     {
@@ -917,7 +1052,7 @@ public sealed class BotBrain
                 float d = c.FeetPos.DistanceTo(_b.FeetPos);
                 if (d > reach) continue;
                 float need = Role == Role.Medic ? (_b.Medkits <= 0 ? 0f : MedicNeed(c))
-                                                : (c.AmmoLevel < 0.4f ? (0.4f - c.AmmoLevel) * 100f : 0f);
+                                                : (Carried(c) < 0.4f ? (0.4f - Carried(c)) * 100f : 0f);
                 if (need <= 0f) continue;
                 bool squad = c is Bot cb && cb.Squad == Sq || c is Player && Sq != null && Sq.Members.Contains(c);
                 float score = d - need * 0.8f - (squad ? 15f : 0f);
@@ -1027,7 +1162,7 @@ public sealed class BotBrain
         }
         var who = _patient;
         if (who == null || who.Dead || !GodotObject.IsInstanceValid((GodotObject)who)
-            || (_aidKind == 0 ? MedicNeed(who) <= 0f : who.AmmoLevel >= 0.99f || !who.Alive))
+            || (_aidKind == 0 ? MedicNeed(who) <= 0f : Carried(who) >= 0.99f || !who.Alive))
         {
             SetState(BotState.Advance, "done");
             _hasWaypoint = false;
