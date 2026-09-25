@@ -84,6 +84,21 @@ It's the same bot with the same state either way; only the fidelity changes.
 - **Behind you.** Sounds from behind go through a gentle high-shelf cut (head and ear shadow), the main front/back cue on headphones.
 - F3 shows which acoustic space you're in.
 
+## Ideas recorded for later (the user's)
+
+- **Drones** (next run, built on the squad foundation, the way drone tactics were added to existing infantry tactics):
+  - Civilian quadcopters (Mavic-type): recon (their sightings feed the whole side's intel picture, like recon teams) and dropping grenades or small bombs.
+  - FPV strike drones: a one-way drone with a charge and an impact fuse, flown into a target (vehicles, positions, people).
+  - A drone team (or platoon element) using both types, possibly with some division of labour.
+  - Limited stocks of FPVs and bomblets, resupplied by a logistics truck.
+  - FPVs working with recon sources and Mavic spotting.
+  - Counter-drone: spotting them, shooting them down, taking cover.
+- **Campaign war mode** (a big one; to scope separately): a whole war instead of one skirmish.
+  - A large theatre (about 100 × 100 km, e.g. an island) split into 5 × 5 km battle maps, like X4's sectors or PlanetSide 2's continents.
+  - A realistic military chain of command above the squad (platoon, company, battalion and up), so moves across the campaign map make narrative sense and taking a sector serves a real war aim beyond one round.
+  - The economy would fit here.
+  - Viability: the existing 5 km map generator can make each sector. The operational layer (units, supply, front lines across sectors) can run as the abstract simulation described above, with the sector you're in fully simulated. Needs: a campaign map generator (terrain regions, towns, roads), persistent unit rosters and supply, a strategic AI per side, and the hand-off between the abstract and full simulations.
+
 ## Milestones
 
 1. **Feel prototype (done).** Firing range: carbine and marksman rifle,
@@ -179,6 +194,30 @@ It's the same bot with the same state either way; only the fidelity changes.
      - Vehicle crews see all round, so gunners engage infantry beside and behind them, not just ahead.
      - Stairs have a handrail along each flight's open side and a rail at each landing: bots get on at the foot, not over the side, and don't step off into the stairwell.
      - Helicopters idle quietly on the ground, and a real crash (over 9 m/s) wrecks them.
+   - **Squad as a unit (built, from a review of the bot code).**
+     - Fire teams: Alpha and Bravo, dealt out by role so each gets a support weapon and a specialist; the squad leader stands apart. If he falls, the most experienced man takes over and says so.
+     - Team bounding overwatch: in a fight only the bounding team moves, all of it together, while the other team covers. They swap once the movers are set (or after 12 s).
+     - Sectors of fire: holding or consolidating on a point, the squad shares out the full circle. At a halt, men alternate sides of the direction of travel.
+     - Fire discipline: soldiers always shoot within 150 m or when returning fire. Otherwise the squad engaged in a fight fires out to about 400 m (long arms about 700 m), an unengaged squad out to about 300 m. A squad holding a point holds fire until the attackers are within about 200 m.
+     - Drills (`Squad.Drill`):
+       - React to contact (50-300 m): the team nearer the enemy suppresses, the other flanks wide.
+       - Break contact: when badly outnumbered and under real pressure, teams bound back by turns while the others cover.
+       - React to indirect fire: shell or mortar impacts within 60 m send the squad 45-70 m off the impact area.
+       - Consolidate: after taking a point the squad holds it for 40 s with 360° security, and the leader reports casualties and ammo state (green, amber or red).
+     - March orders (`Squad.MarchOrder`), picked by the squad leader from the situation:
+       - Travelling: a wedge in the open, a file along the leader's trail in town and forest.
+       - Travelling overwatch: a hostile objective within 1 km, and the second team trails about 50 m back.
+       - Bounding overwatch: inside 600 m, the leader's team advances about 50 m and stops, calls the other team up, then goes again.
+       - Herringbone at halts (alternate sides, facing out; a ring at the ORP).
+       - Assault line: abreast of the leader in the assault.
+     - Deliberate attack on an enemy-held point (`Squad.Phase`):
+       - ORP: about 150-340 m short, at least 8 s for security and orders.
+       - Deploy: the team with the automatic rifle goes to a support-by-fire position 110-180 m out, off to a flank, with a line of sight to the objective. The leader takes the other team to the line of departure (about 120 m out).
+       - Assault: support opens fire on the objective (area fire at its buildings if nobody is in sight) and the assault team goes in on line.
+       - Limit of advance: nobody chases more than 50 m past the objective during the assault or consolidation.
+       - The commander doesn't re-task a squad mid-attack. Time limits (ORP 60 s, deploy 120 s, assault 100 s) keep a stuck attack from hanging.
+     - Buddy pairs: each team is two pairs. The last 40 m are closed by buddy rushes: one dashes about 8 m to cover while the other covers, then they swap. In close combat the pair takes turns moving and firing.
+     - Not done yet: danger-area crossings (roads, open strips), which need terrain analysis along each route. That's its own run.
    - **Graphics settings (menu):** display mode (windowed, borderless or exclusive fullscreen), v-sync, frame cap, render scale (FSR below 100%), MSAA and shadows. They're saved, and F11 toggles fullscreen anywhere. Screenshot and test runs stay windowed.
    - **3c:** scale. The abstract far-away simulation and the promotion/demotion handover described above, reaching 3×33 with persistent aftermath.
 4. **Economy.** Cash, buy screen, gear loss, and bots buying loadouts.

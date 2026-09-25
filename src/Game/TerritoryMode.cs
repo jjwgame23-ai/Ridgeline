@@ -213,6 +213,8 @@ public partial class TerritoryMode : Node, IMatch
         int k = 0;
         BotBrain.ResetStatics();
         Squad.Engagements = Squad.Assaults = Squad.Hunts = 0;
+        Squad.ResetAll();
+        Squad.Orps = Squad.Deploys = Squad.BuddySwaps = 0;
         Bot.StuckEvents = 0;
         CrewBrain.MortarRounds = 0;
         Fortifications.Clear();
@@ -496,7 +498,7 @@ public partial class TerritoryMode : Node, IMatch
         var defenders = new HashSet<Squad>();
         if (Front)
         {
-            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && s.Alive > 0 && s.Transport == null).ToList();
+            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && s.Alive > 0 && s.Transport == null && !s.Busy).ToList();
             // One in three: with only two rifle squads both attack (engineers still dig in on the front).
             int want = rifles.Count / 3;
             var front = Enumerable.Range(0, n).Where(i => OnFront(team, i))
@@ -522,6 +524,8 @@ public partial class TerritoryMode : Node, IMatch
         foreach (var sq in Squads[team])
         {
             if (sq.PlayerOrderUntil > Clock.Now || sq.Kind != SquadKind.Rifle || defenders.Contains(sq)) continue;
+            // Consolidating, or in the middle of a deliberate attack: leave them to finish it.
+            if (sq.Busy || sq.Phase != AssaultPhase.None) { if (sq.Site != null) assigned[IndexOf(sq.Site)]++; continue; }
             if (sq.Transport != null && sq.Site != null) { assigned[IndexOf(sq.Site)]++; continue; } // riding there: don't change its mind mid-journey
             var origin = sq.Position ?? Map.Bases[team];
             int best = -1;
@@ -938,7 +942,7 @@ public partial class TerritoryMode : Node, IMatch
             }
             Log("     points: " + string.Join("  ", Points.Select((p, i) => $"{p.Site.Name}={(Owner[i] < 0 ? "-" : KothMode.TeamNames[Owner[i]][..1])}{Progress[i] * 100:0}[{Inside[i, 0]}/{Inside[i, 1]}/{Inside[i, 2]}]"
                 + (Front ? "{" + string.Concat(Enumerable.Range(0, 3).Where(t => CanTake(t, i)).Select(t => KothMode.TeamNames[t][..1])) + "}" : ""))));
-            Log($"     stuck events {Bot.StuckEvents}, squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
+            Log($"     stuck events {Bot.StuckEvents}, squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, ORPs {Squad.Orps}, deployed {Squad.Deploys}, buddy swaps {Squad.BuddySwaps}, marching {string.Join(" ", Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Rifle && s.Alive > 0).GroupBy(s => s.MarchOrder).Select(g => $"{g.Key}:{g.Count()}"))}, drills {Squad.Drills} (flank {Squad.Flanks}, break {Squad.Breaks}, indirect {Squad.Indirects}, consolidate {Squad.Consolidations}), gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
                 $"medevac'd {Motor.Evacuated}, air assaults {Motor.AirAssaults}, mortar rounds {CrewBrain.MortarRounds}, vehicles {Vehicle.All.Count(v => !v.Destroyed)} live / {Vehicle.All.Count(v => v.Destroyed)} wrecks, FOBs {Fob.All.Count}, rockets {BotBrain.Rockets}, " +
                 $"heals {BotBrain.Heals} (revives {BotBrain.Revives}, self-aid {BotBrain.SelfAids}), resupplies {BotBrain.Resupplies}, sandbags {BotBrain.Builds}, 40mm {BotBrain.Launches}, intel {Intel.Count}");
             foreach (var s in Motor.Slots)
@@ -1027,6 +1031,9 @@ public partial class TerritoryMode : Node, IMatch
                 Owner[i] = top;
                 Capper[i] = -1;
                 Announce(-1, top, $"{KothMode.TeamNames[top]} captured {name}");
+                // The squads that took it consolidate on it before moving on.
+                foreach (var sq in Squads[top])
+                    if (sq.Kind == SquadKind.Rifle && sq.Site == Points[i].Site && !sq.Defend && sq.PlayerOrderUntil <= Clock.Now) sq.Consolidate(Points[i].Site, Points[i]);
                 // New ground: the commander reconsiders now rather than in 20 s.
                 _commandAt[top] = Math.Min(_commandAt[top], Clock.Now + 2.0);
             }

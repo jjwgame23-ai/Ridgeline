@@ -77,5 +77,6 @@ public partial class Grenade : RigidBody3D
             Ballistics.I.Fire(pos + up * 0.1f, dir, rng.RandfRange(900f, 1400f), 0.012f, by, 32f, weapon, ignore, silent: true);
         }
         Combatants.Blast(pos, power);
+        if (power >= 2f) Squad.IndirectImpact(pos);
     }
 }

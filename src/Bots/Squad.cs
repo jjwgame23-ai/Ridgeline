@@ -48,7 +48,7 @@ public sealed class FollowObjective : IObjective
 /// objective they spread out over it. In a fight it rations movement, so only a
 /// few bound forward at once while the rest keep the enemy's heads down.
 /// </summary>
-public sealed class Squad
+public sealed partial class Squad
 {
     public int Team, Number;
     public SquadKind Kind = SquadKind.Rifle;
@@ -117,12 +117,24 @@ public sealed class Squad
     {
         get
         {
-            // A player who picked squad leader leads; otherwise the first bot does.
+            // A player who picked squad leader leads; then the squad leader himself; failing
+            // him, the most experienced man left (a team leader), not whoever happens to be first.
+            ICombatant? best = null;
+            float bestScore = float.MinValue;
             foreach (var m in Members)
-                if (m is Player { Alive: true, Kit: Role.Leader } && GodotObject.IsInstanceValid((GodotObject)m)) return m;
-            foreach (var m in Members)
-                if (m is Bot { Alive: true } && GodotObject.IsInstanceValid((GodotObject)m)) return m;
-            return null;
+            {
+                if (!m.Alive || !GodotObject.IsInstanceValid((GodotObject)m)) continue;
+                if (m is Player { Kit: Role.Leader }) return m;
+                if (m is not Bot b) continue;
+                float score = (b.Role == Role.Leader ? 10f : 0f) + b.P.Skill;
+                if (score > bestScore) { bestScore = score; best = m; }
+            }
+            if (best != _lastLeader)
+            {
+                if (_lastLeader != null && !_lastLeader.Alive && best is Bot nb) Comms.Say(nb, $"{_lastLeader.Callsign}'s down! I've got the squad!");
+                _lastLeader = best;
+            }
+            return best;
         }
     }
 
@@ -144,6 +156,9 @@ public sealed class Squad
         OrderSince = Clock.Now;
         StagedFor = null;
         StageSince = -1;
+        AssaultOn = null;
+        _bowWaiting = false;
+        if (Phase != AssaultPhase.None) SetPhase(AssaultPhase.None);
         foreach (var m in Members)
             if (m is Bot { Alive: true } b && GodotObject.IsInstanceValid(b)) b.Brain.ObjectiveChanged();
     }
@@ -167,7 +182,11 @@ public sealed class Squad
     /// <summary>How many may move at once: a third of the squad, at least one.</summary>
     public bool MayMove(double now) => MovingCount(now) < Math.Max(1, Alive / 3);
 
-    public void MarkMoving(ICombatant c, double until) => _moving[c] = until;
+    public void MarkMoving(ICombatant c, double until)
+    {
+        _moving[c] = until;
+        NoteMoved(c);
+    }
 
     // ---------------------------------------------------------------- formation
 
@@ -220,6 +239,8 @@ public sealed class Squad
         if (fwd.LengthSquared() < 0.01f) fwd = Vector3.Forward;
         fwd = fwd.Normalized();
         var right = fwd.Cross(Vector3.Up);
+        // March order and the attack's phases first; otherwise the ground decides the shape.
+        if (lead is not Player && OrderSlot(b, lead, i, fwd, right) is Vector3 os) return os;
         int row = i / 2 + 1;
         float side = i % 2 == 0 ? -1f : 1f;
         // The shape depends on the ground the leader is on (see Surroundings).
