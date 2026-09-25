@@ -69,6 +69,35 @@ public sealed class Squad
     public static void ReportSpotted(int team, ICombatant who, Vector3 at) => Spotted?.Invoke(team, who, at);
     public readonly List<ICombatant> Members = new();
 
+    /// <summary>
+    /// The squad is in a fight (someone's been shot at, hurt, or the leader called it):
+    /// until then, contacts that aren't in the way are bypassed on the way to the objective;
+    /// once engaged, everyone fights back rather than walking on and getting shot.
+    /// </summary>
+    /// <summary>An assault on an enemy-held point forms up short of it first; this is the objective it's formed up for.</summary>
+    public IObjective? StagedFor;
+    public double StageSince = -1;
+    /// <summary>Is this site held by the enemy (or known to have enemies on it), for this team? Set by the game mode.</summary>
+    public static Func<Site, int, bool>? Hostile;
+
+    public double EngagedUntil = -1;
+    public Vector3 ContactAt;
+    public bool Engaged => Clock.Now < EngagedUntil;
+    public void Engage(Vector3 at)
+    {
+        bool fresh = !Engaged;
+        ContactAt = at;
+        EngagedUntil = Clock.Now + 20.0;
+        if (!fresh) return;
+        Engagements++;
+        // Holding a point and it's attacked: everyone takes up a position facing the attack now.
+        if (Defend)
+            foreach (var m in Members)
+                if (m is Bot { Alive: true } b && GodotObject.IsInstanceValid(b)) b.Brain.ObjectiveChanged();
+    }
+
+    public static int Engagements, Assaults, Hunts;
+
     public IObjective? Objective { get; private set; }
     public Site? Site { get; private set; }
     public bool Defend { get; private set; }
@@ -113,6 +142,8 @@ public sealed class Squad
         Defend = defend;
         if (!changed) return;
         OrderSince = Clock.Now;
+        StagedFor = null;
+        StageSince = -1;
         foreach (var m in Members)
             if (m is Bot { Alive: true } b && GodotObject.IsInstanceValid(b)) b.Brain.ObjectiveChanged();
     }

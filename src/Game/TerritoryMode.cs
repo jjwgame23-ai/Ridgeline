@@ -15,19 +15,31 @@ public sealed class SiteObjective : IObjective
     public Vector3 PointFor(Bot b, RandomNumberGenerator rng)
     {
         b.LookOut = null;
-        // Holding a town district: take a window or a rooftop facing out, if there's one free.
-        if (Site.Perches.Count > 0 && b.Squad is { Defend: true } && rng.Randf() < 0.6f)
-            for (int k = 0; k < 6; k++)
+        // Under attack: the side it's coming from. Otherwise, outward all round.
+        var threat = b.Squad is { Defend: true, Engaged: true } sq0 ? (sq0.ContactAt - Site.Center) with { Y = 0f } : Vector3.Zero;
+        var threatDir = threat.LengthSquared() > 25f ? threat.Normalized() : Vector3.Zero;
+        // Holding a town district: take a window or a rooftop facing out (toward the attack), if there's one free.
+        if (Site.Perches.Count > 0 && b.Squad is { Defend: true } && rng.Randf() < (threatDir != Vector3.Zero ? 0.8f : 0.6f))
+            for (int k = 0; k < 10; k++)
             {
                 var p = Site.Perches[rng.RandiRange(0, Site.Perches.Count - 1)];
                 var outward = (p.Pos - Site.Center) with { Y = 0f };
                 if (outward.LengthSquared() > 1f && outward.Normalized().Dot(p.Out) < 0.2f) continue; // faces into the point
+                if (threatDir != Vector3.Zero && p.Out.Dot(threatDir) < 0.3f) continue;            // faces away from the attack
                 if (Combatants.All.Any(c => c != b && c.Team == b.Team && c.Alive && c.FeetPos.DistanceTo(p.Pos) < 1.5f)) continue;
                 b.LookOut = p.Out;
                 return p.Pos;
             }
-        // Mostly the buildings and cover; sometimes anywhere on the point.
-        if (Site.Points.Count > 0 && rng.Randf() < 0.7f) return Site.Points[rng.RandiRange(0, Site.Points.Count - 1)];
+        // Mostly the buildings and cover; sometimes anywhere on the point. Defending against an attack: the near side.
+        if (Site.Points.Count > 0 && rng.Randf() < 0.7f)
+        {
+            for (int k = 0; k < (threatDir != Vector3.Zero ? 6 : 1); k++)
+            {
+                var p = Site.Points[rng.RandiRange(0, Site.Points.Count - 1)];
+                if (threatDir == Vector3.Zero || ((p - Site.Center) with { Y = 0f }).Dot(threatDir) > 0f) return p;
+            }
+            return Site.Points[rng.RandiRange(0, Site.Points.Count - 1)];
+        }
         float a = rng.Randf() * Mathf.Tau, r = MathF.Sqrt(rng.Randf()) * R * 0.8f;
         return Map.Ground(Site.Center + new Vector3(MathF.Cos(a) * r, 0f, MathF.Sin(a) * r));
     }
@@ -169,6 +181,11 @@ public partial class TerritoryMode : Node, IMatch
         for (int t = 0; t < 3; t++) Tickets[t] = StartTickets;
         Front = Settings.FrontLine;
         BuildLinks();
+        Squad.Hostile = (site, team) =>
+        {
+            int i = IndexOf(site);
+            return i >= 0 && ((Owner[i] >= 0 && Owner[i] != team) || Inside[i, (team + 1) % 3] + Inside[i, (team + 2) % 3] > 0);
+        };
         if (Front)
         {
             // Each side starts holding its own sector: every point clearly nearer its base than
@@ -195,6 +212,8 @@ public partial class TerritoryMode : Node, IMatch
         var names = Personality.Callsigns.OrderBy(_ => _rng.Randi()).ToList();
         int k = 0;
         BotBrain.ResetStatics();
+        Squad.Engagements = Squad.Assaults = Squad.Hunts = 0;
+        Bot.StuckEvents = 0;
         CrewBrain.MortarRounds = 0;
         Fortifications.Clear();
         Motor = new MotorPool(this);
@@ -471,9 +490,38 @@ public partial class TerritoryMode : Node, IMatch
         var assigned = new int[n];
         foreach (var sq in Squads[team])
             if (sq.Kind == SquadKind.Rifle && sq.PlayerOrderUntil > Clock.Now && sq.Site != null) assigned[Array.FindIndex(Points, o => o.Site == sq.Site)]++;
+
+        // Defenders (front line): about one rifle squad in three holds the most threatened points
+        // on our side of the front, so ground taken isn't simply walked away from.
+        var defenders = new HashSet<Squad>();
+        if (Front)
+        {
+            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && s.Alive > 0 && s.Transport == null).ToList();
+            // One in three: with only two rifle squads both attack (engineers still dig in on the front).
+            int want = rifles.Count / 3;
+            var front = Enumerable.Range(0, n).Where(i => OnFront(team, i))
+                .OrderByDescending(i => known[i].Count * 3 + (Inside[i, (team + 1) % 3] + Inside[i, (team + 2) % 3] > 0 ? 6 : 0) + (Progress[i] < 0.95f ? 4 : 0)).ToList();
+            foreach (int i in front.Take(want))
+            {
+                var pos = Points[i].Center;
+                var sq = rifles.Where(s => !defenders.Contains(s))
+                    // A squad already defending keeps the job (swapping roles every cycle just marches everyone about).
+                    .OrderBy(s => (s.Position ?? Map.Bases[team]).DistanceTo(pos) - (s.Defend ? 1500f : 0f) - (s.Site == Points[i].Site && s.Defend ? 2000f : 0f)).FirstOrDefault();
+                if (sq == null) break;
+                defenders.Add(sq);
+                assigned[i]++;
+                bool changed = sq.Site != Points[i].Site || !sq.Defend;
+                sq.Order(Points[i].Site, Points[i], true);
+                if (!changed) continue;
+                if (sq.Leader is Bot dl) Comms.Say(dl, $"{sq.Name}, we're holding {Points[i].Site.Name}. Dig in!");
+                if (sq == PlayerSquad) _hud.Center($"Squad orders: {sq.OrderText}", 4f);
+                Log($"[{Clock.Now:0}s] {sq.Name}: {sq.OrderText} (defenders)");
+            }
+        }
+
         foreach (var sq in Squads[team])
         {
-            if (sq.PlayerOrderUntil > Clock.Now || sq.Kind != SquadKind.Rifle) continue;
+            if (sq.PlayerOrderUntil > Clock.Now || sq.Kind != SquadKind.Rifle || defenders.Contains(sq)) continue;
             if (sq.Transport != null && sq.Site != null) { assigned[IndexOf(sq.Site)]++; continue; } // riding there: don't change its mind mid-journey
             var origin = sq.Position ?? Map.Bases[team];
             int best = -1;
@@ -890,7 +938,7 @@ public partial class TerritoryMode : Node, IMatch
             }
             Log("     points: " + string.Join("  ", Points.Select((p, i) => $"{p.Site.Name}={(Owner[i] < 0 ? "-" : KothMode.TeamNames[Owner[i]][..1])}{Progress[i] * 100:0}[{Inside[i, 0]}/{Inside[i, 1]}/{Inside[i, 2]}]"
                 + (Front ? "{" + string.Concat(Enumerable.Range(0, 3).Where(t => CanTake(t, i)).Select(t => KothMode.TeamNames[t][..1])) + "}" : ""))));
-            Log($"     stuck events {Bot.StuckEvents}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
+            Log($"     stuck events {Bot.StuckEvents}, squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
                 $"medevac'd {Motor.Evacuated}, air assaults {Motor.AirAssaults}, mortar rounds {CrewBrain.MortarRounds}, vehicles {Vehicle.All.Count(v => !v.Destroyed)} live / {Vehicle.All.Count(v => v.Destroyed)} wrecks, FOBs {Fob.All.Count}, rockets {BotBrain.Rockets}, " +
                 $"heals {BotBrain.Heals} (revives {BotBrain.Revives}, self-aid {BotBrain.SelfAids}), resupplies {BotBrain.Resupplies}, sandbags {BotBrain.Builds}, 40mm {BotBrain.Launches}, intel {Intel.Count}");
             foreach (var s in Motor.Slots)

@@ -11,7 +11,7 @@ namespace Ridgeline;
 /// </summary>
 public partial class NavBaker : Node
 {
-    const string Version = "v12"; // bump when map generation or nav settings change
+    const string Version = "v13"; // bump when map generation or nav settings change
     /// <summary>
     /// Tile corners and sizes are multiples of this (the least common multiple of the
     /// people's 0.35 m and the vehicles' 0.5 m cells), so every tile's voxel grid is the same

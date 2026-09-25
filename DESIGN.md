@@ -156,6 +156,14 @@ It's the same bot with the same state either way; only the fidelity changes.
      - A squadmate only takes over the leader's route from a point it can walk straight to. In towns and indoors the squad files along the leader's actual trail instead of taking formation positions that can land inside walls or under a staircase.
      - Fixed an old bug: a new order arriving within 0.6 s of the last path query kept the finished old path, so the bot "arrived" before the new path was ever planned.
      - On Novigrad at 20 per side, stuck events went from 713 to 266 over 7 minutes.
+   - **Situational awareness (built).**
+     - Squad engagement: a squad is engaged once anyone in it is shot at, hurt or suppressed, or an enemy is within 60 m. The leader also engages further contacts that are in the way (near the route or the objective) and not too many. An engaged squad fights back instead of walking on to the objective. Contacts that aren't in the way are bypassed.
+     - Defenders: with the front line, about a third of each side's rifle squads hold the most threatened front-line points. When their point is attacked, they take windows, rooftops and cover on the side the attack is coming from.
+     - Assaults: a squad attacking an enemy-held point forms up 60-190 m short (most of the squad within 25 m, or 25 s at most), then the leader calls the assault and they go in together.
+     - Armour memory: infantry remember armour they saw in the last 20 s, and hear it moving close by (heavy vehicles within 220 m, light within 140 m). AT soldiers who can hurt it go hunting from a flank. Everyone else stays in cover from where it was instead of walking back into its sights.
+     - Vehicle crews see all round, so gunners engage infantry beside and behind them, not just ahead.
+     - Stairs have a handrail along each flight's open side and a rail at each landing: bots get on at the foot, not over the side, and don't step off into the stairwell.
+     - Helicopters idle quietly on the ground, and a real crash (over 9 m/s) wrecks them.
    - **Graphics settings (menu):** display mode (windowed, borderless or exclusive fullscreen), v-sync, frame cap, render scale (FSR below 100%), MSAA and shadows. They're saved, and F11 toggles fullscreen anywhere. Screenshot and test runs stay windowed.
    - **3c:** scale. The abstract far-away simulation and the promotion/demotion handover described above, reaching 3×33 with persistent aftermath.
 4. **Economy.** Cash, buy screen, gear loss, and bots buying loadouts.

@@ -281,7 +281,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     bool BodyClear(Vector3 a, Vector3 b)
     {
         var space = GetWorld3D().DirectSpaceState;
-        foreach (float h in new[] { 0.75f, 1.35f })
+        // One sweep at hip-to-chest height (0.7-1.3 m) catches corners, window sills and low walls.
+        foreach (float h in new[] { 1.0f })
         {
             _probeQ.Transform = new Transform3D(Basis.Identity, a + Vector3.Up * h);
             _probeQ.Motion = b - a;
@@ -389,7 +390,9 @@ public partial class Bot : CharacterBody3D, ICombatant
             {
                 _routeCheckT = 0.7f;
                 var wp = _path[_pathIdx];
-                if (Flat(wp - pos).Length() < 20f && MathF.Abs(wp.Y - pos.Y) < 0.8f && !BodyClear(pos, wp) && Clock.Now - _lastRepath > 0.6) Repath();
+                // Only when it's actually held up (walking fine round a bend is no reason to re-plan).
+                if (new Vector2(Velocity.X, Velocity.Z).Length() < 1.2f && Flat(wp - pos).Length() < 20f && MathF.Abs(wp.Y - pos.Y) < 0.8f
+                    && !BodyClear(pos, wp) && Clock.Now - _lastRepath > 1.5) Repath();
             }
 
             // Stuck on something: try again from here.

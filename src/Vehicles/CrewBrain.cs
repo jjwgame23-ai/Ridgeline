@@ -84,6 +84,8 @@ public sealed class CrewBrain
         }
     }
 
+    public static int InfantryTargets, InfantryShots, ArmorShots;
+
     void Gun(Vehicle v, int ti, float dt)
     {
         var t = v.Turrets[ti];
@@ -117,6 +119,7 @@ public sealed class CrewBrain
                 float score = 100f - d * 0.2f;
                 if (score > bestScore) { bestScore = score; best = th.Who; }
             }
+            if (best is ICombatant) InfantryTargets++;
             if (best != Target)
             {
                 Target = best;
@@ -171,6 +174,6 @@ public sealed class CrewBrain
             if (now > _burstUntil) return;
         }
         else _nextShot = now + _rng.RandfRange(0.4f, 1.5f); // a moment to confirm the lay
-        v.Fire(ti, useCoax, dist);
+        if (v.Fire(ti, useCoax, dist)) { if (armor) ArmorShots++; else InfantryShots++; }
     }
 }

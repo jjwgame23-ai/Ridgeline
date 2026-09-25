@@ -452,6 +452,11 @@ public sealed class Builder
                 // Thick, so it rasterises solidly into the navmesh whatever its angle to the grid.
                 var c = L((sx0 + sx1) / 2f, y + S / 2f - 0.3f / MathF.Cos(th), (zs + ze) / 2f);
                 BoxXf(new Transform3D(basis, c), new Vector3(SW, 0.6f, rl), slab, floor: true);
+                // A handrail along the open side: you get on at the foot and off at the head, not over the side.
+                var rail = L(sx1 - 0.05f, y + S / 2f + 0.5f / MathF.Cos(th), (zs + ze) / 2f);
+                BoxXf(new Transform3D(basis, rail), new Vector3(0.08f, 1.0f, rl - 0.3f), Mats.Metal);
+                // And at the floor it arrives at, a rail along the stairwell so nobody steps off into it.
+                if (!last) LBox(sx1 + 0.05f, top + 0.5f, (zs + ze) / 2f, new Vector3(0.1f, 1f, SL), Mats.Metal);
             }
         }
 

@@ -1,0 +1,280 @@
+Your bots already do a lot of the *individual* soldier stuff well — cover selection, suppressive fire, flick-aim, bounded movement. What's missing is the *squad* layer: real infantry tactics are mostly about **two sub-units covering each other**, **drills that fire as a whole**, and **command delegation**. Here's a prioritized set of changes with sketches in your style.
+
+---
+
+## 1. Give the squad real internal structure (fire teams)
+
+The single biggest lever. Right now `Squad.Members` is a flat list, so every tactical behavior is either "all of us" or "one third of us". Real squads are **leader + two fire teams**, each with its own team leader.
+
+```csharp
+public enum TeamRole { Assault, Support, BaseOfFire, Recon }
+
+public sealed class FireTeam
+{
+    public string Name = "Alpha";              // "Alpha", "Bravo"
+    public ICombatant? Leader;                 // a corporal
+    public TeamRole Role = TeamRole.Assault;
+    public Vector3 SectorFacing;               // which way they watch
+    public float   SectorWidthDeg = 90f;
+    public Vector3? BoundTo;                    // their current bound objective
+    public bool    InPosition;                  // set when leader says "set"
+    public readonly List<ICombatant> Members = new();
+
+    public bool AllAlive => Members.Any(m => m.Alive);
+}
+```
+
+In `Squad.Join`, assign each new member to a team by role so each team is balanced (one AR/support weapon, one grenadier or AT, one rifleman). Each team has exactly one bot flagged as `TeamLeader` (rank, seniority — pick the one with highest `P.Skill`, not "first in list"). The squad leader keeps `Leader` as before.
+
+Almost everything below falls out of this.
+
+---
+
+## 2. Bounding overwatch at the *team* level, not the member level
+
+Your current rule — `MayMove(now) => MovingCount < max(1, Alive/3)` — is a decent approximation of "only some of us moving" but it's not how a squad bounds. The real pattern:
+
+- Team A **bounds** to the next covered position (30–50 m).
+- Team B **overwatches** from a set position, oriented on the bound.
+- When A is set and has reported "set", they swap.
+
+```csharp
+public FireTeam Bounding { get; private set; } = null!;
+public FireTeam Overwatch { get; private set; } = null!;
+public double NextSwapAt;
+
+public bool TrySwapBound(double now)
+{
+    if (now < NextSwapAt) return false;
+    if (!Bounding.InPosition && now < NextSwapAt + 6.0) return false;
+    (Bounding, Overwatch) = (Overwatch, Bounding);
+    // Overwatch team holds and covers; bounding team moves.
+    foreach (var m in Overwatch.Members) if (m is Bot b) b.Brain.CoverTeam(Bounding);
+    NextSwapAt = now + BoundDuration;   // ~ time to move 40 m at squad pace
+    return true;
+}
+```
+
+Team-level bounding also naturally produces "leapfrog" through urban terrain — the overwatching team is anchored on a corner while the other rushes the next one. `Squad.MayMove` should just be `Bounding.Members.Any(...)`, and `MarkMoving` becomes team scoped.
+
+---
+
+## 3. Squad-level battle drills
+
+Your `BotBrain` state machine handles individual reactions. A squad needs its own drill state *on top* that teams execute:
+
+```csharp
+public enum SquadDrill
+{
+    None, ReactToContact, ReactToAmbushNear, ReactToAmbushFar,
+    BreakContact, Assault, Consolidate, ReactToIndirect, HastyDefense
+}
+public SquadDrill Drill { get; private set; }
+public double DrillSince;
+```
+
+Each drill sets `Bounding`/`Overwatch` roles, a phase, and where the SL wants teams to go. The brain consults `Sq.Drill` before picking its personal state.
+
+- **ReactToContact** (they saw us first, at range): nearest team drops and returns fire (Support), other team flanks wide on the SL's order (Assault). Standard stuff you already do for individuals — just coordinated.
+- **ReactToAmbushNear** (< 30 m, from the front): the entire squad *assaults through* the kill zone immediately — up, moving, firing. No cover.
+- **ReactToAmbushFar** (> 100 m, from a flank): break contact to the rear, alternating bounds, one team at a time. Right now a bot under fire just picks cover; there's no notion of leaving.
+- **BreakContact**: base-of-fire team suppresses, the other bounds back 40 m, swap. Continue until out of range or behind a crest.
+- **Assault** (see #7 below).
+- **Consolidate** (see #9 below).
+- **ReactToIndirect**: get off the impact pattern, not just out of the current shell — move 100 m perpendicular to the fall of shot, reorient.
+- **HastyDefense**: on taking an objective, both teams go to ground facing the counterattack axis.
+
+This is the layer that makes a squad feel like a squad rather than six men doing their own thing.
+
+---
+
+## 4. Sectors of fire
+
+Right now `UpdateAim` when paused looks down a generic "toward the enemy side" direction. Every bot crowds the same bearing, and a defensive position looks like six people staring at one spot.
+
+Assign each team, and each member within a team, a sector:
+
+```csharp
+// Squad, called when stationary and defending / in overwatch / in Consolidate:
+public void AssignSectors(Vector3 facing)
+{
+    int i = 0, n = Members.Count(m => m.Alive);
+    foreach (var m in Members.Where(m => m.Alive))
+    {
+        float deg = -90f + 180f * (i / (float)Math.Max(1, n - 1));   // ±90° arc
+        if (m is Bot b) b.Brain.SectorFacing = facing.Rotated(Vector3.Up, Mathf.DegToRad(deg));
+        i++;
+    }
+}
+```
+
+`UpdateAim` while paused: sweep a small arc around `SectorFacing`, not around the enemy side. Also assign sectors around a *point* (not a direction) for a perimeter — 360° split by clock position — which is what `Consolidate` needs.
+
+---
+
+## 5. Formations driven by tactical situation, not only terrain
+
+You pick formation from `EnvKind`. Real infantry pick from the *threat picture*. Add a march order:
+
+```csharp
+public enum MarchOrder
+{
+    Column,               // single file, low threat, max speed
+    Travelling,           // wedge / loose, watchful
+    TravellingOverwatch,  // one team leads ~80 m, one behind, ready
+    BoundingOverwatch,    // teams leapfrog; slow but contact-ready
+    Herringbone,          // short halt: pull to alternating sides, face out
+    AssaultLine           // abreast, on-line, at the assault
+}
+```
+
+The SL picks it from `Senses.Threats`, `Intel.Cluster`, and distance-to-objective:
+
+- No contact, far from objective → `Travelling`.
+- Approaching hostile objective → `TravellingOverwatch`, then `BoundingOverwatch` inside ~300 m.
+- On halt (waiting for a straggler, ORP, casualty) → `Herringbone`.
+- Assault phase → `AssaultLine`.
+
+`SlotFor` then consults the march order *and* `EnvKind`. File along a trail in urban/forest stays; wedge only in open field under `Travelling`, not `Column`.
+
+---
+
+## 6. A real chain of command: SL → team leaders → members
+
+Right now every bot reads `Squad.Objective` directly, so if the leader dies, `Leader` just picks "next bot alive" — no continuity of intent, no delegation. Restructure:
+
+- Higher HQ orders the **SL** (already works via `Squad.Order`).
+- SL translates to **team orders**: `team.Role = Assault | Support`, `team.BoundTo = pos`, `team.SectorFacing = ...`.
+- Team leaders position their members within the team's slot (they call `TeamSlotFor` for their own members).
+- Members execute.
+
+```csharp
+public sealed class TeamOrder
+{
+    public TeamRole Role;
+    public Vector3? BoundTo;
+    public Vector3 SectorFacing;
+    public double IssuedAt;
+}
+public readonly Dictionary<FireTeam, TeamOrder> Orders = new();
+public void Issue(FireTeam team, TeamOrder o) { Orders[team] = o; /* radio */ }
+```
+
+Two benefits: (a) teams act semi-autonomously when the SL is out of contact or dead — the senior team leader assumes; (b) you can issue real FRAGOs ("Alpha, bound to the yellow house; Bravo, cover"), which is what drives the drill transitions.
+
+---
+
+## 7. Assault geometry: ORP → LD → assault line → LOA
+
+Your `FormingUp` is already close to an **objective rally point**. Formalize it:
+
+```csharp
+public Vector3? Orp;         // ~200–300 m short of objective, on covered ground
+public Vector3? Ld;          // line of departure: where the assault kicks off
+public Vector3? Loa;         // limit of advance: 50 m past objective; DO NOT CHASE PAST IT
+public double OrpSetAt;
+```
+
+Flow:
+
+1. On approach to a hostile `SiteObjective`, SL halts at ~250 m — that's the ORP. Squad takes herringbone, sectors out.
+2. SL (optionally with one scout) makes a short recon bound toward the objective, sees the layout, returns.
+3. SL briefs (radio, not voice, if close): "Alpha assault left, Bravo support right."
+4. On the order "Assault!", both teams go `AssaultLine`, sprint + fire.
+5. When the first bot crosses the **LOA**, the drill flips to `Consolidate`. Nobody runs past it.
+
+The LOA rule alone fixes the classic AI failure mode of a squad sprinting past the objective into the next time zone.
+
+---
+
+## 8. Close-range buddy-pair tactics
+
+Your `ActEngage` has each bot strafing independently. Below ~15 m, real infantry work in **buddy pairs**: one fires, one moves. Always. Swap when the mover is set.
+
+```csharp
+public sealed class BuddyPair { public ICombatant A, B; public ICombatant Moving; }
+```
+
+In `ActEngage`:
+
+```csharp
+var buddy = Sq?.BuddyOf(_b);
+if (buddy is { Alive: true } && d < 15f)
+{
+    if (Sq.BuddyMovingIs(buddy)) { _b.Stop(); Aim.FireMode = "suppress"; }
+    else                          { _b.StrafeDir = toward cover; }
+    return;
+}
+```
+
+The pairing should be formed once per fight and only broken if a buddy goes down.
+
+---
+
+## 9. Consolidation is mandatory after an assault
+
+Real squads *always* consolidate. Right now the drill would just drift into the next objective. Add an explicit consolidation phase:
+
+```csharp
+if (Sq.Drill == SquadDrill.Consolidate)
+{
+    // 1. Halt at LOA.
+    // 2. Assign 360° sectors (see #4).
+    // 3. Ammo: any member with AmmoLevel < 0.3 triggers resupply request.
+    // 4. Casualties: medics go; SL establishes a CCP behind cover.
+    // 5. Chain of command: if SL dead, senior team leader takes over.
+    // 6. Engineers fortify if counterattack expected (ThreatAxis).
+    // 7. Radio to HQ: "Objective secure, 2 casualties, ammo amber."
+}
+```
+
+The ACE report (Ammo, Casualties, Equipment) at the end is genuinely what makes a squad feel professional — right now the bots have no moment of "we did it, now what".
+
+---
+
+## 10. Weapons control / ROE as a first-class object
+
+Set by the mission, not the individual:
+
+```csharp
+public sealed class Roe
+{
+    public bool  FireOnSuspected     = true;    // engage unidentified movement?
+    public float MaxEngageRange      = 300f;    // beyond this, hold unless ordered
+    public bool  GrenadesNearFriendlies = false;
+    public bool  HoldFireUntilFiredUpon = false;// ambush setups
+    public bool  SoundDiscipline     = false;   // no voice comms within X of enemy
+    public float VoiceRange          = 60f;
+}
+```
+
+`TryShoot` consults it. A defensive ambush gets `HoldFireUntilFiredUpon = true` and `SoundDiscipline = true`; an assault gets loose rules. This alone makes bots feel more disciplined — right now a rifleman opens fire at 400 m on a moving silhouette he barely sees, which no infantryman does without an order.
+
+**Sound discipline** specifically: extend `Comms.Say` to take a channel (voice vs. radio) and emit a `SoundWorld` event only for voice, gated on `Roe.SoundDiscipline`. Right now `Say` fires a full-volume noise regardless of proximity to enemy.
+
+---
+
+## 11. Terrain-feature bounding and danger-area crossing
+
+Two terrain-aware behaviors that are big wins for "feels like real infantry":
+
+- **Successive bounds by feature**: pick the next *named* terrain feature (a wall, a copse, a corner) toward the objective, not an arbitrary point. `CoverFinder.FindForward` already does an approximation; prefer candidates that sit on a piece of `Surroundings`-classified cover (urban corner, forest edge).
+- **Danger-area crossing**: if the route crosses a road or an open strip (detect via `Surroundings.At` on a sampled path), halt on the near side, bound one team across while the other overwatches, then swap. This is a very visible, very "real-infantry" behavior and it's a small extension of the bounding system in #2.
+
+---
+
+## Order I'd implement
+
+If you do these in this order you get the most visible change per line of code:
+
+1. **Fire teams** (#1) — nothing else is possible without it.
+2. **Team bounding** (#2) — replaces `MayMove`, immediate tactical feel.
+3. **Sectors of fire** (#4) — quick, very visible in defense and overwatch.
+4. **ROE + sound discipline** (#10) — quick, immediately makes bots less robotic.
+5. **Battle drills** (#3, especially `ReactToAmbushNear/Far` and `BreakContact`) — new behaviors the game doesn't have.
+6. **Consolidation** (#9) — closes the loop and makes assaults feel finished.
+7. **Chain of command** (#6) and **march orders** (#5) — biggest structural change, but everything above makes them easier.
+8. **ORP/LD/LOA** (#7) and **buddy pairs** (#8) — polish once the drill framework exists.
+9. **Terrain-feature bounds and danger-area crossing** (#11) — last, because they need the team structure and drill framework to hook into.
+
+The thing that will read most as "real squad" on screen is probably **team bounding overwatch** with **sectors of fire** during the overwatch. Every other improvement is refinement of those two.

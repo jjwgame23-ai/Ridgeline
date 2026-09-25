@@ -20,8 +20,10 @@ public sealed class VehicleThreat
 {
     public Vehicle Who = null!;
     public Vector3 LastKnownPos;
-    public double LastSeen = -999;
+    public double LastSeen = -999, LastHeard = -999;
     public bool Visible;
+    /// <summary>When we last knew anything about it (saw it, or heard it moving).</summary>
+    public double LastKnown => Math.Max(LastSeen, LastHeard);
     /// <summary>The part of it we can see (hull centre, or just the turret when it's hull-down).</summary>
     public Vector3 AimPoint;
 }
@@ -127,6 +129,15 @@ public sealed class BotSenses
             if (!vis)
             {
                 if (known != null) known.Visible = false;
+                // Out of sight isn't out of mind: an armoured vehicle moving close by is heard
+                // (engine, tracks), and where it's heard is where it is.
+                bool loud = MathF.Abs(v.Speed) > 1f || Clock.Now - v.LastFired < 2.0;
+                if (loud && d < (v.Def.Heavy ? 220f : 140f) && !flying)
+                {
+                    if (known == null) { known = new VehicleThreat { Who = v, LastKnownPos = c }; Vehicles.Add(known); }
+                    known.LastHeard = now;
+                    known.LastKnownPos = c;
+                }
                 continue;
             }
             if (known == null)
@@ -141,7 +152,7 @@ public sealed class BotSenses
             known.LastKnownPos = c;
             known.AimPoint = c;
         }
-        Vehicles.RemoveAll(x => now - x.LastSeen > 60.0 || !GodotObject.IsInstanceValid(x.Who)); // also ones moved (freed and respawned elsewhere)
+        Vehicles.RemoveAll(x => now - x.LastKnown > 60.0 || !GodotObject.IsInstanceValid(x.Who)); // also ones moved (freed and respawned elsewhere)
     }
 
     bool LineTo(PhysicsDirectSpaceState3D space, Vector3 from, Vector3 to, ICombatant c) => LineTo(space, from, to, c, out _);
@@ -174,7 +185,8 @@ public sealed class BotSenses
             if (every > 1 && (_tick + c.GetHashCode()) % every != 0 && !seen) continue;
 
             bool head = false, upper = false, chest = false, hip = false;
-            if (d < 400f && ang < 100f)
+            // Mounted, a crew sees all round (vision blocks, the commander's cupola).
+            if (d < 400f && (ang < 100f || _b.Ride != null))
             {
                 var hp = Combatants.PointOn(c, Combatants.Part.Head);
                 head = LineTo(space, eye, hp, c, out var at);

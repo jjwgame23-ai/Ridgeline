@@ -151,7 +151,8 @@ public partial class Vehicle
         float impact = _vel.Length();
         if (DuelMode.Verbose) GD.Print($"[{Clock.Now:0}s] CRASH {Def.Name} into {(col.GetCollider() as Node)?.Name} at {impact:0.0} m/s, agl {Agl:0}, normal {n}, pitch {_pitchA:0} roll {_rollA:0}");
         _vel = _vel.Slide(n) * 0.3f;
-        Damage(impact * impact * 2.2f + 40f, null);
+        // A real crash (not a bump) wrecks it: no helicopter sits on the ground half-broken with its rotors turning.
+        Damage(impact > 9f ? 99999f : impact * impact * 2.2f + 40f, null);
     }
 
     void SpinRotors()
@@ -159,8 +160,11 @@ public partial class Vehicle
         if (_rig.Rotor != null) _rig.Rotor.Rotation = new Vector3(0f, _rotorSpin, 0f);
         if (_rig.TailRotor != null) _rig.TailRotor.Rotation = new Vector3(_rotorSpin * 4f, 0f, 0f);
         float load = Mathf.Clamp(Collective, 0f, 1f);
-        _engine.PitchScale = _landed && Driver == null ? 0.5f : 0.85f + load * 0.3f;
-        _engine.VolumeDb = _landed && Driver == null ? -30f : -2f + load * 4f;
+        // On the ground at low collective it's idling (or shut down): a quiet whine, not a full-power beat
+        // heard across the map.
+        bool idle = _landed && (Driver == null || Collective < 0.15f);
+        _engine.PitchScale = idle ? (Driver == null ? 0.45f : 0.6f) : 0.85f + load * 0.3f;
+        _engine.VolumeDb = idle ? (Driver == null ? -34f : -18f) : -2f + load * 4f;
         CabinSound();
     }
 

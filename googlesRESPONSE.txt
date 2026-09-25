@@ -1,0 +1,56 @@
+In [Squad](https://www.google.com/search?q=squad&kgmid=/m/013227jm), vehicles are not just transport or power-ups—they are highly valuable, finite team assets that function as mobile fire support, logistics lifelines, and tactical chess pieces [1]. Misusing a vehicle doesn't just lose a firefight; it drains your team's Ticket count and can cost you the match [1].
+Vehicles in Squad are strictly categorized by their tactical roles:
+------------------------------
+## 📦 1. Logistics (Logies) & Transport: The Lifeline
+Logistics trucks are arguably the most important vehicles in the game. Without them, your team cannot build spawn points or rearm.
+
+* 
+* FOB Deployment: A Squad Leader uses a Logi truck to carry Construction and Ammo supplies to build Forward Operating Bases (FOBs) and HABs (spawn structures).
+* Supply Runs: Dedicating a player or small squad to drive Logis back and forth from the main base to active FOBs ensures the frontline never runs out of ammo or defensive resources.
+* Stealth Infiltration: Transport trucks and light utility vehicles are often driven off-road, using the terrain to conceal the sound of their engines and drop infantry behind enemy lines for a surprise flank.
+* 
+
+## 🛡️ 2. APCs and IFVs: Infantry Support & Mechanized Infantry
+Armored Personnel Carriers (APCs like the Stryker or BTR) and Infantry Fighting Vehicles (IFVs like the Bradley or BMP) bridge the gap between transport and heavy armor.
+
+* 
+* Mechanized Infantry: A squad rides inside the APC directly into an objective. The vehicle drops the infantry off, then stays nearby to provide heavy fire support using its autocannon.
+* Infantry Screening: Vehicles must never enter dense urban areas or forests alone. Infantry must "screen" for the vehicle by clearing out bushes and buildings ahead of it to kill enemy Heavy Anti-Tank (HAT) and Light Anti-Tank (LAT) players before they can fire a rocket.
+* Component Targeting: APC and IFV crews actively aim for specific parts of enemy vehicles—shooting the tracks/wheels to immobilize them, or the turret ring to prevent them from firing back.
+* 
+
+## 💥 3. Main Battle Tanks (MBTs): Heavy Armor Supremacy
+Tanks (like the M1A2 Abrams or T-72B3) rule the open battlefield but require immense coordination.
+
+* 
+* Maximum Range Engagement: Tanks excel at sitting hundreds of meters away on hills or ridgelines, utilizing their optics to lock down entire fields, valleys, or roads, completely denying enemy movement.
+* Hunter-Killer Pairs: Tanks rarely operate alone. They work with a lighter, faster vehicle (like a Scout Car or IFV) that spots targets for them, or they move in tandem with another tank to instantly overwhelm enemy armor.
+* 
+
+## 🚁 4. Helicopters: Rapid Re-positioning and Logistics
+Helicopters offer unmatched vertical mobility but are highly vulnerable to anti-aircraft fire and heavy armor.
+
+* 
+* The "Air Bridge": Helicopters can drop supplies to remote or surrounded FOBs (like mountaintops) much faster than a ground vehicle.
+* Rapid Insertion & Extraction: Dropping a full squad via a landing zone (LZ) directly onto a back-cap point or pulling a squad out of a failed attack to redeploy them across the map instantly.
+* Aerial Reconnaissance: Pilots or co-pilots scan the ground from safety, marking enemy FOBs, vehicles, and troop movements directly onto the team map.
+* 
+
+------------------------------
+## 🚨 The Golden Rules of Squad Vehicle Tactics
+
+* 
+* Assets Cost Tickets: Every time a vehicle is destroyed, your team loses valuable tickets (ranging from 5 tickets for a light jeep to 15 tickets for an IFV, and 20 tickets for a Main Battle Tank). Throwing them away carelessly guarantees a loss.
+* Turn Off the Engine: When parked near an objective or hidden in a bush, turn the engine off. Vehicle engines in Squad are incredibly loud and will give away your position to enemy infantry blocks away.
+* Always Claim Roles: You must have a dedicated Crewman kit and be in a designated squad to operate heavy armor. Never take an armored vehicle without a dedicated driver and gunner—solo-crewing heavy armor is highly ineffective and heavily frowned upon in the community.
+* 
+
+If you want to specialize, let me know:
+
+* 
+* Do you want to learn the communication commands between a Driver and a Gunner?
+* Are you interested in the specific weak spots and armor layouts of certain factions (like the US Army vs. Russian Ground Forces)?
+* 
+
+(sorry about the layout of this one, google wouldn't let me copy the message for some reason.)
+Multiplayer tactics in the tactical shooter game Squad revolve around communication, spawn control, fire team coordination, and map awareness rather than individual gunplay.Core Principles of Squad TacticsVoice Communication is King: Clear verbal communication on local, squad, and command radio channels is essential to share enemy contact marks, coordinate movements, and call out targets.Spawn Point Control (FOBs and Rallies): Winning matches requires building and defending Forward Operating Bases (FOBs) and placing temporary Rally Points. Cutting off enemy spawn points (HABs/Radios) while protecting your own dictates the flow of the frontline.Bounding and Fire Team Splitting: Avoid moving your entire squad as a single clump, which lets enemies pin everyone down at once. Split your squad into fire teams (like Alpha and Bravo) to use bounding overwatch: one team provides suppressive fire while the other moves, then they switch roles.Flanking and Positioning: Attack from unexpected angles outside the defender's main cone of vision. Avoid running across open fields without cover or stamina; instead, use terrain, ridges, and vegetation to close the distance.Multi-Squad Coordination: High-level teams operate multiple squads as a single unified force, assigning specific roles (like a dedicated logistics squad, a defense squad, and flanking attack squads) rather than letting everyone act independently.A clean demonstration of bounding and fire team movement in Squad:10:30A Demonstration of Bounding- Squad Gameplay Tactics and ...13K views · 8 years agoYouTube · KarmakutCommon Tactical ManeuversThe Rush / Backline Disrupt: Sending a fast, light vehicle or a dedicated squad early in the round to disrupt the enemy’s initial capture points or attack their logistics supply lines from behind.Layered Defense: Defending an objective using an outer reconnaissance layer, a middle engagement layer to push back attackers, and an inner last-stand layer with fallback rallies.Fix and Flank: Pinning an enemy position with suppressive fire or a small element from the front while the rest of the squad or a secondary squad maneuvers wide for a surprise flank.If you want to dive deeper, let me know:Are you looking for tips on a specific role (like Squad Leader, Medic, or Crewman)?Do you want to know more about logistics and building FOBs?

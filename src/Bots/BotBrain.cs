@@ -206,6 +206,8 @@ public sealed class BotBrain
 
         if (t == null)
         {
+            // Armour close by, out of sight: stay put in cover until it's been quiet a while.
+            if (Now < _armorWaryUntil && State is BotState.InCover or BotState.TakeCover) return;
             if (State != BotState.Advance) SetState(BotState.Advance, "no contacts");
             return;
         }
@@ -221,9 +223,26 @@ public sealed class BotBrain
         if (vis)
         {
             _pushAfter = -1;
+            // Close, or they're shooting at us: the squad is in a fight, whatever the orders.
+            if (dist < 60f || (Now - _lastHurt < 3.0) || suppressed) Sq?.Engage(t.LastKnownPos);
+            // Further off, the squad leader makes the call: take them on if they're in the way
+            // (near our route or our objective), otherwise push on and fight at the objective.
+            else if (Sq != null && Sq.Leader == _b && !Sq.Engaged && Objective != null && dist < 300f)
+            {
+                var toObj = (Objective.Center - _b.FeetPos) with { Y = 0f };
+                var toThem = (t.LastKnownPos - _b.FeetPos) with { Y = 0f };
+                bool inTheWay = toObj.LengthSquared() > 1f && toThem.Normalized().Dot(toObj.Normalized()) > 0.6f && toThem.Length() < toObj.Length() + 40f;
+                bool atObjective = (t.LastKnownPos - Objective.Center with { Y = t.LastKnownPos.Y }).Length() < Objective.Radius + 150f;
+                int seen = _b.Senses.Threats.Count(th => th.Visible || Now - th.LastSeen < 5.0);
+                if ((inTheWay || atObjective) && seen <= Sq.Alive + 1)
+                {
+                    Sq.Engage(t.LastKnownPos);
+                    Say(seen > 1 ? $"Contact, {seen} of them! Engage!" : "Contact front! Engage!");
+                }
+            }
             // On the way to the objective, don't get pinned into a long-range duel with someone
-            // who isn't even contesting it: push on and fight at the objective.
-            if (Objective != null && !InZone && dist > 80f && !suppressed
+            // who isn't even contesting it: push on and fight at the objective (unless the squad's fighting).
+            if (Objective != null && !InZone && dist > 80f && !suppressed && !(Sq?.Engaged ?? false)
                 && (t.LastKnownPos - Objective.Center with { Y = t.LastKnownPos.Y }).Length() > Objective.Radius + 40f)
             {
                 if (State != BotState.Advance) { SetState(BotState.Advance, "pushing through to the objective"); _hasWaypoint = false; }
@@ -269,6 +288,7 @@ public sealed class BotBrain
         {
             float fromObj = (t.LastKnownPos - Objective.Center with { Y = t.LastKnownPos.Y }).Length();
             bool relevant = fromObj < Objective.Radius + 40f || dist < 35f
+                            || (Sq is { Engaged: true } && Sq.ContactAt.DistanceTo(t.LastKnownPos) < 150f)
                             || (Watch is Vector3 w && (t.LastKnownPos - w with { Y = t.LastKnownPos.Y }).Length() < 110f); // what an overwatch team is there to watch
 
             bool stale = Now - t.LastSeen > 12.0 && InState > 8f;
@@ -568,7 +588,12 @@ public sealed class BotBrain
             float d = ev.Who.Center.DistanceTo(_b.EyePos);
             if (d < bestD) { bestD = d; best = ev; }
         }
-        if (best == null) { _rocketTarget = null; _rocketLaidSince = -1; return false; }
+        if (best == null)
+        {
+            _rocketTarget = null;
+            _rocketLaidSince = -1;
+            return RememberedArmor();
+        }
         var v = best.Who;
         var rd = _b.RocketDef;
         // Aircraft: only the anti-air missile is any use; everyone else ignores them (or shoots at them with rifles, which is what the rest of the brain does).
@@ -617,6 +642,7 @@ public sealed class BotBrain
             return true;
         }
         // No way to hurt it: stay out of its sight.
+        if (bestD < 250f) _armorWaryUntil = Now + 1.0;
         if (bestD < 250f && Now > _armorCoverAt && State is not (BotState.TakeCover or BotState.InCover or BotState.Aid))
         {
             _armorCoverAt = Now + 6.0;
@@ -624,6 +650,63 @@ public sealed class BotBrain
             if (spot is CoverSpot s)
             {
                 SetState(BotState.TakeCover, $"armour! {v.Def.ClassName}");
+                Cover = s;
+                _b.MoveTo(s.Pos, MoveMode.Sprint);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    double _armorHuntAt, _armorWaryUntil;
+
+    /// <summary>
+    /// Armour we can't see right now but saw or heard in the last 20 s, close by: it hasn't
+    /// gone anywhere just because a wall is in the way.
+    /// - AT soldiers with a rocket that can hurt it go hunting: a flanking spot with a view
+    ///   of where it was.
+    /// - Everyone else keeps their head down in cover from where it was, rather than walking
+    ///   back out into its sights.
+    /// </summary>
+    bool RememberedArmor()
+    {
+        VehicleThreat? mem = null;
+        float memD = float.MaxValue;
+        foreach (var ev in _b.Senses.Vehicles)
+        {
+            if (!GodotObject.IsInstanceValid(ev.Who) || ev.Who.Destroyed || (ev.Who.Def.Air && !ev.Who.Landed)) continue;
+            if (Now - ev.LastKnown > 20.0 || !ev.Who.Def.Heavy && ev.Who.Def.Turrets.Count == 0) continue;
+            float d = ev.LastKnownPos.DistanceTo(_b.EyePos);
+            if (d < memD) { memD = d; mem = ev; }
+        }
+        if (mem == null || memD > 350f) return false;
+        var v = mem.Who;
+        var rd = _b.RocketDef;
+        bool canHurt = rd != null && rd != WeaponDef.Manpad && _b.Rockets > 0 && rd.Pen * 1.1f > v.ArmorToward(_b.EyePos) * 0.8f;
+        if (canHurt)
+        {
+            if (Now > _armorHuntAt && State is not (BotState.Flank or BotState.TakeCover or BotState.Aid or BotState.Evade))
+            {
+                _armorHuntAt = Now + 10.0;
+                if (CoverFinder.FindFlank(_b, mem.LastKnownPos, _rng) is Vector3 fp)
+                {
+                    SetState(BotState.Flank, $"hunting the {v.Def.ClassName}");
+                    Squad.Hunts++;
+                    _b.MoveTo(fp, MoveMode.Run);
+                    Say($"I'll get that {v.Def.ClassName}!");
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (memD > 160f) return false;
+        _armorWaryUntil = Now + 1.0;
+        if (Now > _armorCoverAt && State is not (BotState.TakeCover or BotState.InCover or BotState.Aid or BotState.Evade))
+        {
+            _armorCoverAt = Now + 6.0;
+            if (CoverFinder.Find(_b, mem.LastKnownPos + Vector3.Up * 2.5f, 14f, _rng) is CoverSpot s)
+            {
+                SetState(BotState.TakeCover, $"{v.Def.ClassName} nearby");
                 Cover = s;
                 _b.MoveTo(s.Pos, MoveMode.Sprint);
                 return true;
@@ -1042,6 +1125,7 @@ public sealed class BotBrain
     void PickWaypoint()
     {
         _following = false;
+        if (Objective != null && FormingUp()) return;
         if (Objective != null)
         {
             // On the way there, keep formation on the squad leader rather than all taking the same path.
@@ -1082,6 +1166,35 @@ public sealed class BotBrain
         _visited.Enqueue(best);
         if (_visited.Count > 6) _visited.Dequeue();
         GoTo(best + new Vector3(_rng.RandfRange(-2f, 2f), 0f, _rng.RandfRange(-2f, 2f)));
+    }
+
+    /// <summary>
+    /// Squad leader closing on an enemy-held point: stop 60-190 m short and let the squad
+    /// catch up (most of it within 25 m, or 25 s at most), then call the assault and go in
+    /// together, rather than arriving one at a time to be picked off.
+    /// </summary>
+    bool FormingUp()
+    {
+        if (Sq == null || Sq.Leader != _b || Sq.Defend || Sq.Alive < 3 || Objective is not SiteObjective so) return false;
+        if (Sq.StagedFor == Objective || Squad.Hostile?.Invoke(so.Site, _b.Team) != true) return false;
+        float d = FromObjective(_b.FeetPos);
+        if (d > 190f || d < 60f) return false;
+        if (Sq.StageSince < 0)
+        {
+            Sq.StageSince = Now;
+            Say("Hold up here, form up on me.");
+        }
+        int near = Sq.Members.Count(m => m.Alive && m != _b && m.FeetPos.DistanceTo(_b.FeetPos) < 25f);
+        if (near + 1 >= Sq.Alive * 0.7f || Now - Sq.StageSince > 25.0)
+        {
+            Sq.StagedFor = Objective;
+            Squad.Assaults++;
+            Say($"Assault {so.Site.Name}! Go, go, go!");
+            return false;
+        }
+        _b.Stop();
+        _hasWaypoint = false;
+        return true;
     }
 
     void GoTo(Vector3 w)
@@ -1383,6 +1496,7 @@ public sealed class BotBrain
 
     public void OnHurt(HitInfo hit)
     {
+        Sq?.Engage(hit.Shooter?.FeetPos ?? _b.FeetPos);
         _lastHurt = Now;
         if (hit.Shooter != null) _b.Senses.Alert(hit.Shooter, 0.15f);
         if (_peeking)
@@ -1396,6 +1510,7 @@ public sealed class BotBrain
     /// <summary>A round cracked past us. A person can roughly tell where it came from.</summary>
     public void OnShotAt(Vector3 from)
     {
+        Sq?.Engage(from);
         ICombatant? shooter = null;
         float best = 12f;
         foreach (var c in Combatants.All)
