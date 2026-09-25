@@ -890,7 +890,7 @@ public partial class TerritoryMode : Node, IMatch
             }
             Log("     points: " + string.Join("  ", Points.Select((p, i) => $"{p.Site.Name}={(Owner[i] < 0 ? "-" : KothMode.TeamNames[Owner[i]][..1])}{Progress[i] * 100:0}[{Inside[i, 0]}/{Inside[i, 1]}/{Inside[i, 2]}]"
                 + (Front ? "{" + string.Concat(Enumerable.Range(0, 3).Where(t => CanTake(t, i)).Select(t => KothMode.TeamNames[t][..1])) + "}" : ""))));
-            Log($"     kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
+            Log($"     stuck events {Bot.StuckEvents}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
                 $"medevac'd {Motor.Evacuated}, air assaults {Motor.AirAssaults}, mortar rounds {CrewBrain.MortarRounds}, vehicles {Vehicle.All.Count(v => !v.Destroyed)} live / {Vehicle.All.Count(v => v.Destroyed)} wrecks, FOBs {Fob.All.Count}, rockets {BotBrain.Rockets}, " +
                 $"heals {BotBrain.Heals} (revives {BotBrain.Revives}, self-aid {BotBrain.SelfAids}), resupplies {BotBrain.Resupplies}, sandbags {BotBrain.Builds}, 40mm {BotBrain.Launches}, intel {Intel.Count}");
             foreach (var s in Motor.Slots)

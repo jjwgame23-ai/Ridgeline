@@ -51,6 +51,7 @@ public partial class Main : Node3D
     public override void _UnhandledInput(InputEvent e)
     {
         if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F10 }) Launch(this, null);
+        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F11 }) Settings.ToggleFullscreen();
     }
 
     void BuildRange()
@@ -127,10 +128,10 @@ public partial class Main : Node3D
 
         var sun = new DirectionalLight3D
         {
-            ShadowEnabled = true,
+            ShadowEnabled = Settings.Shadows > 0,
             LightEnergy = desert ? 1.55f : 1.3f,
             LightColor = desert ? new Color(1f, 0.93f, 0.82f) : new Color(1f, 0.96f, 0.9f),
-            DirectionalShadowMaxDistance = 250f,
+            DirectionalShadowMaxDistance = Settings.Shadows >= 2 ? 250f : 90f,
         };
         AddChild(sun);
         sun.RotationDegrees = new Vector3(-38f, -35f, 0f);

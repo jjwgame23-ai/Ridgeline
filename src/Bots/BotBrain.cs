@@ -1035,7 +1035,7 @@ public sealed class BotBrain
         // Clear line to the slot: just go. Otherwise trail the leader along their route
         // (it's already been paid for), and only plan our own now and then.
         if (_b.CanWalkStraight(slot)) _b.MoveTo(slot, mode);
-        else if (Sq?.Leader is Bot lead && lead.PathPoints.Length > 0 && !lead.Arrived) _b.AdoptPath(lead, mode);
+        else if (Sq?.Leader is Bot lead && lead.PathPoints.Length > 0 && !lead.Arrived && _b.AdoptPath(lead, mode)) { }
         else _b.MoveToLoose(slot, mode, 4.0);
     }
 

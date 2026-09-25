@@ -65,6 +65,32 @@ public partial class MainMenu : Control
         box.AddChild(new Label { Text = "A map's first launch bakes its navigation (up to a minute on the 5 km maps); it's cached after that.", Modulate = new Color(1, 1, 1, 0.4f), AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(440, 0) });
         box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 6) });
 
+        // Graphics: behind a toggle, so it doesn't push the game modes down.
+        var gfxToggle = new Button { Text = "Graphics settings ▾", Flat = true, Alignment = HorizontalAlignment.Left };
+        box.AddChild(gfxToggle);
+        var gfx = new GridContainer { Columns = 4, Visible = false };
+        gfx.AddThemeConstantOverride("h_separation", 12);
+        gfx.AddThemeConstantOverride("v_separation", 6);
+        box.AddChild(gfx);
+        gfxToggle.Pressed += () => { gfx.Visible = !gfx.Visible; gfxToggle.Text = gfx.Visible ? "Graphics settings ▴" : "Graphics settings ▾"; };
+        OptionButton Pick(string label, string[] items, int selected, Action<int> set)
+        {
+            gfx.AddChild(new Label { Text = label });
+            var o = new OptionButton { CustomMinimumSize = new Vector2(170, 0) };
+            foreach (var it in items) o.AddItem(it);
+            o.Selected = Math.Clamp(selected, 0, items.Length - 1);
+            o.ItemSelected += i => { set((int)i); Settings.ApplyGraphics(); Settings.Save(); };
+            gfx.AddChild(o);
+            return o;
+        }
+        Pick("Display", new[] { "Windowed", "Borderless fullscreen", "Exclusive fullscreen" }, (int)Settings.Display, i => Settings.Display = (Settings.DisplayMode)i);
+        Pick("V-sync", new[] { "On", "Off" }, Settings.VSync ? 0 : 1, i => Settings.VSync = i == 0);
+        Pick("Frame cap", Settings.FpsCaps.Select(f => f == 0 ? "None" : $"{f} fps").ToArray(), Array.IndexOf(Settings.FpsCaps, Settings.MaxFps), i => Settings.MaxFps = Settings.FpsCaps[i]);
+        Pick("Render scale", Settings.Scales.Select(f => $"{f * 100:0}%").ToArray(), Array.FindIndex(Settings.Scales, f => MathF.Abs(f - Settings.RenderScale) < 0.01f), i => Settings.RenderScale = Settings.Scales[i]);
+        Pick("Anti-aliasing", new[] { "Off", "MSAA 2x", "MSAA 4x" }, Settings.Msaa, i => Settings.Msaa = i);
+        Pick("Shadows", new[] { "Off", "Low", "High" }, Settings.Shadows, i => Settings.Shadows = i);
+        box.AddChild(new Label { Text = "F11 toggles fullscreen anywhere. Shadows apply from the next match.", Modulate = new Color(1, 1, 1, 0.4f) });
+
         Add(box, "TERRITORY — 3 factions × 12", new GameSetup { Map = "valley", TeamSize = 12 });
         Add(box, "TERRITORY — 3 factions × 20", new GameSetup { Map = "valley", TeamSize = 20 });
         Add(box, "TERRITORY — 3 factions × 33  (heavy)", new GameSetup { Map = "valley", TeamSize = 33 });

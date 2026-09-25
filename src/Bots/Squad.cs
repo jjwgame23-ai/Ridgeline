@@ -145,6 +145,34 @@ public sealed class Squad
     /// leader, oriented along the leader's heading (or toward the objective when
     /// the leader is standing still).
     /// </summary>
+    /// <summary>
+    /// Where the leader has actually walked (newest last, one every 1.5 m). In town and
+    /// indoors the squad files along it: every point on it is somewhere you can stand, on the
+    /// floor the leader was on, reached the way the leader went.
+    /// </summary>
+    readonly List<Vector3> _trail = new();
+
+    public void Crumb(Vector3 p)
+    {
+        if (_trail.Count > 0 && _trail[^1].DistanceTo(p) < 1.5f) return;
+        _trail.Add(p);
+        if (_trail.Count > 40) _trail.RemoveAt(0);
+    }
+
+    /// <summary>The point on the leader's trail this far back from where they are now, if the trail is long enough.</summary>
+    Vector3? Behind(Vector3 lead, float dist)
+    {
+        float acc = 0f;
+        var prev = lead;
+        for (int i = _trail.Count - 1; i >= 0; i--)
+        {
+            acc += _trail[i].DistanceTo(prev);
+            if (acc >= dist) return _trail[i];
+            prev = _trail[i];
+        }
+        return null;
+    }
+
     public Vector3? SlotFor(Bot b)
     {
         var lead = Leader;
@@ -165,6 +193,10 @@ public sealed class Squad
         float side = i % 2 == 0 ? -1f : 1f;
         // The shape depends on the ground the leader is on (see Surroundings).
         var env = lead is Bot lb ? lb.Brain.Env : Surroundings.At(null, lead.FeetPos);
+        if (lead is not Bot) Crumb(lead.FeetPos);
+        // In town and indoors: in file along the leader's own trail, not at a geometric offset
+        // that may be inside a wall, under a staircase or on the wrong floor.
+        if (env is EnvKind.Urban or EnvKind.Interior && Behind(lead.FeetPos, (i + 1) * 2.6f) is Vector3 onTrail) return onTrail;
         return env switch
         {
             // A staggered file, close up: down one side of the street, in through a door one after the other.

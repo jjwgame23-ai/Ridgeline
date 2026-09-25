@@ -80,6 +80,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     int _pathIdx;
     Vector3 _goal, _rawGoal, _lastProgressPos;
     bool _hasGoal, _reloadEmpty, _partial;
+    float _routeCheckT;
     float _lean, _cool, _reloadT, _reloadDur, _senseT, _thinkT, _stuckT, _repathT, _walkPhase, _crouchT, _rangeErr;
     int _reloadStage, _stuckCount;
     double _stepAt, _unstickUntil, _lastRepath = -99;
@@ -203,7 +204,15 @@ public partial class Bot : CharacterBody3D, ICombatant
         // Long paths are expensive on a big map: at most one every 0.6 s. Keep walking
         // the old path meanwhile; Move() repaths when the timer runs out.
         double since = Clock.Now - _lastRepath;
-        if (since < 0.6 && !DirectClear(goal)) { _repathT = (float)(0.6 - since); return; }
+        if (since < 0.6 && !DirectClear(goal))
+        {
+            // Plan shortly. The old path leads to the old goal: drop it, or reaching its end
+            // would read as having arrived at the new one.
+            _repathT = (float)(0.6 - since);
+            _path = Array.Empty<Vector3>();
+            _pathIdx = 0;
+            return;
+        }
         Repath();
     }
 
@@ -223,11 +232,16 @@ public partial class Bot : CharacterBody3D, ICombatant
     /// Walk the route someone else is already walking (a squad member trailing its
     /// leader round an obstacle): no navmesh query of our own.
     /// </summary>
-    public void AdoptPath(Bot other, MoveMode mode)
+    public bool AdoptPath(Bot other, MoveMode mode)
     {
         var pts = other._path;
-        if (pts.Length == 0 || !other._hasGoal) return;
-        int from = Math.Max(0, other._pathIdx - 1);
+        if (pts.Length == 0 || !other._hasGoal) return false;
+        // Join the leader's route at a point we can walk straight to from here; from the other
+        // side of a wall, their route is no use to us.
+        int from = -1;
+        for (int j = Math.Max(0, other._pathIdx - 1); j < Math.Min(pts.Length, other._pathIdx + 3); j++)
+            if (MathF.Abs(pts[j].Y - GlobalPosition.Y) < 0.8f && Flat(pts[j] - GlobalPosition).Length() < 15f && BodyClear(GlobalPosition, pts[j])) { from = j; break; }
+        if (from < 0) return false;
         Mode = mode;
         StrafeDir = null;
         _path = pts[from..];
@@ -239,6 +253,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         _repathT = 0f;
         _stuckT = 0f;
         _lastProgressPos = GlobalPosition;
+        return true;
     }
 
     public void Stop()
@@ -250,12 +265,30 @@ public partial class Bot : CharacterBody3D, ICombatant
     /// <summary>Close and nothing in the way: just walk there, no navmesh query needed.</summary>
     bool DirectClear(Vector3 goal)
     {
-        var pos = GlobalPosition;
-        var d = goal - pos;
-        if (new Vector2(d.X, d.Z).Length() > 15f || MathF.Abs(d.Y) > 1.5f) return false;
+        var d = goal - GlobalPosition;
+        if (new Vector2(d.X, d.Z).Length() > 15f || MathF.Abs(d.Y) > 0.8f) return false;
+        return BodyClear(GlobalPosition, goal);
+    }
+
+    static readonly SphereShape3D _probe = new() { Radius = 0.3f };
+    static readonly PhysicsShapeQueryParameters3D _probeQ = new() { Shape = _probe, CollisionMask = Layers.Solid };
+
+    /// <summary>
+    /// Could a body get from a to b in a straight line? A body-sized sphere swept at knee and
+    /// chest height, not a thin ray: a ray can slip past a corner the shoulders would catch
+    /// on, or through a window the legs can't.
+    /// </summary>
+    bool BodyClear(Vector3 a, Vector3 b)
+    {
         var space = GetWorld3D().DirectSpaceState;
-        foreach (float h in new[] { 0.45f, 1.2f })
-            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * h, goal + Vector3.Up * h, Layers.Solid)).Count > 0) return false;
+        foreach (float h in new[] { 0.75f, 1.35f })
+        {
+            _probeQ.Transform = new Transform3D(Basis.Identity, a + Vector3.Up * h);
+            _probeQ.Motion = b - a;
+            _probeQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
+            var r = space.CastMotion(_probeQ);
+            if (r.Length > 0 && r[0] < 0.999f) return false;
+        }
         return true;
     }
 
@@ -286,8 +319,11 @@ public partial class Bot : CharacterBody3D, ICombatant
     }
 
     /// <summary>No progress: first sidestep somewhere random, and if that doesn't help, drop the goal so the brain picks another.</summary>
+    public static int StuckEvents;
+
     void Stuck()
     {
+        StuckEvents++;
         _stuckCount++;
         if (_stuckCount >= 2)
         {
@@ -327,6 +363,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     void Move(float dt)
     {
         var pos = GlobalPosition;
+        if (Squad?.Leader == this) Squad.Crumb(pos);
         var wish = Vector3.Zero;
         if (StrafeDir is Vector3 s) wish = s;
         else if (_hasGoal)
@@ -336,12 +373,23 @@ public partial class Bot : CharacterBody3D, ICombatant
                 _repathT -= dt;
                 if (_repathT <= 0f) Repath();
             }
-            while (_pathIdx < _path.Length && Flat(_path[_pathIdx] - pos).Length() < 0.45f) _pathIdx++;
+            // A waypoint counts as reached only on its own level: on a stair, the next point can be
+            // straight overhead.
+            while (_pathIdx < _path.Length && Flat(_path[_pathIdx] - pos).Length() < 0.45f && MathF.Abs(_path[_pathIdx].Y - pos.Y) < 1.3f) _pathIdx++;
             if (_pathIdx < _path.Length) wish = Flat(_path[_pathIdx] - pos).Normalized();
             else if (_path.Length > 0)
             {
                 if (_partial) Repath(); // end of this leg: plan the next
                 else _hasGoal = false;  // walked the whole path
+            }
+            // Shoved off the route (by squadmates, a blast, a corner): if the next waypoint is
+            // round a corner from here now, plan again rather than grind into the wall.
+            _routeCheckT -= dt;
+            if (_routeCheckT <= 0f && _pathIdx < _path.Length && Brain.Env is EnvKind.Urban or EnvKind.Interior)
+            {
+                _routeCheckT = 0.7f;
+                var wp = _path[_pathIdx];
+                if (Flat(wp - pos).Length() < 20f && MathF.Abs(wp.Y - pos.Y) < 0.8f && !BodyClear(pos, wp) && Clock.Now - _lastRepath > 0.6) Repath();
             }
 
             // Stuck on something: try again from here.

@@ -40,6 +40,7 @@ public partial class DevShot : Node
     {
         var a = Args();
         DuelMode.Verbose = a.ContainsKey("verbose");
+        if (a.ContainsKey("shot")) { Settings.ForceWindowed = true; Settings.ApplyGraphics(); }
         Settings.Load();
         if (a.TryGetValue("role", out var role) && Enum.TryParse<Role>(role, true, out var r)) Settings.PlayerRole = r;
         if (!a.TryGetValue("mode", out var mode)) return null;

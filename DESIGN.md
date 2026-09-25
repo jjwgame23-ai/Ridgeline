@@ -149,6 +149,14 @@ It's the same bot with the same state either way; only the fidelity changes.
      - A falling bomb's whistle is a sound source that travels with it, pitch-shifted by how fast it's closing on you. A round landing off to the side falls in pitch as it drops past; one coming at you holds a high, steady note and gets louder.
      - Explosions take a charge size (grenade = 1, 81 mm bomb = 4). Fireball, smoke, debris, flash and overpressure reach scale with its cube root, and shells get their own deeper, longer blast sound.
      - Aircraft destroyed in the air keep their momentum: the wreck arcs down, tumbles and noses over, with its fire and smoke trailing behind it, and burns where it hits. `mode=vtest air shootdown` tests it.
+   - **Bot movement in towns (fixed).**
+     - "Can I walk straight there?" is tested with a body-sized sphere, not a thin ray, so bots don't clip corners or aim through windows.
+     - A waypoint only counts as reached on its own level (on a stair the next one can be straight overhead).
+     - In towns and indoors a bot that's been pushed off its route re-plans instead of grinding into a wall.
+     - A squadmate only takes over the leader's route from a point it can walk straight to. In towns and indoors the squad files along the leader's actual trail instead of taking formation positions that can land inside walls or under a staircase.
+     - Fixed an old bug: a new order arriving within 0.6 s of the last path query kept the finished old path, so the bot "arrived" before the new path was ever planned.
+     - On Novigrad at 20 per side, stuck events went from 713 to 266 over 7 minutes.
+   - **Graphics settings (menu):** display mode (windowed, borderless or exclusive fullscreen), v-sync, frame cap, render scale (FSR below 100%), MSAA and shadows. They're saved, and F11 toggles fullscreen anywhere. Screenshot and test runs stay windowed.
    - **3c:** scale. The abstract far-away simulation and the promotion/demotion handover described above, reaching 3×33 with persistent aftermath.
 4. **Economy.** Cash, buy screen, gear loss, and bots buying loadouts.
 5. **Roster.** About 150 persistent named mercs with skills, playstyles, bank

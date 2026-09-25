@@ -29,7 +29,7 @@ public partial class Hud : CanvasLayer
         "R reload · V fire mode · T check mag · G frag grenade\n" +
         "1 carbine (red dot) · 2 marksman rifle (4x scope)\n\n" +
         "F1 this help · F3 debug overlay · F6 bot debug\n" +
-        "Esc release mouse · F10 main menu\n\n" +
+        "Esc release mouse · F10 main menu · F11 fullscreen\n\n" +
         "Bots notice you gradually — distance, movement, stance and\n" +
         "gunfire all matter. They hear footsteps and shots too.\n" +
         "When you die you spectate your team until the next round.";
@@ -43,7 +43,7 @@ public partial class Hud : CanvasLayer
         "You respawn at your side's rally point 10 s after dying.\n\n" +
         "WASD move · Shift sprint · C crouch · Z prone · Q / E lean\n" +
         "LMB fire · RMB aim · R reload · V fire mode · G frag · 1 / 2 weapons\n" +
-        "F1 this help · F3 debug · F6 bot debug · F10 main menu";
+        "F1 this help · F3 debug · F6 bot debug · F10 main menu · F11 fullscreen";
 
     public const string TerritoryHelp =
         "RIDGELINE — territory\n\n" +
@@ -58,7 +58,7 @@ public partial class Hud : CanvasLayer
         "H: your role's tool (medic: patch up · engineer: sandbags).\n\n" +
         "WASD move · Shift sprint · C crouch · Z prone · Q / E lean\n" +
         "LMB fire · RMB aim · R reload · V fire mode · G frag · 1 / 2 weapons\n" +
-        "F1 this help · F3 debug · F6 bot debug · F7/F8 volume · F10 main menu";
+        "F1 this help · F3 debug · F6 bot debug · F7/F8 volume · F10 main menu · F11 fullscreen";
 
     const string RangeHelp =
         "RIDGELINE — firing range prototype\n\n" +
@@ -69,7 +69,7 @@ public partial class Hud : CanvasLayer
         "1 carbine (red dot) · 2 marksman rifle (4x scope)\n\n" +
         "F1 this help · F3 debug overlay · F4 sniper drill (range)\n" +
         "F5 distant battle on/off (range) · F6 bot debug (arena)\n" +
-        "Esc release mouse · F10 main menu\n\n" +
+        "Esc release mouse · F10 main menu · F11 fullscreen\n\n" +
         "Steel plates from 25 to 800 m. Watch for the swing,\n" +
         "then listen: the ring arrives at the speed of sound.\n" +
         "4x reticle dots are 1 mil apart; the SR-25 is zeroed at 200 m.";
