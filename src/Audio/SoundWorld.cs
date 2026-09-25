@@ -450,7 +450,8 @@ public partial class SoundWorld : Node3D
             if (on && !t.Playing) t.Play(_rng.Randf() * 2f);
             else if (!on && t.Playing) t.Stop();
             t.PitchScale = p.PitchScale;
-            t.VolumeDb = db + TailRel(d, lb, null, via, walls) - 2f;
+            // Engines are steady: a big reverb share of them is a constant wash under everything.
+            t.VolumeDb = db + TailRel(d, lb, null, via, walls) - 9f;
         }
     }
 

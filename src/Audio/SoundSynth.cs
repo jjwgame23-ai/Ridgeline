@@ -279,7 +279,7 @@ public static class SoundSynth
                 // Track links on the sprockets: a light clatter and a high squeal.
                 float lp = (float)((t * 16.0) % 1.0);
                 clank += 0.35f * (noise * MathF.Exp(-lp * 30f) - clank);
-                v += clank * 0.8f + (float)Math.Sin(2 * Math.PI * 1750 * t) * 0.012f;
+                v += clank * 0.8f;
             }
             s[i] = v;
         }
@@ -296,20 +296,29 @@ public static class SoundSynth
         int n = (int)(seconds * Rate) + LoopFade;
         var s = new float[n];
         var r = new Random(gunship ? 53 : 41);
-        float slap = gunship ? 18f : 16f;   // blade passes per second (whole number in the loop)
-        float whine = gunship ? 1260f : 1100f;
-        float y = 0f, w = 0f;
+        float slap = gunship ? 18f : 16f;   // blade passes per second
+        float whine = gunship ? 4600f : 4100f;
+        float y = 0f, w = 0f, b1 = 0f, b2 = 0f, drift = 0f;
         for (int i = 0; i < n; i++)
         {
             double t = i / (double)Rate;
             float ph = (float)((t * slap) % 1.0);
-            float thump = MathF.Exp(-ph * 9f);
+            // Blade slap: each blade's tip vortex hitting the next, a sharp impulsive "wop" rich in
+            // low-mids. It's the loudest part and what you hear from kilometres off.
+            float thump = MathF.Exp(-ph * 14f) + 0.35f * MathF.Exp(-ph * 4f);
             float noise = (float)r.NextDouble() * 2f - 1f;
-            y += 0.12f * (noise - y);
+            y += 0.25f * (noise - y);
             w += 0.02f * (noise - w);
-            s[i] = thump * (y * 1.6f + (float)Math.Sin(2 * Math.PI * 38 * t) * 0.35f)   // the slap: a burst of air each blade
-                 + w * 1.4f                                                              // rotor wash
-                 + (float)(Math.Sin(2 * Math.PI * whine * t) * 0.05 + Math.Sin(2 * Math.PI * whine * 1.5 * t) * 0.025); // turbines
+            float wop = MathF.Sin(MathF.Tau * 85f * (ph / slap)); // the low "wop" of each pass
+            // Turbine whine: not a pure tone but a narrow band of noise up at ~4 kHz, wandering a
+            // little. The air takes ~30 dB/km off that, so it's there up close and gone far off.
+            drift += 0.00002f * ((float)r.NextDouble() * 2f - 1f) - drift * 0.00001f;
+            float wf = whine * (1f + drift * 50f);
+            float c = 2f * MathF.Sin(MathF.PI * wf / Rate);
+            b1 += c * b2; b2 += c * (noise - b1 - 0.08f * b2); // state-variable band-pass, narrow
+            s[i] = thump * (y * 1.9f + wop * 0.5f)   // the slap
+                 + w * 1.2f                        // rotor wash
+                 + b2 * 0.05f;                     // turbines
         }
         return LoopWav(s);
     }
