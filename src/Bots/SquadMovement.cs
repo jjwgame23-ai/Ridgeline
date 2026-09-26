@@ -3,7 +3,7 @@ using Godot;
 namespace Ridgeline;
 
 /// <summary>How a squad moves when it isn't fighting: chosen by the squad leader from the situation.</summary>
-public enum March { Travelling, Column, TravellingOverwatch, BoundingOverwatch, Herringbone, AssaultLine }
+public enum March { Travelling, Column, TravellingOverwatch, BoundingOverwatch, Herringbone, AssaultLine, DangerCrossing }
 
 /// <summary>The steps of a deliberate attack on an enemy-held point.</summary>
 public enum AssaultPhase { None, Orp, Deploy, Assault }
@@ -29,6 +29,15 @@ public sealed partial class Squad
     public static int Orps, Deploys, BuddySwaps;
 
     public March MarchOrder { get; private set; }
+    /// <summary>A player leading the squad picked this march order (null: the ground decides).</summary>
+    public March? PlayerMarch;
+
+    /// <summary>The player leader's pick, applied (bot leaders work it out in UpdateMarch).</summary>
+    public void SetPlayerMarch(March? m)
+    {
+        PlayerMarch = m;
+        MarchOrder = m ?? March.Travelling;
+    }
     public AssaultPhase Phase { get; private set; }
     public IObjective? AssaultOn;
     public Vector3 OrpAt, LdAt, SbfAt;
@@ -67,7 +76,8 @@ public sealed partial class Squad
         else if (Phase == AssaultPhase.Assault && PhaseAge > 100.0) EndAssault();
         if (Phase == AssaultPhase.Orp) { MarchOrder = March.Herringbone; return; }
         if (Phase == AssaultPhase.Assault) { MarchOrder = March.AssaultLine; return; }
-        if (Phase == AssaultPhase.Deploy || Objective == null || inZone || Engaged) { MarchOrder = March.Travelling; return; }
+        if (Phase == AssaultPhase.Deploy || Objective == null || inZone || Engaged) { CancelCrossing(); MarchOrder = March.Travelling; return; }
+        if (lead is Bot lb0 && UpdateCrossing(lb0)) { MarchOrder = March.DangerCrossing; return; }
         float d = ((Objective.Center - lead.FeetPos) with { Y = 0f }).Length();
         bool hostile = Objective is SiteObjective so && Hostile?.Invoke(so.Site, Team) == true;
         if (_bowWaiting) { MarchOrder = March.BoundingOverwatch; return; }
@@ -107,8 +117,9 @@ public sealed partial class Squad
     /// A member's place by march order and assault phase (null: fall back to the ground-shaped
     /// travelling formation). <paramref name="i"/> is his index among the living, bar the leader.
     /// </summary>
-    Vector3? OrderSlot(Bot b, ICombatant lead, int i, Vector3 fwd, Vector3 right)
+    Vector3? OrderSlot(ICombatant b, ICombatant lead, int i, Vector3 fwd, Vector3 right)
     {
+        if (CrossSlot(b) is Vector3 cs) return cs;
         int t = TeamOf(b);
         int alive = Members.Count(m => m.Alive) - 1;
         float side = i % 2 == 0 ? -1f : 1f;
@@ -136,6 +147,9 @@ public sealed partial class Squad
                 int row = i / 2 + 1;
                 return lead.FeetPos - fwd * (row * 4f) + right * (side * 4.5f);
             }
+            case March.Column when PlayerMarch == March.Column:
+                // In file behind the leader, along his own track.
+                return Behind(lead.FeetPos, (i + 1) * 3.5f) ?? lead.FeetPos - fwd * ((i + 1) * 3.5f);
             case March.AssaultLine:
             {
                 // Abreast of the leader, 5 m apart, a step behind so he leads.

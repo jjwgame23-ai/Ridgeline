@@ -64,11 +64,11 @@ public partial class Valley : Node3D, IGround
     public HashSet<(int, int)> Occupied = new();
 
     /// <summary>How many built-on 4 m cells in the 20 m square round a point: a village street scores ~5+.</summary>
-    public int BuiltAround(float x, float z)
+    public int BuiltAround(float x, float z, int r = 2)
     {
         int cx = (int)MathF.Floor(x / 4f), cz = (int)MathF.Floor(z / 4f), n = 0;
-        for (int i = -2; i <= 2; i++)
-        for (int j = -2; j <= 2; j++)
+        for (int i = -r; i <= r; i++)
+        for (int j = -r; j <= r; j++)
             if (Occupied.Contains((cx + i, cz + j))) n++;
         return n;
     }

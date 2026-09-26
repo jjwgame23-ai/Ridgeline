@@ -29,6 +29,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     public int ShotsFired, HitsLanded, Kills, ShotsBlocked, ShotsBlockedNear, ShotsWide;
     public Vector3? StrafeDir; // set by the brain to move directly instead of along a path
     public int Grenades = 2;
+    /// <summary>Smoke grenades: leaders and riflemen carry one or two, for crossing open ground under fire.</summary>
+    public int SmokeGrenades = 1;
     public Role Role = Role.Rifleman;
     public int LauncherRounds, Medkits, Sandbags, Rockets;
     public WeaponDef? RocketDef => Role == Role.AntiTank ? WeaponDef.Lat : Role == Role.HeavyAT ? WeaponDef.Hat : Role == Role.AntiAir ? WeaponDef.Manpad : null;
@@ -323,11 +325,22 @@ public partial class Bot : CharacterBody3D, ICombatant
     }
 
     /// <summary>No progress: first sidestep somewhere random, and if that doesn't help, drop the goal so the brain picks another.</summary>
-    public static int StuckEvents;
+    public static int StuckEvents, StuckNearVehicle, StuckBoarding, StuckWaiting;
 
     void Stuck()
     {
         StuckEvents++;
+        if (Vehicle.All.Any(v => !v.Destroyed && v.GlobalPosition.DistanceTo(FeetPos) < 9f)) StuckNearVehicle++;
+        if (Brain.Note is "to the transport" or "to the vehicle")
+        {
+            StuckBoarding++;
+            if (DuelMode.Verbose && StuckBoarding % 15 == 1)
+            {
+                var tv = Squad?.Kind is SquadKind.Rifle ? Squad.Transport : Squad?.Vehicle;
+                GD.Print($"[{Clock.Now:0}s] stuck boarding: {Callsign} ({Squad?.Name} {Squad?.Kind}, {Brain.Note}) -> {tv?.Def.Name ?? "?"} {(tv != null ? tv.GlobalPosition.DistanceTo(FeetPos) : 0f):0} m, vehicle speed {tv?.Speed ?? 0f:0.0}, boarding {tv?.Boarding}, goal {GoalPos.DistanceTo(FeetPos):0} m, path {_path.Length}");
+            }
+        }
+        if (Squad?.Transport != null) StuckWaiting++;
         _stuckCount++;
         if (_stuckCount >= 2)
         {
@@ -515,9 +528,9 @@ public partial class Bot : CharacterBody3D, ICombatant
     /// Lob a frag to land near a point: solve the arc for a few launch angles and
     /// take the first one whose path isn't blocked by a wall or roof on the way.
     /// </summary>
-    public bool ThrowGrenadeAt(Vector3 target)
+    public bool ThrowGrenadeAt(Vector3 target, bool smoke = false)
     {
-        if (Grenades <= 0) return false;
+        if (smoke ? SmokeGrenades <= 0 : Grenades <= 0) return false;
         var from = EyePos + Vector3.Up * 0.1f;
         var flat = target - from;
         flat.Y = 0f;
@@ -537,12 +550,12 @@ public partial class Bot : CharacterBody3D, ICombatant
             var vel = dir * (v * c) + Vector3.Up * (v * MathF.Sin(th));
             if (!ArcClear(space, from, vel, d)) continue;
 
-            var g = new Grenade { Thrower = this, Fuse = 3.4f };
+            var g = new Grenade { Thrower = this, Fuse = smoke ? 2.0f : 3.4f, Smoke = smoke };
             GetParent().AddChild(g);
             g.GlobalPosition = from + dir * 0.4f;
             g.LinearVelocity = vel;
             g.AddCollisionExceptionWith(this);
-            Grenades--;
+            if (smoke) SmokeGrenades--; else Grenades--;
             SoundWorld.I.Emit(Snd.Click, from, 0f, this); // pin
             return true;
         }
@@ -599,6 +612,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     void Stock()
     {
         Grenades = Roles.Frags(Role);
+        SmokeGrenades = Role == Role.Leader ? 2 : 1;
         LauncherRounds = Role == Role.Grenadier ? 8 : 0;
         Rockets = RocketDef is WeaponDef rd ? rd.Mags + 1 : 0;
         Medkits = Role == Role.Medic ? 10 : 0;

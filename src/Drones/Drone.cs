@@ -124,6 +124,9 @@ public partial class Drone : Node3D
             if (Clock.Now - _deadAt > 30.0) QueueFree();
             return;
         }
+        // A target that's gone from the world (a wreck cleared away, a body despawned): aim at where it was.
+        if (TargetV != null && !IsInstanceValid(TargetV)) TargetV = null;
+        if (TargetC is GodotObject tco && !IsInstanceValid(tco)) TargetC = null;
         if (Kind == DroneKind.Quad) Battery -= dt / 480f;
         if (Battery <= 0f) { Crash(); return; }
         if (Operator is { Dead: true } && !Manual && Kind == DroneKind.Fpv) { Crash(); return; }

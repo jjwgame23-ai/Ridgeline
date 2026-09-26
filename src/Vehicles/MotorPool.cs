@@ -12,7 +12,7 @@ namespace Ridgeline;
 /// - combat vehicles drive to the overwatch position their crew squad was given.
 /// Losing a vehicle costs its tickets.
 /// </summary>
-public sealed class MotorPool
+public sealed partial class MotorPool
 {
     public sealed class Slot
     {
@@ -29,6 +29,18 @@ public sealed class MotorPool
         public double JobSince;
         public Vector3 Drop, LoadedAt;
         public bool HasSupplies = true;
+        // combined arms (MotorPoolCombat)
+        public int Mech;                  // a carrier with its squad: 0 not carrying, 1 picking up, 2 carrying, 3 dismounted
+        public Vector3 DropFor;           // the objective the drop-off was worked out for
+        public Vector3 Firing, FiringWatch, FiringAnchor;
+        public bool HasFiring;
+        public string FiringWhy = "";
+        public double FiringAt, LastHitSeen = -99, ScootUntil, RearmAt = -1, LastRequestAt = -99;
+        public Vector3 ScootTo;
+        public bool Rearming;
+        public int ShotsAtFiring;
+        public double PickupRetryAt, PickupTimeout;
+        public double ShotsCheckedAt;
     }
 
     readonly TerritoryMode _m;
@@ -122,17 +134,11 @@ public sealed class MotorPool
                 case VKind.AH: Gunship(s, v); break;
                 case VKind.Mortar: MortarPit(s, v, now); break;
                 case VKind.Logistics: Logistics(s, v, now); break;
-                default: Combat(s, v); break;
+                default: Combat(s, v, now); break;
             }
         }
     }
 
-    /// <summary>Fighting vehicles go where their crew squad was sent (an overwatch position) and hold there.</summary>
-    void Combat(Slot s, Vehicle v)
-    {
-        v.ArriveRadius = 6f;
-        v.Goal = s.Crew?.Objective?.Center ?? s.Park;
-    }
 
     void Transport(Slot s, Vehicle v, double now)
     {
@@ -148,7 +154,7 @@ public sealed class MotorPool
                 float bestD = 380f;
                 foreach (var cand in _m.Squads[s.Team])
                 {
-                    if (cand.Kind != SquadKind.Rifle || cand.Transport != null || cand.Objective == null || cand.Leader is not ICombatant lead) continue;
+                    if (cand.Kind != SquadKind.Rifle || cand.Transport != null || cand.Objective == null || cand.Leader is not ICombatant lead || Mechanised(cand)) continue;
                     float fetch = lead.FeetPos.DistanceTo(v.GlobalPosition);
                     if (fetch > 700f * _m.Map.SizeScale) continue;
                     // Worth it: a long way still to go, and not a long way to fetch them.
@@ -174,6 +180,7 @@ public sealed class MotorPool
                     v.Goal = lead.FeetPos - toLead.Normalized() * 15f;
                     v.ArriveRadius = 12f;
                     v.Boarding = false;
+                    if (now - s.JobSince > 150.0) Release(s); // can't get to them: they'll walk
                     break;
                 }
                 v.Goal = null;
@@ -185,10 +192,10 @@ public sealed class MotorPool
                 if (aboard >= alive || (now - s.JobSince > 50.0 && aboard * 2 >= alive) || now - s.JobSince > 90.0)
                 {
                     if (aboard == 0) { Release(s); break; }
-                    // Drop-off: short of the objective, on the side we're coming from.
+                    // Drop-off: short of the objective, on the side we're coming from, somewhere it can't see (a soft-skinned truck full of men).
                     var c = sq.Objective.Center;
-                    var from = (v.GlobalPosition - c) with { Y = 0f };
-                    s.Drop = _m.Map.Ground(c + from.Normalized() * MathF.Max(150f, sq.Objective.Radius + 120f));
+                    float r0 = MathF.Max(240f, sq.Objective.Radius + 150f);
+                    s.Drop = FindDismount(s.Team, c, v.GlobalPosition, r0, r0 + 150f);
                     s.Job = 2;
                     s.JobSince = now;
                     v.Boarding = false;
@@ -208,10 +215,16 @@ public sealed class MotorPool
                 bool hit = now - v.LastHit < 2.0;
                 // Actually there (not just a flag left over from an earlier stop), or taking fire after setting off.
                 bool there = v.Arrived && s.Drop is Vector3 dp && (dp - v.GlobalPosition with { Y = dp.Y }).Length() < v.ArriveRadius + 5f;
-                if (there || (hit && now - s.JobSince > 3.0) || now - s.JobSince > 240.0)
+                bool called = sq.WantDismount;
+                sq.WantDismount = false;
+                if (there || called || (hit && now - s.JobSince > 3.0) || now - s.JobSince > 240.0)
                 {
                     foreach (var o in v.Occupants.ToArray())
-                        if (o is Bot b && b.Squad == sq) v.Leave(b);
+                        if (o != null && o != v.Driver && sq.Members.Contains(o))
+                        {
+                            v.Leave(o, hit ? v.LastHitFrom : null);
+                            if (o is Player) Hud.Toast(hit ? "TAKING FIRE — GET OUT!" : "Drop-off — out, and go with your squad", 3f);
+                        }
                     if (v.Driver != null) Comms.Say(v.Driver, hit ? "Taking fire! Everybody out!" : "This is your stop. Good luck!");
                     if (DuelMode.Verbose) GD.Print($"[{now:0}s] {v.Def.Name} unloaded {sq.Name} after {v.GlobalPosition.DistanceTo(s.LoadedAt):0} m ({(there ? "at the drop-off" : hit ? "under fire" : "gave up")}), {v.GlobalPosition.DistanceTo(s.Drop):0} m short");
                     Release(s);

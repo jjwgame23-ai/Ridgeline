@@ -7,6 +7,8 @@ public partial class HudOverlay : Control
 {
     /// <summary>A world position to mark on the compass (the KOTH zone).</summary>
     public static Vector3? Marker;
+    /// <summary>Where your squad wants you, and which way you should be watching (the squad briefing).</summary>
+    public static Vector3? Spot, Sector;
 
     static readonly string[] Cardinals = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
 
@@ -52,6 +54,33 @@ public partial class HudOverlay : Control
         }
         DrawCompass(size, p.Heading);
         if (Marker is Vector3 m) DrawMarker(size, p, m);
+        DrawSquadSpot(size, p);
+    }
+
+    /// <summary>Your place in the squad's plan: a green diamond where you should be, and your sector on the compass.</summary>
+    void DrawSquadSpot(Vector2 size, Player p)
+    {
+        var green = new Color(0.45f, 1f, 0.45f, 0.9f);
+        if (Sector is Vector3 sec && sec.LengthSquared() > 0.01f)
+        {
+            float bearing = (Mathf.RadToDeg(MathF.Atan2(sec.X, -sec.Z)) + 360f) % 360f;
+            float rel = BotAim.Wrap(bearing - p.Heading);
+            const float span = 90f, width = 520f;
+            if (MathF.Abs(rel) < span / 2f)
+            {
+                float x = size.X / 2f + rel / span * width;
+                DrawRect(new Rect2(x - 14f, 30f, 28f, 3f), green);
+            }
+        }
+        if (Spot is not Vector3 spot) return;
+        float d = ((spot - p.FeetPos) with { Y = 0f }).Length();
+        if (d < 6f) return;
+        var cam = p.Cam;
+        var at = spot + Vector3.Up * 1f;
+        if (cam.IsPositionBehind(at)) return;
+        var q = cam.UnprojectPosition(at);
+        DrawColoredPolygon(new[] { q + new Vector2(0, -7), q + new Vector2(7, 0), q + new Vector2(0, 7), q + new Vector2(-7, 0) }, green with { A = 0.55f });
+        DrawString(ThemeDB.FallbackFont, q + new Vector2(10, 5), $"your spot {d:0} m", HorizontalAlignment.Left, -1, 12, green);
     }
 
     /// <summary>

@@ -119,7 +119,7 @@ public sealed partial class Squad
     /// the move: alternate sides of the direction of travel (a herringbone). Null: no sector
     /// (moving, fighting, or alone).
     /// </summary>
-    public Vector3? SectorFor(Bot b, bool inZone)
+    public Vector3? SectorFor(ICombatant b, bool inZone)
     {
         var alive = Members.Where(m => m.Alive).ToList();
         int i = alive.IndexOf(b), n = alive.Count;
@@ -200,6 +200,7 @@ public sealed partial class Squad
         if (Defend || Current is Drill.BreakContact or Drill.Consolidate) return;
         ContactAt = from;
         if (Phase != AssaultPhase.None) EndAssault();
+        CancelCrossing();
         StartDrill(Drill.BreakContact, 35.0);
         Breaks++;
         if (Leader is Bot l) Comms.Say(l, "Too many of them! Break contact, bound back!");

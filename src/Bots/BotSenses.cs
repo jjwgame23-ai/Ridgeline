@@ -123,6 +123,7 @@ public sealed class BotSenses
                 // Hull-down, only the turret may show: check it too, and remember which part we saw.
                 foreach (var p in new[] { c, v.TopPoint })
                 {
+                    if (SmokeScreen.Blocks(eye, p)) continue;
                     var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, p, 0xFFFFFFFF, _selfOnly));
                     if (hit.Count == 0 || hit["collider"].AsGodotObject() == v || hit["position"].AsVector3().DistanceTo(p) < 1.2f) { vis = true; c = p; break; }
                 }
@@ -160,6 +161,8 @@ public sealed class BotSenses
     /// <param name="blockedAt">Where the line was blocked (only meaningful when it returns false).</param>
     bool LineTo(PhysicsDirectSpaceState3D space, Vector3 from, Vector3 to, ICombatant c, out Vector3 blockedAt)
     {
+        // Smoke hides the whole man (reported as blocked well short of him).
+        if (SmokeScreen.Blocks(from, to)) { blockedAt = from; return false; }
         var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, to, 0xFFFFFFFF, _selfOnly));
         blockedAt = hit.Count > 0 ? hit["position"].AsVector3() : to;
         return hit.Count == 0 || hit["collider"].AsGodotObject() == c;

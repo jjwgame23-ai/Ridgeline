@@ -217,7 +217,20 @@ It's the same bot with the same state either way; only the fidelity changes.
        - Limit of advance: nobody chases more than 50 m past the objective during the assault or consolidation.
        - The commander doesn't re-task a squad mid-attack. Time limits (ORP 60 s, deploy 120 s, assault 100 s) keep a stuck attack from hanging.
      - Buddy pairs: each team is two pairs. The last 40 m are closed by buddy rushes: one dashes about 8 m to cover while the other covers, then they swap. In close combat the pair takes turns moving and firing.
-     - Not done yet: danger-area crossings (roads, open strips), which need terrain analysis along each route. That's its own run.
+     - Danger-area crossings (`SquadCrossing`). This applies only near the enemy: a hostile objective within 1.2 km, or a fight in the last 90 s. Only infantry on foot do it.
+       - Every 2 s on the move, the leader samples the next 150 m of his route every 5 m.
+         - A sample counts as covered if there are trees around it, a wall within a few metres, or a roof overhead.
+         - Otherwise it counts as exposed if at least 3 of 6 horizontal sightlines run 60 m clear.
+       - A crossing is an exposed stretch that starts within ~65 m and has cover on both sides: a street, a square, a gap, a clearing or open ground. If he's already out in the open, it's bounding overwatch's job instead.
+       - The drill:
+         1. Halt. The leader goes to the near edge and looks for 3 s. Bravo spreads along the near edge watching left and right; Alpha closes up behind the leader.
+         2. Alpha sprints across and spreads along the far side.
+         3. Bravo crosses under Alpha's cover.
+         4. The march resumes, with a 25 s cooldown.
+       - Without fire teams, the men alternate.
+       - Contact or new orders call it off.
+       - Slots are pulled in off walls and snapped to the navmesh.
+       - Pass `nocross` to turn it off for A/B tests.
    - **Graphics settings (menu):** display mode (windowed, borderless or exclusive fullscreen), v-sync, frame cap, render scale (FSR below 100%), MSAA and shadows. They're saved, and F11 toggles fullscreen anywhere. Screenshot and test runs stay windowed.
    - **3c:** scale. The abstract far-away simulation and the promotion/demotion handover described above, reaching 3×33 with persistent aftermath.
 4. **Economy.** Cash, buy screen, gear loss, and bots buying loadouts.
@@ -255,6 +268,67 @@ It's the same bot with the same state either way; only the fidelity changes.
 - **Headless testing:**
   - Command: `-- mode=spec5 verbose shot=x.png frames=N` with `--headless --fixed-fps 60`.
   - It logs every kill, per-bot shots, hits, blocked shots and wide misses, and a status dump every 30 s.
+
+## Combined arms (built)
+
+At 33 a side each faction has one tank, one IFV/APC and one SPAA, so the working unit is **a vehicle with a rifle squad**, not a vehicle platoon (`MotorPoolCombat`).
+
+- **Pairing** (commander): each IFV/APC is mechanised with the rifle squad that has the longest way to go. The tank and the SPAA go with the main attack. They stay with that squad while it lasts.
+- **Mechanised infantry**
+  - **Pickup:** the carrier fetches its squad when fetching and driving beats walking (up to 1.6 km away, and the squad more than 450 m from its objective).
+  - **Waiting:** the squad halts once the ride is within 400 m. A pickup that can't get through gives up after 40 s plus 1 s per 5 m of distance, then waits 3 minutes before trying again.
+  - **Drop:** the carrier drives to a dismount point out of the objective's sight, 180–300 m short (IFV) or 260–380 m short (APC).
+  - **Contact on the way** (hit, or enemy within 350 m) means dismounting there and then, with the squad exiting on the side away from the threat.
+  - **Afterwards** it supports the squad from behind, never out in front, and fetches them again for the next long move.
+- **Tanks**
+  - They overwatch from standoff in the open.
+  - During a deliberate attack they take the support-by-fire position alongside the support team.
+  - In town or forest they go in behind the infantry along the squad's own trail. Alone in close terrain, a tank pulls back out.
+  - Enemy armour reported within 1.1 km comes first. An IFV only takes on lighter armour; an APC keeps out of armour's way.
+- **Firing positions**
+  - They must be reachable on the vehicle navmesh and have gun line of sight. Hull-down spots are preferred: the turret sees over a crest the hull sits behind.
+  - After ~8 engagements or 150 s the vehicle moves on (shoot and scoot), backing out rather than turning round.
+- **Fire for the infantry**
+  - A squad in contact calls its vehicle ("Bradley, enemy north, 300 meters — put fire on it!") and the gun suppresses the contact.
+  - In the assault the vehicle fires on the objective, avoiding any spot our men are within 35 m of, and lifts fire when they're on it.
+- **Gunnery discipline**
+  - Engagement ranges: a tank gun 2.5 km against armour, an autocannon 1.6 km. Against infantry, HE 1.5 km and MGs 900 m.
+  - Priority goes to a gun laid on us that can kill us, then to men with rockets, then to anyone within 80 m.
+  - No firing with a friendly near the line of fire or within 14 m of where HE lands.
+  - New armour targets are called out. Idle guns scan their sector.
+- **Smoke**
+  - Clouds block bot and crew sight lines. Armour carries 2 salvos of smoke launchers; hit by an AT weapon, it smokes towards the shooter and reverses out.
+  - Leaders carry smoke grenades and screen a danger-area crossing when the enemy's close.
+- **Protecting armour:** infantry target enemy AT soldiers near our vehicles first.
+- **Rearming:** a vehicle below 20% main-gun ammunition goes to the nearest FOB, logistics truck or base to rearm (20 s).
+- **Trucks:** drop-offs are now out of the objective's sight too, 240–390 m short.
+- **Not done:**
+  - vehicle platoon formations and bounding (pointless with one vehicle of each kind);
+  - recovery vehicles;
+  - squad-called CAS runs;
+  - LZ selection that avoids known AA;
+  - convoy escort.
+- **A/B testing:** pass `noca` to turn off the pairing.
+
+## Playing inside the squad (built)
+
+- **Squad briefing** (`Squad.Brief`, shown under the order line). It reads the same state the bots act on, so following it means doing what the squad expects.
+  - It shows what the squad is doing right now: marching (and how), a drill, a step of the attack, a danger-area crossing, riding, holding.
+  - It shows **your part in it** by fire team, for example "Bravo (you): cover left and right along the near edge", "FLANK LEFT while Alpha suppresses", or "SUPPORT BY FIRE — hold fire until the assault".
+  - It also shows your team and buddy, and what the squad's vehicle is doing.
+- **Your spot:** a green "your spot" marker where the formation or plan wants you, hidden in drills, fights and vehicles. Your sector of fire shows as a green bar on the compass.
+- **Leader commands** (leader role; N opens the menu, then a number):
+  1. move here (aim point)
+  2. hold here
+  3. on me / work the objective
+  4. suppress where I'm aiming (15 s of area fire)
+  5. smoke there (the nearest man with smoke, within 40 m)
+  6. march order: auto / file / on line / halt
+  7. vehicle fire mission on the aim point (25 s)
+  8. carrier: pick us up / dismount
+- **Riding:** you're dismounted with your squad, getting out on the side away from the fire, with a prompt.
+- **Map (M):** shows your squad's ORP / SBF / LD, danger-area crossings, contact, the suppress point, and your vehicles with their fire.
+- **Testing hooks:** `role=leader`, and `squadcmds=0,3,4,...` fires commands every 5 s from 10 s in.
 
 ## Drones (built)
 

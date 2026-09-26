@@ -8,7 +8,15 @@ public partial class TerritoryHud : CanvasLayer
 
     public static readonly string[] TeamHex = { "#7fa8ff", "#ff8a70", "#ffd35a" };
 
-    RichTextLabel _score = null!, _points = null!, _feed = null!, _comms = null!, _roster = null!;
+    RichTextLabel _score = null!, _points = null!, _feed = null!, _comms = null!, _roster = null!, _brief = null!, _menu = null!;
+    /// <summary>The squad leader's command menu is open (the number keys pick a command, not a weapon).</summary>
+    public static bool MenuOpen;
+
+    public static readonly string[] Commands =
+    {
+        "Move here (where you're aiming)", "Hold here", "On me / work the objective", "Suppress where I'm aiming",
+        "Smoke where I'm aiming", "March order: next", "Vehicle: fire where I'm aiming", "Vehicle: pick us up / dismount",
+    };
     Label _center = null!, _spec = null!, _nav = null!;
     TerritoryMap _map = null!;
     readonly List<(string text, double at)> _kills = new(), _lines = new();
@@ -42,6 +50,13 @@ public partial class TerritoryHud : CanvasLayer
         _spec = MakeLabel(15);
         _spec.AnchorTop = 1f; _spec.AnchorBottom = 1f;
         _spec.OffsetLeft = 16; _spec.OffsetTop = -120;
+
+        _brief = Rich(15, 0.2f, 0.8f, 150);
+        _menu = Rich(15, 0f, 0f, 0);
+        _menu.AnchorTop = 0.35f; _menu.AnchorBottom = 0.35f;
+        _menu.OffsetLeft = 16; _menu.OffsetRight = 460;
+        _menu.HorizontalAlignment = HorizontalAlignment.Left;
+        _menu.Visible = false;
 
         _roster = Rich(14, 1f, 1f, 250);
         _roster.OffsetLeft = -290; _roster.OffsetRight = -14;
@@ -114,6 +129,18 @@ public partial class TerritoryHud : CanvasLayer
             Input.MouseMode = _map.Visible ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
         }
         else if (k.PhysicalKeycode == Key.B) Mode.ToggleFollow();
+        else if (k.PhysicalKeycode == Key.N && Mode.PlayerBody is { Alive: true })
+        {
+            if (!Mode.PlayerLeads) { Center("Only the squad leader gives orders (pick the leader role)", 2f); return; }
+            MenuOpen = !MenuOpen;
+        }
+        else if (MenuOpen && k.PhysicalKeycode >= Key.Key1 && k.PhysicalKeycode < Key.Key1 + Commands.Length)
+        {
+            MenuOpen = false;
+            Mode.SquadCommand((int)(k.PhysicalKeycode - Key.Key1));
+            GetViewport().SetInputAsHandled();
+        }
+        else if (MenuOpen && k.PhysicalKeycode == Key.Escape) MenuOpen = false;
         else if (Mode.PlayerRespawnAt > 0 && k.PhysicalKeycode >= Key.Key1 && k.PhysicalKeycode < Key.Key1 + TerritoryMode.PlayerRoles.Length)
         {
             // Dead: pick what to respawn as.
@@ -196,6 +223,25 @@ public partial class TerritoryHud : CanvasLayer
             _nav.Text = "";
             HudOverlay.Marker = null;
         }
+
+        // The squad briefing: what the squad is doing, and your part in it.
+        HudOverlay.Spot = HudOverlay.Sector = null;
+        _brief.Text = "";
+        if (sq != null && m.PlayerBody is { Alive: true } pp && sq.Members.Contains(pp))
+        {
+            var br = sq.Brief(pp);
+            var lines = new List<string> { $"[color=#cfe8ff]{br.Doing}[/color]" + (br.Team != "" ? $"  [color=#9aa]· {br.Team}[/color]" : "") };
+            lines.Add($"[color=#b8ffb0]▶ {br.Task}[/color]");
+            foreach (var sv in sq.Support)
+                lines.Add($"[color=#d8c890]{sv.Def.Name}: {(sv.Task != "" ? sv.Task : "with you")}{(sv.FireAt != null && Clock.Now < sv.FireAtUntil ? $" — {sv.FireAtWhy}" : "")}[/color]");
+            if (m.PlayerLeads) lines.Add($"[color=#888]march: {(sq.PlayerMarch?.ToString() ?? "auto")} · N: squad commands · B: on me · M: map[/color]");
+            _brief.Text = string.Join("\n", lines);
+            HudOverlay.Spot = br.Spot;
+            HudOverlay.Sector = br.Sector;
+        }
+        if (!(m.PlayerBody is { Alive: true } && m.PlayerLeads)) MenuOpen = false;
+        _menu.Visible = MenuOpen;
+        if (MenuOpen) _menu.Text = "[b]SQUAD COMMANDS[/b]\n" + string.Join("\n", Commands.Select((c, i) => $"{i + 1}  {c}")) + "\n[color=#888]N or Esc: close[/color]";
 
         _center.Visible = now < _centerUntil;
         _kills.RemoveAll(k => now - k.at > 10);
@@ -369,6 +415,40 @@ public partial class TerritoryMap : Control
             }
             string kind = sq.Kind switch { SquadKind.Weapons => " MG", SquadKind.Recon => " recon", SquadKind.Engineer => " eng", SquadKind.Logistics => " log", SquadKind.Drone => " UAV", _ => "" };
             DrawString(font, P(at) + new Vector2(6, -6), sq.Name + kind, HorizontalAlignment.Left, -1, 12, mine ? Colors.White : Team[0]);
+        }
+        // Your squad's plan: the ORP, support-by-fire position and line of departure of an attack;
+        // a danger-area crossing; where the leader wants suppressing fire.
+        if (m.PlayerSquad is { } ps)
+        {
+            var hi = new Color(0.55f, 1f, 0.55f);
+            void Mark(Vector3 at, string label)
+            {
+                var q = P(at);
+                DrawRect(new Rect2(q - new Vector2(4, 4), new Vector2(8, 8)), hi, false, 1.5f);
+                DrawString(font, q + new Vector2(7, -5), label, HorizontalAlignment.Left, -1, 11, hi);
+            }
+            if (ps.Phase != AssaultPhase.None)
+            {
+                Mark(ps.OrpAt, "ORP");
+                if (ps.Phase != AssaultPhase.Orp) { Mark(ps.SbfAt, $"SBF ({Squad.TeamName(ps.SbfTeam)})"); Mark(ps.LdAt, "LD"); }
+            }
+            if (ps.CrossingNow)
+            {
+                DrawLine(P(ps.CrossNear), P(ps.CrossFar), hi, 2.5f);
+                Mark(ps.CrossNear, "danger area");
+            }
+            if (ps.SuppressUntil > Clock.Now) Mark(ps.SuppressAt, "suppress");
+            if (ps.Current is Drill.Contact or Drill.BreakContact || ps.Engaged)
+            {
+                var q = P(ps.ContactAt);
+                DrawLine(q + new Vector2(-6, -6), q + new Vector2(6, 6), new Color(1f, 0.35f, 0.3f), 2f);
+                DrawLine(q + new Vector2(-6, 6), q + new Vector2(6, -6), new Color(1f, 0.35f, 0.3f), 2f);
+            }
+            foreach (var sv in ps.Support)
+            {
+                DrawLine(P(sv.GlobalPosition), P(ps.Position ?? sv.GlobalPosition), hi with { A = 0.35f }, 1f);
+                if (sv.FireAt is Vector3 fa && Clock.Now < sv.FireAtUntil) DrawLine(P(sv.GlobalPosition), P(fa), new Color(1f, 0.8f, 0.3f, 0.7f), 1.5f);
+            }
         }
         // Vehicles: ours as boxes with a class letter; theirs only as reported on the radio.
         foreach (var v in Vehicle.All)

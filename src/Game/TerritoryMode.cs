@@ -153,6 +153,8 @@ public partial class TerritoryMode : Node, IMatch
     /// <summary>The roles a player can pick (squad leader stays a bot's job for now).</summary>
     public static readonly Role[] PlayerRoles = { Role.Leader, Role.Rifleman, Role.AutoRifleman, Role.Grenadier, Role.Medic, Role.Marksman, Role.Engineer, Role.Ammo, Role.AntiTank, Role.HeavyAT, Role.AntiAir, Role.Crewman, Role.DroneOperator };
     public MotorPool Motor = null!;
+    public static TerritoryMode? I { get; private set; }
+    static readonly bool NoCombinedArms = OS.GetCmdlineUserArgs().Contains("noca"); // A/B testing
     readonly HashSet<Squad> _bound = new();
 
     /// <summary>Is the player leading their squad (picked the squad leader role)?</summary>
@@ -214,10 +216,13 @@ public partial class TerritoryMode : Node, IMatch
         BotBrain.ResetStatics();
         Squad.Engagements = Squad.Assaults = Squad.Hunts = 0;
         Squad.ResetAll();
-        Squad.Orps = Squad.Deploys = Squad.BuddySwaps = 0;
+        Squad.Orps = Squad.Deploys = Squad.BuddySwaps = Squad.Crossings = Squad.CrossingsDone = Squad.CrossingsAborted = Squad.SmokeCrossings = 0;
         Drone.Clear();
+        SmokeScreen.Clear();
+        MotorPool.ResetCounters();
+        CrewBrain.AreaRounds = CrewBrain.HeldForFriendlies = 0;
         Drone.Log = Log;
-        Bot.StuckEvents = 0;
+        Bot.StuckEvents = Bot.StuckNearVehicle = Bot.StuckBoarding = Bot.StuckWaiting = 0;
         CrewBrain.MortarRounds = 0;
         Fortifications.Clear();
         Motor = new MotorPool(this);
@@ -296,6 +301,7 @@ public partial class TerritoryMode : Node, IMatch
         Combatants.Killed += OnKilled;
         Combatants.Down += OnDowned;
         Comms.Said += OnSaid;
+        I = this;
 
         for (int t = 0; t < 3; t++) Command(t);
         foreach (var (p, (team, _, _)) in _roster) SpawnBot(p, team, atBase: true);
@@ -638,6 +644,37 @@ public partial class TerritoryMode : Node, IMatch
                         break;
                     }
                     bool light = sq.Vehicle.Def.Kind == VKind.LTV;
+                    // Who to work with. A carrier (IFV/APC) takes a rifle squad with a long way to go:
+                    // it's their ride and then their fire support. The tank and the SPAA go with the
+                    // main attack. Stay with them while they last.
+                    bool carrier = MotorPool.Carrier(sq.Vehicle);
+                    var cur0 = sq.Supports;
+                    bool keep = cur0 != null && cur0.Alive >= 2 && cur0.Objective != null && rifle.Contains(cur0);
+                    if (NoCombinedArms) { sq.Supports = null; keep = true; }
+                    if (!light && !keep)
+                    {
+                        var taken = Squads[team].Where(o => o != sq && o.Kind == SquadKind.Armor && o.Supports != null && o.Vehicle is { } ov && MotorPool.Carrier(ov) == carrier).Select(o => o.Supports!).ToHashSet();
+                        Squad? pick = null;
+                        float bestS = float.MinValue;
+                        foreach (var r in rifle)
+                        {
+                            if (r.Alive < 3 || r.Objective == null || taken.Contains(r) || r.Leader is not ICombatant rl) continue;
+                            float toGo = ((r.Objective.Center - rl.FeetPos) with { Y = 0f }).Length();
+                            float fromUs = rl.FeetPos.DistanceTo(sq.Vehicle.GlobalPosition);
+                            float score = carrier ? toGo - fromUs * 0.5f
+                                : (r.Defend ? -300f : 0f) + (attacks.Contains(IndexOf(r.Site)) ? 150f : 0f) - fromUs * 0.3f;
+                            if (score > bestS) { bestS = score; pick = r; }
+                        }
+                        if (pick != cur0 && pick != null) Log($"[{Clock.Now:0}s] {sq.Name} ({sq.Vehicle.Def.Name}): {(carrier ? "mechanised with" : "working with")} {pick.Name}");
+                        sq.Supports = pick;
+                    }
+                    if (!light && sq.Supports is { Objective: { } supObj } sup)
+                    {
+                        if (sq.Site != sup.Site || sq.Objective is not PointObjective spo || spo.Watch.DistanceTo(supObj.Center) > 20f)
+                            sq.Order(sup.Site, new PointObjective { Center = supObj.Center, Watch = supObj.Center }, false,
+                                     carrier ? "Mechanised with" : sq.Vehicle.Def.Kind == VKind.SPAA ? "Air defence for" : "Supporting", sup.Name);
+                        break;
+                    }
                     var armor = Radio.Latest(team, RadioKind.Armor, 60.0);
                     int cur = IndexOf(sq.Site);
                     int target = attacks.Count == 0 ? Enumerable.Range(0, Points.Length).OrderBy(Dist).First()
@@ -649,9 +686,10 @@ public partial class TerritoryMode : Node, IMatch
                     bool stale = !_posts.TryGetValue(sq, out var post) || post.Site != Points[target].Site || Clock.Now - sq.OrderSince > 120.0 || Clock.Now - sq.Vehicle.LastHit < 3.0;
                     if (stale)
                     {
-                        post = (Points[target].Site, FindPost(team, watch, light ? 90f : 150f, light ? 200f : 330f));
+                        // The vehicle picks its own firing position (hull-down, reachable) around what it's watching.
+                        post = (Points[target].Site, watch);
                         _posts[sq] = post;
-                        sq.Order(Points[target].Site, new PointObjective { Center = post.Post, Watch = watch }, false, "Support", Points[target].Site.Name);
+                        sq.Order(Points[target].Site, new PointObjective { Center = watch, Watch = watch }, false, light ? "Scout" : "Overwatch", Points[target].Site.Name);
                         Log($"[{Clock.Now:0}s] {sq.Name} ({sq.Vehicle.Def.Name}): {sq.OrderText}");
                     }
                     break;
@@ -857,6 +895,86 @@ public partial class TerritoryMode : Node, IMatch
         if (PlayerSquad.Leader is Bot lead) Comms.Say(lead, "Copy that, moving.");
     }
 
+    /// <summary>Where the player is aiming, out to ~900 m (null: at the sky).</summary>
+    Vector3? PlayerAimPoint()
+    {
+        if (PlayerBody is not { Alive: true } p) return null;
+        var from = p.Cam.GlobalPosition;
+        var to = from - p.Cam.GlobalBasis.Z * 900f;
+        var hit = p.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(from, to, Layers.World | Layers.Trees | Layers.Vehicles));
+        return hit.Count > 0 ? hit["position"].AsVector3() : null;
+    }
+
+    /// <summary>The squad leader's command menu (N, then a number).</summary>
+    public void SquadCommand(int k)
+    {
+        var sq = PlayerSquad;
+        if (sq == null || !PlayerLeads) return;
+        double now = Clock.Now;
+        var aim = PlayerAimPoint();
+        Bot? Voice() => sq.Members.OfType<Bot>().Where(b => b.Alive).OrderBy(b => b.FeetPos.DistanceTo(PlayerBody!.FeetPos)).FirstOrDefault();
+        bool NeedAim() { if (aim != null) return true; _hud.Center("Aim at the ground or a building", 1.5f); return false; }
+        switch (k)
+        {
+            case 0:
+            case 1:
+            {
+                if (!NeedAim()) return;
+                var at = Map.Ground(aim!.Value);
+                sq.FollowPlayer = false;
+                sq.PlayerOrderUntil = now + 300.0;
+                sq.Order(null, new PointObjective { Center = at, Watch = at + (at - PlayerBody!.FeetPos) with { Y = 0f } }, k == 1, k == 1 ? "Hold" : "Move to", $"{Comms.Bearing(PlayerBody.FeetPos, at)}, {PlayerBody.FeetPos.DistanceTo(at):0} m");
+                foreach (var m in sq.Members) if (m is Bot { Alive: true } b) b.Brain.ObjectiveChanged();
+                _hud.Center($"Squad: {sq.OrderText}", 2f);
+                if (Voice() is { } v0) Comms.Say(v0, k == 1 ? "Holding there." : "Moving.");
+                break;
+            }
+            case 2: ToggleFollow(); break;
+            case 3:
+                if (!NeedAim()) return;
+                sq.SuppressAt = aim!.Value;
+                sq.SuppressUntil = now + 15.0;
+                _hud.Center("Squad: suppress!", 1.5f);
+                if (Voice() is { } v1) Comms.Say(v1, "Suppressing!");
+                break;
+            case 4:
+            {
+                if (!NeedAim()) return;
+                var thrower = sq.Members.OfType<Bot>().Where(b => b.Alive && b.Ride == null && b.SmokeGrenades > 0 && b.FeetPos.DistanceTo(aim!.Value) < 40f)
+                                .OrderBy(b => b.FeetPos.DistanceTo(aim!.Value)).FirstOrDefault();
+                if (thrower != null && thrower.ThrowGrenadeAt(aim!.Value, smoke: true)) { Comms.Say(thrower, "Smoke out!"); _hud.Center("Smoke!", 1.5f); }
+                else _hud.Center("Nobody with smoke is within a throw (40 m) of there", 2f);
+                break;
+            }
+            case 5:
+            {
+                March?[] cycle = { null, March.Column, March.AssaultLine, March.Herringbone };
+                int i = Array.IndexOf(cycle, sq.PlayerMarch);
+                var next = cycle[(i + 1) % cycle.Length];
+                sq.SetPlayerMarch(next);
+                _hud.Center($"March order: {next switch { March.Column => "file (behind me, on my track)", March.AssaultLine => "on line (abreast of me)", March.Herringbone => "halt (spread both sides, face out)", _ => "auto (wedge / file by the ground)" }}", 2f);
+                break;
+            }
+            case 6:
+                if (!NeedAim()) return;
+                if (!sq.Support.Any()) { _hud.Center("No vehicle is working with your squad", 2f); return; }
+                sq.VehicleFireAt = aim!.Value;
+                sq.VehicleFireUntil = now + 25.0;
+                _hud.Center($"Fire mission: {string.Join(", ", sq.Support.Select(v => v.Def.Name))}", 2f);
+                Comms.Say(PlayerBody!, $"{sq.Support.First().Def.ClassName}, fire mission, {Comms.Bearing(PlayerBody!.FeetPos, aim.Value)}, {PlayerBody.FeetPos.DistanceTo(aim.Value):0} meters!");
+                break;
+            case 7:
+            {
+                var carrier = sq.Support.FirstOrDefault(MotorPool.Carrier) ?? sq.Transport;
+                if (carrier == null) { _hud.Center("No carrier or transport for your squad", 2f); return; }
+                bool aboard = sq.Members.Any(m => m.Alive && m.Ride == carrier);
+                if (aboard) { sq.WantDismount = true; _hud.Center("Dismount!", 1.5f); }
+                else { sq.WantRide = true; _hud.Center($"Calling the {carrier.Def.Name} to pick us up", 2f); }
+                break;
+            }
+        }
+    }
+
     public void ToggleFollow()
     {
         if (PlayerSquad == null) return;
@@ -965,12 +1083,19 @@ public partial class TerritoryMode : Node, IMatch
             }
             Log("     points: " + string.Join("  ", Points.Select((p, i) => $"{p.Site.Name}={(Owner[i] < 0 ? "-" : KothMode.TeamNames[Owner[i]][..1])}{Progress[i] * 100:0}[{Inside[i, 0]}/{Inside[i, 1]}/{Inside[i, 2]}]"
                 + (Front ? "{" + string.Concat(Enumerable.Range(0, 3).Where(t => CanTake(t, i)).Select(t => KothMode.TeamNames[t][..1])) + "}" : ""))));
+            foreach (var ms in Motor.Slots)
+            {
+                if (ms.Live is not { Destroyed: false } mv || ms.Kind is VKind.Transport or VKind.Logistics or VKind.UH or VKind.AH or VKind.Mortar) continue;
+                var gun = mv.Occupants.OfType<Bot>().FirstOrDefault(o => o.SeatIdx == mv.GunnerSeat);
+                Log($"     {mv.Def.Name} ({KothMode.TeamNames[ms.Team]}): {(ms.Rearming ? "rearming" : ms.FiringWhy)}{(ms.Mech is 1 ? ", picking up" : ms.Mech is 2 ? ", carrying" : "")} with {ms.Crew?.Supports?.Name ?? "-"}, "
+                    + $"{(mv.Goal is Vector3 g ? ((g - mv.GlobalPosition) with { Y = 0f }).Length() : 0f):0} m to go, {mv.Hp / mv.Def.Hp:P0}, {mv.Speed * 3.6f:0} km/h thr {mv.Throttle:0.0} path {mv.Drive.Idx}/{mv.Drive.Path.Length}{(mv.Boarding ? " BOARDING" : "")}, gunner: {gun?.Crew.Note ?? "none"}{(mv.Drive.Note != "" ? $", driver: {mv.Drive.Note}" : "")}");
+            }
             foreach (var sq in Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Drone))
                 foreach (var m in sq.Members.OfType<Bot>().Where(m => m.Alive && m.Ops != null))
                     Log($"     {sq.Name} {m.Callsign}: {m.Brain.State} ({m.Brain.Note}) stock {m.Ops!.Quads}q/{m.Ops.Bombs}b/{m.Ops.Fpvs}f"
                         + (m.Ops.Quad is { Dead: false } q ? $", quad {q.GlobalPosition.DistanceTo(m.FeetPos):0} m out, {q.Bombs} bombs, batt {q.Battery:P0}, sees {q.Seen.Count(kv => Clock.Now - kv.Value < 3)}" : "")
                         + (m.Ops.Fpv is { Dead: false } f ? $", FPV {f.GlobalPosition.DistanceTo(f.TargetPoint()):0} m to target" : ""));
-            Log($"     stuck events {Bot.StuckEvents}, squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, drones {Drone.Launched} up, {Drone.Spots} spots, {Drone.BombsDropped} bombs, {Drone.FpvStrikes} FPV hits, {Drone.ShotDown} shot down, ORPs {Squad.Orps}, deployed {Squad.Deploys}, buddy swaps {Squad.BuddySwaps}, marching {string.Join(" ", Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Rifle && s.Alive > 0).GroupBy(s => s.MarchOrder).Select(g => $"{g.Key}:{g.Count()}"))}, drills {Squad.Drills} (flank {Squad.Flanks}, break {Squad.Breaks}, indirect {Squad.Indirects}, consolidate {Squad.Consolidations}), gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
+            Log($"     stuck events {Bot.StuckEvents} (near a vehicle {Bot.StuckNearVehicle}, boarding {Bot.StuckBoarding}, ride coming {Bot.StuckWaiting}), squad engagements {Squad.Engagements}, assaults {Squad.Assaults}, armour hunts {Squad.Hunts}, mech rides {MotorPool.Mounts} (dismounts {MotorPool.Dismounts}, under fire {MotorPool.ContactDismounts}), fire requests {MotorPool.FireRequests}, area rounds {CrewBrain.AreaRounds}, held for friendlies {CrewBrain.HeldForFriendlies}, smoke {SmokeScreen.Pops} (vehicle {MotorPool.SmokePops}), scoots {MotorPool.Scoots}, relocations {MotorPool.Relocations}, rearms {MotorPool.Rearms}, drones {Drone.Launched} up, {Drone.Spots} spots, {Drone.BombsDropped} bombs, {Drone.FpvStrikes} FPV hits, {Drone.ShotDown} shot down, danger areas {Squad.Crossings} ({Squad.CrossingsDone} crossed, {Squad.CrossingsAborted} abandoned, {Squad.SmokeCrossings} under smoke), ORPs {Squad.Orps}, deployed {Squad.Deploys}, buddy swaps {Squad.BuddySwaps}, marching {string.Join(" ", Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Rifle && s.Alive > 0).GroupBy(s => s.MarchOrder).Select(g => $"{g.Key}:{g.Count()}"))}, drills {Squad.Drills} (flank {Squad.Flanks}, break {Squad.Breaks}, indirect {Squad.Indirects}, consolidate {Squad.Consolidations}), gunners vs infantry {CrewBrain.InfantryTargets} picks/{CrewBrain.InfantryShots} shots (vs armour {CrewBrain.ArmorShots}), defending {Squads.Sum(l => l.Count(s => s.Kind == SquadKind.Rifle && s.Defend))}, kills so far {_kills} (downs {_downs}, down now {Combatants.All.Count(c => c.Downed)}), bounds {BotBrain.Bounds}, hunts {BotBrain.Hunts}, to-cover {BotBrain.Covers}; " +
                 $"medevac'd {Motor.Evacuated}, air assaults {Motor.AirAssaults}, mortar rounds {CrewBrain.MortarRounds}, vehicles {Vehicle.All.Count(v => !v.Destroyed)} live / {Vehicle.All.Count(v => v.Destroyed)} wrecks, FOBs {Fob.All.Count}, rockets {BotBrain.Rockets}, " +
                 $"heals {BotBrain.Heals} (revives {BotBrain.Revives}, self-aid {BotBrain.SelfAids}), resupplies {BotBrain.Resupplies}, sandbags {BotBrain.Builds}, 40mm {BotBrain.Launches}, intel {Intel.Count}");
             foreach (var s in Motor.Slots)

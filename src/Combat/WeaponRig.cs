@@ -80,7 +80,7 @@ public partial class WeaponRig : Node3D
                       && !P.StanceLocked;
 
         // --- switching
-        if (canAct && _switchT <= 0f && !Reloading)
+        if (canAct && _switchT <= 0f && !Reloading && !TerritoryHud.MenuOpen)
         {
             int want = Input.IsActionJustPressed("weapon1") ? 0 : Input.IsActionJustPressed("weapon2") ? 1 : -1;
             if (want >= _slots.Length) want = -1;

@@ -84,7 +84,41 @@ public sealed class CrewBrain
         }
     }
 
-    public static int InfantryTargets, InfantryShots, ArmorShots;
+    public static int InfantryTargets, InfantryShots, ArmorShots, AreaRounds, HeldForFriendlies;
+    double _areaPickAt, _ffAt, _calloutAt;
+    Vector3 _areaPoint;
+    bool _ffBlocked;
+
+    /// <summary>
+    /// How far this mount engages: a tank gun takes on armour out to ~2.5 km, an autocannon
+    /// ~1.6 km; against people, HE out to ~1.5 km, a machine gun ~900 m. Beyond that it only
+    /// gives the position away.
+    /// </summary>
+    static float Reach(TurretDef td, bool armor)
+    {
+        bool gun = td.Ammo.Any(a => a.Mag == 1 && a.AntiArmor);
+        bool cannon = td.Ammo.Any(a => a.Mag > 1 && a.AntiArmor);
+        bool he = td.Ammo.Any(a => a.Explosive);
+        if (armor) return gun ? 2500f : cannon ? 1600f : 800f;
+        return (gun || cannon) && he ? 1500f : cannon ? 1400f : 900f;
+    }
+
+    /// <summary>Would a shot from here to there endanger our own: someone close to the line, or near where HE lands.</summary>
+    static bool Friendly(Vehicle v, Vector3 from, Vector3 to, bool explosive)
+    {
+        var seg = to - from;
+        float len2 = seg.LengthSquared();
+        foreach (var c in Combatants.All)
+        {
+            if (c.Team != v.CrewTeam || !c.Alive || c.Ride != null) continue;
+            var p = c.ChestPos;
+            if (explosive && p.DistanceTo(to) < 14f) return true;
+            float t = len2 > 1f ? Mathf.Clamp((p - from).Dot(seg) / len2, 0f, 1f) : 0f;
+            if (t * MathF.Sqrt(len2) < 6f) continue; // right by the vehicle: under the gun
+            if ((from + seg * t).DistanceTo(p) < 2.5f) return true;
+        }
+        return false;
+    }
 
     void Gun(Vehicle v, int ti, float dt)
     {
@@ -102,6 +136,7 @@ public sealed class CrewBrain
                 // Seen in the last few seconds: keep the gun on it, it'll show again.
                 if (!GodotObject.IsInstanceValid(ev.Who) || ev.Who.Destroyed || now - ev.LastSeen > 6.0) continue;
                 float d = ev.Who.Center.DistanceTo(v.Center);
+                if (!(ev.Who.Def.Air && !ev.Who.Landed) && d > Reach(t.Def, true)) continue;
                 // Only worth shooting if we can hurt it.
                 // Only worth shooting if our best round can get through the side it's showing us.
                 float bestPen = t.Def.Ammo.Max(a => a.Pen);
@@ -110,6 +145,16 @@ public sealed class CrewBrain
                 bool aaGun = t.Def.Ammo.Any(a => a.Prox);
                 if (air && d > (aaGun ? 3000f : 1200f)) continue;
                 float score = 200f - d * 0.2f + (ev.Who.Def.Heavy ? 40f : 0f) + (air && aaGun ? 300f : 0f);
+                // A gun that can kill us, laid on us: that one first.
+                if (!air && ev.Who.Turrets.Length > 0 && ev.Who.Turrets[0].Def.Ammo.Length > 0)
+                {
+                    var et = ev.Who.Turrets[0];
+                    if (et.Def.Ammo.Max(a => a.Pen) >= v.ArmorToward(ev.Who.Center) * 0.85f)
+                    {
+                        score += 40f;
+                        if (et.Forward.AngleTo(v.Center - et.Muzzle.GlobalPosition) < 0.1f) score += 60f;
+                    }
+                }
                 if (score > bestScore) { bestScore = score; best = ev.Who; }
             }
             // Drones: the AA gun's proximity rounds make short work of them; an MG will try at short range.
@@ -127,12 +172,19 @@ public sealed class CrewBrain
             {
                 if (!th.Visible || !th.Who.Alive) continue;
                 float d = th.Who.FeetPos.DistanceTo(v.Center);
-                float score = 100f - d * 0.2f;
+                if (d > Reach(t.Def, false)) continue;
+                // Men with rockets are what kills armour; men right on top of us are next.
+                float score = 100f - d * 0.2f + (th.Who.Role is Role.AntiTank or Role.HeavyAT && d < 500f ? 70f : 0f) + (d < 80f ? 50f : 0f);
                 if (score > bestScore) { bestScore = score; best = th.Who; }
             }
             if (best is ICombatant) InfantryTargets++;
             if (best != Target)
             {
+                if (best is Vehicle nv && now > _calloutAt)
+                {
+                    _calloutAt = now + 6.0;
+                    Comms.Say(_b, $"Target, {nv.Def.ClassName.ToUpperInvariant()}, {nv.Center.DistanceTo(v.Center):0} meters — engaging!");
+                }
                 Target = best;
                 _settle = 1f; // a new target: the lay starts rough
                 _err = new Vector3(_rng.RandfRange(-1f, 1f), _rng.RandfRange(-0.5f, 1f), _rng.RandfRange(-1f, 1f));
@@ -146,11 +198,18 @@ public sealed class CrewBrain
             Drone dr when !dr.Dead && GodotObject.IsInstanceValid(dr) => dr.GlobalPosition,
             _ => null,
         };
+        if (point == null && v.FireAt is Vector3 fa && now < v.FireAtUntil)
+        {
+            Target = null;
+            AreaFire(v, t, ti, fa, now, dt);
+            return;
+        }
         if (point is not Vector3 p)
         {
             Target = null;
-            // Nothing to shoot: scan ahead of the hull.
-            t.AimAt = v.Center + v.Forward.Rotated(Vector3.Up, MathF.Sin((float)now * 0.3f) * 0.8f) * 60f + Vector3.Up * 1.5f;
+            // Nothing to shoot: scan the sector we're covering (else ahead of the hull), slowly, side to side.
+            var axis = v.Watch is Vector3 wv && ((wv - v.Center) with { Y = 0f }).LengthSquared() > 25f ? ((wv - v.Center) with { Y = 0f }).Normalized() : v.Forward;
+            t.AimAt = v.Center + axis.Rotated(Vector3.Up, MathF.Sin((float)now * 0.25f) * (v.Watch != null ? 0.45f : 0.8f)) * 60f + Vector3.Up * 1.5f;
             Note = "scanning";
             return;
         }
@@ -181,6 +240,13 @@ public sealed class CrewBrain
         // Only fire at what we can actually see right now.
         if (armor && _b.Senses.Vehicles.Find(x => x.Who == Target) is { Visible: false }) return;
         if (v.AimError(ti) > tol || now < _nextShot) return;
+        if (now > _ffAt)
+        {
+            _ffAt = now + 0.25;
+            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, p, !useCoax && w.Explosive);
+            if (_ffBlocked) HeldForFriendlies++;
+        }
+        if (_ffBlocked) { Note = "holding: friendlies in the way"; return; }
         // Automatic weapons fire in bursts; big guns one round at a time when laid.
         if (w.Mag > 1)
         {
@@ -189,5 +255,35 @@ public sealed class CrewBrain
         }
         else _nextShot = now + _rng.RandfRange(0.4f, 1.5f); // a moment to confirm the lay
         if (v.Fire(ti, useCoax, dist)) { if (armor) ArmorShots++; else InfantryShots++; }
+    }
+
+    /// <summary>
+    /// Fire onto a point for the infantry (their contact, the objective in the assault) with
+    /// nobody in sight: HE if the gun has it, else short bursts, walked around the area.
+    /// </summary>
+    void AreaFire(Vehicle v, Vehicle.TurretState t, int ti, Vector3 at, double now, float dt)
+    {
+        if (now > _areaPickAt)
+        {
+            _areaPickAt = now + _rng.RandfRange(2f, 4f);
+            _areaPoint = at + new Vector3(_rng.RandfRange(-6f, 6f), _rng.RandfRange(-0.5f, 1.5f), _rng.RandfRange(-6f, 6f));
+            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, _areaPoint, true);
+        }
+        t.AimAt = _areaPoint;
+        Note = v.FireAtWhy;
+        float dist = _areaPoint.DistanceTo(t.Muzzle.GlobalPosition);
+        if (dist > Reach(t.Def, false) || _ffBlocked) { Note = v.FireAtWhy + " (holding)"; return; }
+        int he = Array.FindIndex(t.Def.Ammo, a => a.Explosive);
+        if (he >= 0 && he != t.AmmoIdx) v.SelectAmmo(ti, he);
+        bool main = he >= 0 || t.Def.Coax == null;
+        var w = main ? t.Weapon : t.Def.Coax!;
+        if (v.AimError(ti) > 2.5f || now < _nextShot) return;
+        if (w.Mag > 1)
+        {
+            if (now > _burstUntil + 0.6) _burstUntil = now + _rng.RandfRange(0.4f, 1.0f);
+            if (now > _burstUntil) { _nextShot = now + _rng.RandfRange(1.5f, 3.5f); return; }
+        }
+        else _nextShot = now + _rng.RandfRange(5f, 9f); // a round of HE every few seconds
+        if (v.Fire(ti, !main, dist)) AreaRounds++;
     }
 }

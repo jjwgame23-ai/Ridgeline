@@ -99,13 +99,26 @@ public partial class DevShot : Node
             _view = a.TryGetValue("view", out var v) ? v : "",
             _cam = a.TryGetValue("cam", out var cm) ? cm : "",
             _look = a.TryGetValue("look", out var lk) ? lk : "",
+            _cmds = a.TryGetValue("squadcmds", out var sc) ? sc.Split(',').Select(int.Parse).ToArray() : Array.Empty<int>(),
         };
+        // role=leader etc.: what the player spawns as.
+        if (a.TryGetValue("role", out var rl) && Enum.TryParse<Role>(rl, true, out var role)) Settings.PlayerRole = role;
         parent.AddChild(d);
     }
+
+    int[] _cmds = Array.Empty<int>();
 
     public override void _Process(double delta)
     {
         _n++;
+        // squadcmds=0,3,4: the squad leader's commands, one every 5 s from 10 s in (testing).
+        if (_cmds.Length > 0 && _n >= 600 && _n % 300 == 0 && (_n - 600) / 300 < _cmds.Length && TerritoryMode.I is { } tm)
+        {
+            int k = _cmds[(_n - 600) / 300];
+            Player.I?.SetPitch(-8f);
+            tm.SquadCommand(k);
+            GD.Print($"[{Clock.Now:0}s] devshot: squad command {k} ({TerritoryHud.Commands[k]}) -> {tm.PlayerSquad?.OrderText}, march {tm.PlayerSquad?.PlayerMarch}, suppress {(tm.PlayerSquad?.SuppressUntil > Clock.Now)}, vehicle fire {(tm.PlayerSquad?.VehicleFireUntil > Clock.Now)}, want ride {tm.PlayerSquad?.WantRide}");
+        }
         // Input is ignored for 150 ms after mouse capture, so wait before pressing anything.
         if (_n == 30 && _weapon == 2) Input.ActionPress("weapon2");
         if (_n == 32) Input.ActionRelease("weapon2");

@@ -29,6 +29,21 @@ public partial class Vehicle : CharacterBody3D
     public bool[] TurretDown = null!;
     public ICombatant?[] Occupants = null!;
     public double LastHit = -99, LastFired = -99;
+    /// <summary>Where the last hit came from, and how hard it hit (penetration, mm): 40+ is something that can kill armour.</summary>
+    public Vector3 LastHitFrom;
+    public float LastHitPen;
+    /// <summary>Smoke grenade launchers: salvos left.</summary>
+    public int SmokeSalvos;
+    /// <summary>Back towards the goal rather than turning round to drive there (out of a firing position, away from a threat).</summary>
+    public bool PreferReverse;
+    /// <summary>Area fire ordered for the gunner when it has nothing better: a point, until when, and why.</summary>
+    /// <summary>The sector it's covering: an idle gunner scans across this, not wherever the hull points.</summary>
+    public Vector3? Watch;
+    public Vector3? FireAt;
+    public double FireAtUntil;
+    public string FireAtWhy = "";
+    /// <summary>What the crew is doing, in words (for the HUD of the squad it works with).</summary>
+    public string Task = "";
 
     // ---- where a bot driver is taking it (set by the motor pool)
     public Vector3? Goal;
@@ -41,7 +56,7 @@ public partial class Vehicle : CharacterBody3D
         public int Idx, Stucks;
         public Vector3 PathGoal;
         public double RepathAt, StuckSince = -1, ReverseUntil, WaitSince = -1;
-        public float ReverseSteer;
+        public float ReverseSteer, StuckAngle;
         public string Note = "";
     }
     public readonly DriveState Drive = new();
@@ -99,6 +114,8 @@ public partial class Vehicle : CharacterBody3D
 
     public override void _Ready()
     {
+        // Armour carries smoke launchers: two salvos.
+        SmokeSalvos = Def.Heavy ? 2 : 0;
         _rng.Randomize();
         Hp = Def.Hp;
         Occupants = new ICombatant?[Def.Seats.Count];
@@ -435,6 +452,8 @@ public partial class Vehicle : CharacterBody3D
     {
         if (Destroyed) return;
         LastHit = Clock.Now;
+        LastHitFrom = p.Shooter is { } sh && GodotObject.IsInstanceValid((GodotObject)sh) ? sh.EyePos : pos - p.Vel.Normalized() * 150f;
+        LastHitPen = p.Pen;
         float armor = ArmorFacing(-p.Vel.Normalized(), out float cos);
         // Sloped armour: a round striking at an angle has more steel to go through.
         float effective = armor / MathF.Pow(MathF.Max(0.3f, cos), 0.7f);
@@ -602,7 +621,8 @@ public partial class Vehicle : CharacterBody3D
         return true;
     }
 
-    public void Leave(ICombatant c)
+    /// <param name="awayFrom">Get out on the side away from this point (the enemy): the hull between you and them.</param>
+    public void Leave(ICombatant c, Vector3? awayFrom = null)
     {
         int i = Array.IndexOf(Occupants, c);
         if (i < 0) return;
@@ -611,6 +631,17 @@ public partial class Vehicle : CharacterBody3D
         // Out the side, away from the hull.
         var side = GlobalBasis.X * (Def.Hull.X * 0.5f + 1.0f) * (Def.Seats[i].Pos.X < 0f ? -1f : 1f);
         var at = GlobalPosition + side + Forward * MathF.Min(Def.Seats[i].Pos.Z, 1f) * -1f;
+        if (awayFrom is Vector3 threat)
+        {
+            // Behind the hull from the threat, spread a little so they don't pile out onto one spot.
+            var away = (GlobalPosition - threat) with { Y = 0f };
+            if (away.LengthSquared() > 1f)
+            {
+                away = away.Normalized();
+                var across = away.Cross(Vector3.Up);
+                at = GlobalPosition + away * (MathF.Max(Def.Hull.X, Def.Hull.Z) * 0.5f + 1.5f) + across * ((i % 3) - 1) * 1.2f;
+            }
+        }
         c.Dismount(at);
     }
 

@@ -161,7 +161,7 @@ public sealed class DroneOps
         if (Fpv != null)
         {
             // Its target gone before it got there: the nearest other one of theirs near where it's going.
-            if (Fpv.TargetV is { Destroyed: true } || Fpv.TargetC is { Alive: false })
+            if (Fpv.TargetV is { Destroyed: true } || Fpv.TargetC is { Alive: false } || Fpv.TargetV == null && Fpv.TargetC == null)
             {
                 Fpv.TargetV = null;
                 Fpv.TargetC = Combatants.All.Where(c => c.Alive && c.Team != _b.Team && c.FeetPos.DistanceTo(Fpv.AimAt) < 40f)

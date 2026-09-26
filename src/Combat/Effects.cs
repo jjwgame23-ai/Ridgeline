@@ -250,6 +250,29 @@ public partial class Effects : Node3D
         return new Burning { Fire = fire, Smoke = smoke };
     }
 
+    Gradient? _screenRamp;
+
+    /// <summary>A smoke screen: thick, pale, low and wide, lingering for most of a minute.</summary>
+    public void SmokeCloud(Vector3 pos, float radius, float seconds)
+    {
+        _screenRamp ??= Ramp((0f, new Color(0.78f, 0.78f, 0.76f, 0f)), (0.08f, new Color(0.8f, 0.8f, 0.78f, 0.9f)),
+                             (0.7f, new Color(0.74f, 0.74f, 0.72f, 0.8f)), (1f, new Color(0.7f, 0.7f, 0.68f, 0f)));
+        var p = new CpuParticles3D
+        {
+            Emitting = false, LocalCoords = false, Position = pos + Vector3.Up * 1f, Amount = 70, Lifetime = 14f,
+            Direction = Vector3.Up, Spread = 80f, InitialVelocityMin = 0.5f, InitialVelocityMax = radius * 0.28f,
+            Gravity = new Vector3(0.25f, 0.18f, 0.1f), DampingMin = 0.4f, DampingMax = 0.9f,
+            ScaleAmountMin = radius * 0.7f, ScaleAmountMax = radius * 1.2f, ScaleAmountCurve = _grow,
+            ColorRamp = _screenRamp, Mesh = _smoke, EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = radius * 0.4f,
+            VisibilityAabb = new Aabb(new Vector3(-60f, -10f, -60f), new Vector3(120f, 60f, 120f)),
+        };
+        AddChild(p);
+        p.Emitting = true;
+        var tree = GetTree();
+        tree.CreateTimer(MathF.Max(1f, seconds - 12f)).Timeout += () => { if (IsInstanceValid(p)) p.Emitting = false; };
+        tree.CreateTimer(seconds + 16f).Timeout += () => { if (IsInstanceValid(p)) p.QueueFree(); };
+    }
+
     Gradient? _plumeRamp;
     Curve? _plumeGrow;
     readonly Queue<CpuParticles3D> _plumes = new();

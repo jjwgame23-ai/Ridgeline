@@ -144,6 +144,13 @@ public sealed class BotBrain
         if (order.Count > 0) _aimPart = order[0];
     }
 
+    bool ArmourNear(Vector3 p)
+    {
+        foreach (var v in Vehicle.All)
+            if (!v.Destroyed && v.Def.Heavy && v.Crewed && v.CrewTeam == _b.Team && v.GlobalPosition.DistanceTo(p) < 150f) return true;
+        return false;
+    }
+
     Threat? PickTarget()
     {
         Threat? best = null;
@@ -154,6 +161,8 @@ public sealed class BotBrain
             float d = _b.FeetPos.DistanceTo(t.LastKnownPos);
             double age = Now - Math.Max(t.LastSeen, t.LastHeard);
             float score = (t.Visible ? 100f : 0f) - d * 0.3f - (float)age * 2f + (t == Target ? 15f : 0f);
+            // Infantry protect their armour: an enemy with a rocket near one of our vehicles goes first.
+            if (t.Who.Role is Role.AntiTank or Role.HeavyAT && ArmourNear(t.LastKnownPos)) score += 40f;
             if (score <= bestScore) continue;
             bestScore = score;
             best = t;
@@ -594,10 +603,26 @@ public sealed class BotBrain
         if (Sq.Kind is SquadKind.Armor or SquadKind.Transport or SquadKind.Air or SquadKind.Mortar && Sq.Vehicle is { Destroyed: false } own) { v = own; seat = SeatRole.Driver; }
         else if (Sq.Kind == SquadKind.Logistics && Sq.Vehicle is { Destroyed: false } truck && Sq.FobSite != null && Sq.FobBuildStart < 0) { v = truck; seat = SeatRole.Driver; }
         else if (Sq.Transport is { Destroyed: false, Boarding: true } ride) { v = ride; seat = SeatRole.Passenger; }
-        if (v == null) return false;
+        if (v == null)
+        {
+            // The ride left (or was lost) while we were running to it.
+            if (Note is "to the transport" or "to the vehicle") { _b.Stop(); _hasWaypoint = false; SetState(BotState.Advance, "ride gone"); }
+            return false;
+        }
+        // No seat for us (a mortar has one, for its gunner): the other man stays by it, not climbing onto it.
+        if (v.FreeSeat(seat) < 0)
+        {
+            // Was on the way to it, and the seat's gone: stop heading for it.
+            if (Note is "to the transport" or "to the vehicle") { _b.Stop(); _hasWaypoint = false; SetState(BotState.Advance, "no seat"); }
+            return false;
+        }
         float d = v.GlobalPosition.DistanceTo(_b.FeetPos);
         if (d > 400f) return false;
-        if (d < v.Def.Hull.Z * 0.5f + 3f)
+        // How far from the hull itself (not its middle, which is inside it).
+        var l = v.ToLocal(_b.FeetPos);
+        float ex = MathF.Max(0f, MathF.Abs(l.X) - v.Def.Hull.X * 0.5f), ez = MathF.Max(0f, MathF.Abs(l.Z) - v.Def.Hull.Z * 0.5f);
+        bool atHull = MathF.Sqrt(ex * ex + ez * ez) < 2.5f && MathF.Abs(l.Y) < 4f;
+        if (atHull)
         {
             _boardCheck = Now + 1.0;
             int s = v.FreeSeat(seat);
@@ -606,12 +631,16 @@ public sealed class BotBrain
             if (s >= 0 && v.Enter(_b, s)) { SetState(BotState.Advance, "mounted"); return true; }
             return false;
         }
-        if (State != BotState.Advance || !_b.GoalPos.IsEqualApprox(v.GlobalPosition))
+        // Round to the back (the ramp, the rear doors), onto ground we can stand on, not into the middle of the hull.
+        var door = v.GlobalPosition + v.GlobalBasis.Z * (v.Def.Hull.Z * 0.5f + 1.2f);
+        var navDoor = NavigationServer3D.MapGetClosestPoint(_b.GetWorld3D().NavigationMap, door);
+        if (((navDoor - door) with { Y = 0f }).Length() < 4f) door = navDoor;
+        if (State != BotState.Advance || _b.GoalPos.DistanceTo(door) > 2f)
         {
             SetState(BotState.Advance, seat == SeatRole.Passenger ? "to the transport" : "to the vehicle");
-            _b.MoveTo(v.GlobalPosition, MoveMode.Sprint);
+            _b.MoveTo(door, MoveMode.Sprint);
             _hasWaypoint = true;
-            _waypoint = v.GlobalPosition;
+            _waypoint = door;
         }
         _boardCheck = Now + 0.5;
         return true;
@@ -1239,7 +1268,7 @@ public sealed class BotBrain
         var space = _b.GetWorld3D().DirectSpaceState;
         foreach (var g in Grenade.Live)
         {
-            if (!GodotObject.IsInstanceValid(g) || g.Fuse > 3.2f) continue; // still in the air
+            if (!GodotObject.IsInstanceValid(g) || g.Fuse > 3.2f || g.Smoke) continue; // still in the air, or only smoke
             var gp = g.GlobalPosition;
             float d = gp.DistanceTo(_b.FeetPos);
             if (d > 9f) continue;
@@ -1285,7 +1314,9 @@ public sealed class BotBrain
     double _areaPickAt;
 
     /// <summary>In the support team during an assault, with nobody in sight: fire on the objective itself.</summary>
-    bool AreaFire => Sq != null && Objective != null && Sq.FiringInSupport(_b) && FromObjective(_b.FeetPos) < 260f && _b.Ammo > _b.Def.MagSize * 0.3f;
+    bool AreaFire => Sq != null && _b.Ammo > _b.Def.MagSize * 0.3f
+                     && (Sq.SuppressUntil > Now && Sq.SuppressAt.DistanceTo(_b.FeetPos) < 400f
+                         || Objective != null && Sq.FiringInSupport(_b) && FromObjective(_b.FeetPos) < 260f);
 
     public void Act(float dt)
     {
@@ -1362,6 +1393,30 @@ public sealed class BotBrain
 
     void ActAdvance()
     {
+        // Our ride's on its way: wait for it here (the squad holds round the leader) rather than walk away from it.
+        if (Sq != null && Sq.Leader == _b && Sq.Transport is { Destroyed: false, Boarding: false } ride && _b.Ride == null
+            && ride.GlobalPosition.DistanceTo(_b.FeetPos) is > 30f and < 400f && !Sq.Engaged)
+        {
+            if (State == BotState.Advance && _b.Moving) { _b.Stop(); _hasWaypoint = false; Note = "waiting for the ride"; }
+            return;
+        }
+        // Leading the squad over a danger area: up to the near edge, then across at a sprint, then hold on the far side.
+        if (Sq != null && Sq.Leader == _b && Sq.CrossingGoal is Vector3 cg)
+        {
+            if (_b.FeetPos.DistanceTo(cg) > 2.5f)
+            {
+                if (!_hasWaypoint || _waypoint.DistanceTo(cg) > 1f || _b.Arrived)
+                {
+                    _waypoint = cg;
+                    _hasWaypoint = true;
+                    _pausing = false;
+                    _following = false;
+                    _b.MoveTo(cg, Sq.Cross == Crossing.Halt ? MoveMode.Run : MoveMode.Sprint);
+                }
+            }
+            else { _b.Stop(); _hasWaypoint = false; }
+            return;
+        }
         if (_following && Now > _followAt)
         {
             // Keep station on the leader: re-aim at the slot once it has drifted.
@@ -1410,7 +1465,7 @@ public sealed class BotBrain
         _pausing = false;
         float gap = slot.DistanceTo(_b.FeetPos);
         // Falling behind: sprint to catch up. Close: match the leader's pace.
-        var mode = gap > 10f ? MoveMode.Sprint : MoveMode.Run;
+        var mode = gap > 10f || Sq?.CrossingNow == true && gap > 3f ? MoveMode.Sprint : MoveMode.Run;
         // Clear line to the slot: just go. Otherwise trail the leader along their route
         // (it's already been paid for), and only plan our own now and then.
         if (_b.CanWalkStraight(slot)) _b.MoveTo(slot, mode);
@@ -1649,8 +1704,11 @@ public sealed class BotBrain
             if (Now > _areaPickAt)
             {
                 _areaPickAt = Now + _rng.RandfRange(1.5f, 3f);
-                float a = _rng.Randf() * Mathf.Tau, r = MathF.Sqrt(_rng.Randf()) * Objective!.Radius * 0.6f;
-                _areaPoint = Objective.Center + new Vector3(MathF.Cos(a) * r, _rng.RandfRange(0.5f, 4f), MathF.Sin(a) * r);
+                // The leader's "suppress there", else the objective in the assault.
+                bool ordered = Sq!.SuppressUntil > Now;
+                var centre = ordered ? Sq.SuppressAt : Objective!.Center;
+                float a = _rng.Randf() * Mathf.Tau, r = MathF.Sqrt(_rng.Randf()) * (ordered ? 7f : Objective!.Radius * 0.6f);
+                _areaPoint = centre + new Vector3(MathF.Cos(a) * r, _rng.RandfRange(0.5f, ordered ? 2f : 4f), MathF.Sin(a) * r);
             }
             aim.Goal = _areaPoint;
             return;

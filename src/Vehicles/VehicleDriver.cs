@@ -80,6 +80,15 @@ public static class VehicleDriver
             return;
         }
 
+        // Backing out: the goal's behind us and not far. Keep the front armour towards whatever we're leaving.
+        if (v.PreferReverse && MathF.Abs(angle) > 110f && dist < 70f)
+        {
+            float back = angle > 0f ? angle - 180f : angle + 180f; // the angle from straight behind
+            v.Steer = Mathf.Clamp(-back / 25f, -1f, 1f);
+            v.Throttle = -0.85f;
+            d.Note = "reversing out";
+            return;
+        }
         float steer = Mathf.Clamp(angle / 25f, -1f, 1f);
         float throttle = MathF.Abs(angle) < 25f ? 1f : MathF.Abs(angle) < 60f ? 0.55f : v.Def.Tracked ? 0.1f : 0.35f;
         throttle *= Mathf.Clamp(dist / 30f, 0.35f, 1f);
@@ -105,10 +114,11 @@ public static class VehicleDriver
             else steer = left ? -1f : 1f;
         }
 
-        // Stuck: pushing but not moving.
-        if (throttle > 0.15f && MathF.Abs(v.Speed) < 0.6f && !v.Immobile)
+        // Stuck: pushing but not moving, or trying to turn on the spot and not turning (a wall alongside).
+        if (throttle > 0.05f && MathF.Abs(v.Speed) < 0.6f && !v.Immobile)
         {
-            if (d.StuckSince < 0) d.StuckSince = now;
+            if (d.StuckSince < 0) { d.StuckSince = now; d.StuckAngle = angle; }
+            else if (MathF.Abs(angle - d.StuckAngle) > 12f && throttle <= 0.15f) { d.StuckSince = now; d.StuckAngle = angle; } // it is coming round
             else if (now - d.StuckSince > 2.5)
             {
                 d.StuckSince = -1;

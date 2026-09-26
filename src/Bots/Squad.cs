@@ -60,6 +60,15 @@ public sealed partial class Squad
     public Vehicle? Vehicle;
     /// <summary>A transport sent to carry this squad.</summary>
     public Vehicle? Transport;
+    /// <summary>A vehicle crew: the rifle squad it's working with (carries, for an IFV/APC; supports, for a tank).</summary>
+    public Squad? Supports;
+    /// <summary>The (player) leader's orders: everyone put fire on a point; the squad's vehicle fire on a point; the carrier come and get us, or let us out.</summary>
+    public Vector3 SuppressAt, VehicleFireAt;
+    public double SuppressUntil, VehicleFireUntil;
+    public bool WantRide, WantDismount;
+
+    /// <summary>The vehicles working with this squad (its carrier, its tank), with what they're up to.</summary>
+    public IEnumerable<Vehicle> Support => All.Where(s => s.Supports == this && s.Vehicle is { Destroyed: false }).Select(s => s.Vehicle!);
     /// <summary>Logistics: where the commander wants a FOB, and when building started.</summary>
     public Vector3? FobSite;
     public double FobBuildStart = -1;
@@ -158,6 +167,7 @@ public sealed partial class Squad
         StageSince = -1;
         AssaultOn = null;
         _bowWaiting = false;
+        CancelCrossing();
         if (Phase != AssaultPhase.None) SetPhase(AssaultPhase.None);
         foreach (var m in Members)
             if (m is Bot { Alive: true } b && GodotObject.IsInstanceValid(b)) b.Brain.ObjectiveChanged();
@@ -209,6 +219,9 @@ public sealed partial class Squad
         if (_trail.Count > 40) _trail.RemoveAt(0);
     }
 
+    /// <summary>A point this far back along the leader's trail (for a tank following its infantry into town).</summary>
+    public Vector3? TrailPoint(float dist) => Leader is { } l ? Behind(l.FeetPos, dist) : null;
+
     /// <summary>The point on the leader's trail this far back from where they are now, if the trail is long enough.</summary>
     Vector3? Behind(Vector3 lead, float dist)
     {
@@ -223,7 +236,7 @@ public sealed partial class Squad
         return null;
     }
 
-    public Vector3? SlotFor(Bot b)
+    public Vector3? SlotFor(ICombatant b)
     {
         var lead = Leader;
         if (lead == null || lead == b) return null;
@@ -240,7 +253,7 @@ public sealed partial class Squad
         fwd = fwd.Normalized();
         var right = fwd.Cross(Vector3.Up);
         // March order and the attack's phases first; otherwise the ground decides the shape.
-        if (lead is not Player && OrderSlot(b, lead, i, fwd, right) is Vector3 os) return os;
+        if ((lead is not Player || PlayerMarch != null) && OrderSlot(b, lead, i, fwd, right) is Vector3 os) return os;
         int row = i / 2 + 1;
         float side = i % 2 == 0 ? -1f : 1f;
         // The shape depends on the ground the leader is on (see Surroundings).

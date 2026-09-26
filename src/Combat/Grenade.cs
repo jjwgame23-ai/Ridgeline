@@ -6,6 +6,8 @@ public partial class Grenade : RigidBody3D
 {
     public float Fuse = 3.8f;
     public ICombatant? Thrower;
+    /// <summary>A smoke grenade: pops a screen instead of going off.</summary>
+    public bool Smoke;
 
     /// <summary>Live grenades, so bots can see one land next to them and get away.</summary>
     public static readonly List<Grenade> Live = new();
@@ -28,7 +30,7 @@ public partial class Grenade : RigidBody3D
         AddChild(new MeshInstance3D
         {
             Mesh = new SphereMesh { Radius = 0.045f, Height = 0.09f },
-            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.22f, 0.25f, 0.15f), Roughness = 0.7f },
+            MaterialOverride = new StandardMaterial3D { AlbedoColor = Smoke ? new Color(0.5f, 0.5f, 0.48f) : new Color(0.22f, 0.25f, 0.15f), Roughness = 0.7f },
         });
         BodyEntered += _ =>
         {
@@ -51,6 +53,7 @@ public partial class Grenade : RigidBody3D
     void Explode()
     {
         _done = true;
+        if (Smoke) { SmokeScreen.Pop(GlobalPosition, 9f, 50f); QueueFree(); return; }
         Detonate(GlobalPosition, Vector3.Up, Thrower, 70, 0.9f, 0f, "frag", GetRid());
         QueueFree();
     }
