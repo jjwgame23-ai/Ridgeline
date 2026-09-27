@@ -45,6 +45,41 @@ public sealed partial class Squad
     double _phaseSince, _leadStillSince = -1;
     bool _bowWaiting;
     double _bowWaitSince;
+    double _closeUpSince = -1, _closeUpAgain = -1;
+    public static int CloseUps;
+
+    /// <summary>
+    /// On the move, strung out behind the leader: anyone in a fight, or half the squad, 60 m and more from him. He
+    /// waits for them to close up, rather than walk on and leave them (a squad leader pushing on to the objective
+    /// while his men fought 150 m back was much of the time a squad's men spent on their own). Not in an assault
+    /// or a crossing, where the teams are apart on purpose; and no more than 40 s at a time, so someone stuck
+    /// can't hold the squad forever.
+    /// </summary>
+    public bool StrungOut(Bot lead)
+    {
+        double now = Clock.Now;
+        if (now < _closeUpAgain || Phase != AssaultPhase.None || Cross != Crossing.None || FollowPlayer || Defend) { _closeUpSince = -1; return false; }
+        int n = 0, far = 0;
+        bool fighting = false;
+        foreach (var m in Members)
+        {
+            if (m == lead || !m.Alive || m.Ride != null) continue;
+            n++;
+            if (((m.FeetPos - lead.FeetPos) with { Y = 0f }).LengthSquared() < 60f * 60f) continue;
+            far++;
+            if (m is Bot b && b.Brain.State is BotState.Engage or BotState.InCover or BotState.Hold or BotState.TakeCover or BotState.Flank) fighting = true;
+        }
+        if (n == 0 || !(fighting || far * 2 >= n)) { _closeUpSince = -1; return false; }
+        if (_closeUpSince < 0)
+        {
+            _closeUpSince = now;
+            CloseUps++;
+            Prof.Count(fighting ? "squad:close-up (contact behind)" : "squad:close-up");
+            Comms.Say(lead, fighting ? "Hold up, they're in contact back there. On me!" : "Close it up! On me!");
+        }
+        else if (now - _closeUpSince > 40.0) { _closeUpSince = -1; _closeUpAgain = now + 40.0; return false; }
+        return true;
+    }
 
     public double PhaseAge => Clock.Now - _phaseSince;
 
@@ -236,16 +271,18 @@ public sealed partial class Squad
     readonly Dictionary<ICombatant, ICombatant> _buddy = new();
     readonly Dictionary<ICombatant, (ICombatant Mover, double SwapAt)> _pair = new();
 
+    /// <summary>Pairs stay pairs while both are in the same team; whoever's left without one is paired with the next.</summary>
     void PairUp()
     {
-        _buddy.Clear();
+        foreach (var (a, b) in _buddy.ToList())
+            if (!_team.TryGetValue(a, out var ta) || !_team.TryGetValue(b, out var tb) || ta != tb) { _buddy.Remove(a); _buddy.Remove(b); }
         for (int t = 0; t < 2; t++)
         {
-            var team = Members.Where(m => m.Alive && TeamOf(m) == t).ToList();
-            for (int k = 0; k + 1 < team.Count; k += 2)
+            var loose = Members.Where(m => _team.TryGetValue(m, out var mt) && mt == t && !_buddy.ContainsKey(m)).ToList();
+            for (int k = 0; k + 1 < loose.Count; k += 2)
             {
-                _buddy[team[k]] = team[k + 1];
-                _buddy[team[k + 1]] = team[k];
+                _buddy[loose[k]] = loose[k + 1];
+                _buddy[loose[k + 1]] = loose[k];
             }
         }
     }

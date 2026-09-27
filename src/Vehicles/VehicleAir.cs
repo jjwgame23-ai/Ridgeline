@@ -34,6 +34,15 @@ public partial class Vehicle
     public Vector3? AttackPoint;         // what the gunship's runs are aimed at (a vehicle, a cluster)
     public int AttackPhase;
     public Vector3 RunFrom = Vector3.Back;
+    // A gunship's pop-up attacks (see HeliPilot.AttackRun): where it's working from, and how high it must come up there to see.
+    public Vector3? BattlePos, LastBattlePos;
+    public float PopAgl;
+    public double PhaseSince, NoPositionSince = -1, SeeCheckAt;
+    public bool SeesTarget;
+    // The tops of whatever's under and ahead of it, for flying low (see HeliPilot.Tops).
+    public double TopsAt;
+    public float TopsCached;
+    public Vector3 TopsFrom, TopsDir;
     public double NextSalvo;
     public double NowT => Clock.Now;
     public int SalvoLeft;
@@ -41,6 +50,7 @@ public partial class Vehicle
     double _salvoNext;
 
     public bool Landed => _landed;
+    public bool Doomed => _doomed;
     public Vector3 Velocity3 => Def.Air ? _vel : Forward * Speed;
     public float AirSpeed => new Vector2(_vel.X, _vel.Z).Length();
     public float Agl { get; private set; }
@@ -54,7 +64,12 @@ public partial class Vehicle
 
     void FlyTick(float dt)
     {
-        bool piloted = Driver != null && !_doomed;
+        // Doomed, and it's come to rest (settled rather than struck something): that's the end of it. (Before,
+        // one that slid to a stop after hitting the ground sat there intact for the rest of the match, crewed,
+        // its guns working, at minus a hundred times its hit points.)
+        if (_doomed && _landed) { _doomed = false; Destroy(_doomBy); return; }
+        // A pilot who's been hit and is slumped in his seat isn't flying it.
+        bool piloted = Driver is { Alive: true } && !_doomed;
         float power = EngineHit ? 0.62f : 1f;
         if (!piloted)
         {
@@ -91,6 +106,9 @@ public partial class Vehicle
             {
                 _vel = Vector3.Zero;
                 SnapToGround(dt);
+                // On the ground: anyone hit in flight is lifted out now (see CasualtyAboard).
+                for (int i = 0; i < Occupants.Length; i++)
+                    if (Occupants[i] is { Downed: true } hurt) Leave(hurt);
                 _rotorSpin += dt * (Collective > 0.05f || piloted ? 25f : 4f);
                 SpinRotors();
                 return;
@@ -152,7 +170,8 @@ public partial class Vehicle
         if (DuelMode.Verbose) GD.Print($"[{Clock.Now:0}s] CRASH {Def.Name} into {(col.GetCollider() as Node)?.Name} at {impact:0.0} m/s, agl {Agl:0}, normal {n}, pitch {_pitchA:0} roll {_rollA:0}");
         _vel = _vel.Slide(n) * 0.3f;
         // A real crash (not a bump) wrecks it: no helicopter sits on the ground half-broken with its rotors turning.
-        Damage(impact > 9f ? 99999f : impact * impact * 2.2f + 40f, null);
+        // Shot up and brought down that way, it's whoever shot it up that brought it down.
+        Damage(impact > 9f ? 99999f : impact * impact * 2.2f + 40f, Clock.Now - LastHit < 30.0 ? LastHitBy : null);
     }
 
     void SpinRotors()
@@ -193,8 +212,38 @@ public partial class Vehicle
         _vel = Vector3.Zero;
         _trail?.MoveTo(Center);
         _trail = null; // it burns here now
-        Grenade.Detonate(Center, Vector3.Up, _doomBy, 20, 1.2f, 4f, Def.Name + " crash", power: 3f);
+        Grenade.Detonate(Center, Vector3.Up, _doomBy, 10f, 1.2f, 4f, Def.Name + " crash", power: 3f);
         Effects.I.Burn(Center + Vector3.Up * 0.5f, 60f);
+    }
+
+    /// <summary>
+    /// Someone aboard has gone down, hit, while it's in the air. Nobody leaves a helicopter in flight: they stay
+    /// in their seat until it's on the ground (then they're lifted out). If it was the pilot, the other pilot
+    /// takes the controls (a gunship's front seat has a set); with nobody to, it's flying itself into the ground.
+    /// (Before, a casualty tumbled out, a hundred metres up, and walked away from the fall.)
+    /// </summary>
+    public void CasualtyAboard(ICombatant c)
+    {
+        if (Array.IndexOf(Occupants, c) == DriverSeat) TakeControls();
+    }
+
+    /// <summary>The pilot's out of it, in the air: whoever else aboard can fly it takes over, swapping seats.</summary>
+    void TakeControls()
+    {
+        int d = DriverSeat;
+        if (d < 0 || Occupants[d] is { Alive: true }) return;
+        for (int i = 0; i < Occupants.Length; i++)
+        {
+            // A bot in an enclosed gunner's seat: the co-pilot/gunner. (Not a door gunner or a passenger, and not
+            // the player, whose seat isn't moved for them.)
+            if (i == d || Occupants[i] is not Bot { Alive: true } b || Def.Seats[i].Role != SeatRole.Gunner || Def.Seats[i].Exposed) continue;
+            var casualty = Occupants[d];
+            Occupants[d] = b;
+            Occupants[i] = casualty;
+            b.Mount(this, d);
+            if (casualty is Bot cb) cb.MovedTo(i);
+            return;
+        }
     }
 
     /// <summary>Hp gone in the air: it doesn't blow up there, it falls.</summary>

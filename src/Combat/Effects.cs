@@ -148,8 +148,7 @@ public partial class Effects : Node3D
         light.GlobalPosition = pos;
         GetTree().CreateTimer(0.045f).Timeout += light.QueueFree;
 
-        var flash = new MeshInstance3D { Mesh = _flash, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off };
-        flash.MaterialOverride = new StandardMaterial3D
+        _flashMat ??= new StandardMaterial3D
         {
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
@@ -157,12 +156,15 @@ public partial class Effects : Node3D
             AlbedoColor = new Color(1f, 0.8f, 0.45f, 0.9f),
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
         };
+        var flash = new MeshInstance3D { Mesh = _flash, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = _flashMat };
         AddChild(flash);
         flash.GlobalPosition = pos + dir * 0.05f;
         flash.Scale = Vector3.One * (0.18f + GD.Randf() * 0.1f) * scale;
         if (scale > 2f) Burst(pos, dir, 16, 1.2f, 3f, 10f, 25f, new Vector3(0, 0.3f, 0), 0.8f, 2f, _smokeRamp, _smoke, 3f, _grow);
         GetTree().CreateTimer(0.035f).Timeout += flash.QueueFree;
     }
+
+    StandardMaterial3D? _flashMat;
 
     /// <summary>Decoy flares: bright, hot, falling away from the aircraft in a spray.</summary>
     public void Flares(Vector3 pos, Vector3 vel)

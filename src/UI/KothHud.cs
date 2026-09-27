@@ -91,7 +91,7 @@ public partial class KothHud : CanvasLayer
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.M }) _map.Visible = !_map.Visible;
+        if (e.IsActionPressed("map")) _map.Visible = !_map.Visible;
     }
 
     public override void _Process(double delta)
@@ -126,6 +126,6 @@ public partial class KothHud : CanvasLayer
         var b = s.Target;
         string who = b == null ? "nobody" :
             $"{b.Callsign} ({KothMode.TeamNames[b.Team]}) · {(b.Alive ? $"{b.Health:0} hp" : "dead")} · {b.Brain.State}{(b.Brain.Target != null ? $" → {b.Brain.Target.Who.Callsign}" : "")} · {b.Brain.Note}";
-        _spec.Text = $"{respawn}SPECTATING [{s.ViewMode}]  {who}\n[LMB/RMB] switch · [C] chase/eyes · [F] free cam · [M] map · [F6] bot debug";
+        _spec.Text = $"{respawn}SPECTATING [{s.ViewMode}]  {who}\n" + Controls.Fill("[{spectate_next}/{spectate_prev}] switch · [{spectate_view}] chase/eyes · [{spectate_free}] free cam · [{map}] map · [{bot_debug}] bot debug");
     }
 }

@@ -13,6 +13,18 @@ public sealed class Threat
     public float Awareness;                 // 0..1 build-up before a target is actually noticed
     public bool Visible, Confirmed;
     public bool HeadVisible, UpperVisible, ChestVisible, HipVisible;
+    /// <summary>
+    /// How far off our idea of exactly where they are may be (m, one sigma), while we can see them. Up close,
+    /// nothing; at 250 m a man is a small shape among grass and shadow, and where precisely his chest is,
+    /// is a guess: a rough one at a first glimpse of a head over a wall, a good one after a few seconds'
+    /// watching someone in the open. (Without it, aimed fire at 200-300 m hit one round in six: range
+    /// shooting, not a firefight.)
+    /// </summary>
+    public float Tle;
+    /// <summary>The error this moment, in units of <see cref="Tle"/> (across, up). It holds for a second or
+    /// three (a burst goes where we think they are) and then our picture of them changes.</summary>
+    public Vector2 TleDir;
+    public double TleRedraw;
 }
 
 /// <summary>What one bot knows about one enemy vehicle.</summary>
@@ -84,9 +96,9 @@ public sealed class BotSenses
         if (_lastTick < 0) _lastTick = now - dt;
         if (_selfOnly.Count == 0) _selfOnly.Add(_b.GetRid());
         _tick++;
-        Look(dt, now);
-        if (_tick % 3 == 0) LookForVehicles(now);
-        Listen(now);
+        using (Prof.Time("look")) Look(dt, now);
+        if (_tick % 3 == 0) using (Prof.Time("look:vehicles")) LookForVehicles(now);
+        using (Prof.Time("listen")) Listen(now);
         Threats.RemoveAll(t => !t.Who.Alive || now - Math.Max(t.LastSeen, t.LastHeard) > 40.0);
         _lastTick = now;
     }
@@ -163,6 +175,8 @@ public sealed class BotSenses
     {
         // Smoke hides the whole man (reported as blocked well short of him).
         if (SmokeScreen.Blocks(from, to)) { blockedAt = from; return false; }
+        // A hill in between: the height grid says so without a ray.
+        if (Terrain.Main is { } ground && ground.Blocks(from, to, out blockedAt)) return false;
         var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(from, to, 0xFFFFFFFF, _selfOnly));
         blockedAt = hit.Count > 0 ? hit["position"].AsVector3() : to;
         return hit.Count == 0 || hit["collider"].AsGodotObject() == c;
@@ -182,14 +196,16 @@ public sealed class BotSenses
             float d = to.Length();
             float ang = Mathf.RadToDeg(look.AngleTo(to));
             // Far enemies are looked for less often (eyes on the near fight): every third tick
-            // past 150 m, every sixth past 300 m.
+            // past 150 m, every sixth past 300 m, every tenth past 600 m.
             bool seen = t?.Visible ?? false;
-            int every = d > 300f ? 6 : d > 150f ? 3 : 1;
+            int every = d > 600f ? 10 : d > 300f ? 6 : d > 150f ? 3 : 1;
             if (every > 1 && (_tick + c.GetHashCode()) % every != 0 && !seen) continue;
 
             bool head = false, upper = false, chest = false, hip = false;
-            // Mounted, a crew sees all round (vision blocks, the commander's cupola).
-            if (d < 400f && (ang < 100f || _b.Ride != null))
+            // Mounted, a crew sees all round (vision blocks, the commander's cupola). How far off
+            // someone can actually be picked out is the awareness build-up's business below: a man
+            // standing still at 600 m takes a long look, one running or firing much less.
+            if (d < SightRange && (ang < 100f || _b.Ride != null))
             {
                 var hp = Combatants.PointOn(c, Combatants.Part.Head);
                 head = LineTo(space, eye, hp, c, out var at);
@@ -225,13 +241,16 @@ public sealed class BotSenses
             else
             {
                 float angle = ang < 20f ? 1f : ang < 50f ? 0.7f : 0.35f;
-                // Recon glassing from a stationary post sees much further (binoculars); so does a set-up weapons team.
-                float scale = _b.Squad?.Kind == SquadKind.Recon && !_b.Moving ? 260f : _b.Squad?.Kind == SquadKind.Weapons && !_b.Moving ? 150f : 110f;
+                float scale = EyesReach();
                 float dist = 1f / (1f + (d / scale) * (d / scale)) * (d < 15f ? 2f : 1f);
                 float stance = c.BodyHeight < 1.0f ? 0.35f : c.BodyHeight < 1.5f ? 0.7f : 1f;
                 float motion = 1f + c.Vel.Length() / 2.5f;
                 float firing = now - c.LastShotTime < 1.0 ? 4f : 1f;
-                float rate = 2f * _b.P.SpotRate * (n / 4f) * angle * dist * stance * motion * firing * (1f - _b.Suppression * 0.5f);
+                // Undergrowth and shade in a wood, the dark inside a room seen from out in the light: a man
+                // there is much harder to pick out. (A gunner's thermal sight sees through most of it.)
+                float hidden = Concealment(c);
+                if (IsGunner) hidden = MathF.Sqrt(hidden);
+                float rate = 2f * _b.P.SpotRate * (n / 4f) * angle * dist * stance * motion * firing * hidden * (1f - _b.Suppression * 0.5f);
                 t.Awareness = Mathf.Min(1f, t.Awareness + rate * dt);
             }
 
@@ -242,6 +261,13 @@ public sealed class BotSenses
                 {
                     t.GapBeforeVisible = now - t.LastSeen;
                     t.VisibleSince = now;
+                    t.TleRedraw = now; // a new sighting: a new picture of them
+                }
+                t.Tle = LocationError(c, d, n, now - t.VisibleSince);
+                if (now >= t.TleRedraw)
+                {
+                    t.TleDir = new Vector2(_rng.Randfn(0f, 1f), _rng.Randfn(0f, 0.7f)); // the ground they're on pins the height down a little
+                    t.TleRedraw = now + _rng.RandfRange(1.5f, 3.5f);
                 }
                 t.Visible = true;
                 t.Confirmed = true;
@@ -269,23 +295,74 @@ public sealed class BotSenses
         }
     }
 
+    /// <summary>
+    /// See <see cref="Threat.Tle"/>. About a milliradian (25 cm at 250 m) for someone in full view, watched a
+    /// while; more the less of him shows; three times that at first sight, settling over a few seconds of
+    /// watching; more among trees or in a dark room; more when we're being shot at; much less through a
+    /// magnified sight.
+    /// </summary>
+    float LocationError(ICombatant c, float d, int parts, double watched)
+    {
+        float hidden = Concealment(c);
+        if (IsGunner) hidden = MathF.Sqrt(hidden);
+        float optic = IsGunner ? 3f : _b.Def.Scoped ? 2.5f : 1f;
+        float mrad = (1f + (4 - parts) * 0.5f) * (1f + 2f * MathF.Exp(-(float)watched / 2.5f)) * (1f + _b.Suppression) / (hidden * optic);
+        return d * 0.001f * mrad;
+    }
+
+    /// <summary>Beyond this nobody is picked out at all (and rays aren't cast).</summary>
+    const float SightRange = 1000f;
+
+    bool IsGunner => _b.Ride is { } v && _b.SeatIdx >= 0 && v.Def.Seats[_b.SeatIdx].Role == SeatRole.Gunner;
+
+    /// <summary>
+    /// How far our eyes carry: the distance at which picking someone out takes about twice as long as
+    /// close up. The naked eye; binoculars at a recon post; a marksman's scope; a set-up weapons team;
+    /// a vehicle's gun sight (magnified, and thermal), or its vision blocks.
+    /// </summary>
+    float EyesReach()
+    {
+        if (_b.Ride != null) return IsGunner ? 300f : 150f;
+        if (_b.Moving) return 110f;
+        if (_b.Squad?.Kind == SquadKind.Recon) return 260f;
+        if (_b.Role == Role.Marksman) return 180f;
+        if (_b.Squad?.Kind == SquadKind.Weapons) return 150f;
+        return 110f;
+    }
+
+    /// <summary>How well someone's surroundings hide them (1 = in plain view): woods, or inside a building seen from outside it.</summary>
+    float Concealment(ICombatant c)
+    {
+        if (c.Ride != null) return 1f; // up on a vehicle: in plain view
+        var env = c is Bot b ? b.Brain.Env : Surroundings.At(null, c.FeetPos);
+        if (env == EnvKind.Forest) return 0.55f;
+        if (env == EnvKind.Interior && _b.Brain.Env != EnvKind.Interior) return 0.5f;
+        return 1f;
+    }
+
     void Listen(double now)
     {
         var eye = _b.EyePos;
+        float c = SoundWorld.SpeedOfSound;
         foreach (var e in SoundWorld.I.History)
         {
-            // Only sounds made by combatants still in the world (a previous round's are gone).
-            if (e.Source == null || !Combatants.All.Contains(e.Source) || e.Source.Team == _b.Team || !e.Source.Alive) continue;
+            if (e.Source == null || e.Source.Team == _b.Team) continue;
+            // A blast is heard where the round or grenade landed, not where whoever fired or threw it
+            // is: it says nothing about where they are (the blast itself is felt through Combatants.Blast).
+            if (e.Kind is Snd.Explosion or Snd.Shell) continue;
+            // Only what reached our ears since we last listened: most of the history has been heard already, or not yet.
             float d = e.Pos.DistanceTo(eye);
-            double arrive = e.T0 + d / SoundWorld.SpeedOfSound;
+            double arrive = e.T0 + d / c;
             if (arrive <= _lastTick || arrive > now) continue;
+            // Only sounds made by combatants still in the world (a previous round's are gone).
+            if (!e.Source.Alive || !Combatants.Contains(e.Source)) continue;
             // Footsteps are mixed quiet for the player's ears, but an alert soldier listens for them.
             float level = SoundWorld.I.LevelAt(e.Kind, d, e.GainDb) + (e.Kind == Snd.Footstep ? 8f : 0f);
             if (level < -44f) continue;
 
             var t = Get(e.Source);
             if (t.Visible) continue;
-            bool loud = e.Kind is Snd.Rifle556 or Snd.Rifle762 or Snd.Explosion or Snd.Shell;
+            bool loud = e.Kind is Snd.Rifle556 or Snd.Rifle762;
             float spread = d * (loud ? 0.05f : 0.12f) * (1.6f - _b.P.Skill);
             var est = e.Pos + new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * spread;
             est.Y = _b.FeetPos.Y;
@@ -299,7 +376,7 @@ public sealed class BotSenses
     /// <summary>A teammate called this contact out.</summary>
     public void Share(ICombatant who, Vector3 pos)
     {
-        if (!Combatants.All.Contains(who) || !who.Alive) return;
+        if (who.Team == _b.Team || !Combatants.Contains(who) || !who.Alive) return;
         var t = Get(who);
         if (t.Visible) return;
         t.LastKnownPos = pos;
@@ -311,7 +388,7 @@ public sealed class BotSenses
     /// <summary>Shot at or hit: we know roughly where it came from.</summary>
     public void Alert(ICombatant who, float errorFrac)
     {
-        if (!Combatants.All.Contains(who) || !who.Alive) return;
+        if (who.Team == _b.Team || !Combatants.Contains(who) || !who.Alive) return;
         var t = Get(who);
         if (t.Visible) return;
         float d = who.FeetPos.DistanceTo(_b.FeetPos);

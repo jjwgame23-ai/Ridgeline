@@ -18,7 +18,8 @@ public sealed class Projectile
     public float Pen;         // armour penetration, mm RHA-equivalent
     public float VehDamage;   // hull points taken if it gets through
     public float Crater = 0.65f;
-    public int Frags = 45;
+    public float FragR = 7f, Power = 1f; // an explosive round's fragment reach and charge (see WeaponDef)
+    public uint Mask = 0xFFFFFFFF;       // what it can hit (fragments thrown only for the dust they raise hit only the ground)
     public bool Rocket;
     public MeshInstance3D? Visual;
     public bool Prox;             // bursts when it passes close to an aircraft
@@ -33,6 +34,8 @@ public sealed class Projectile
     public ICombatant? Shooter;
     public string Weapon = "";
     public List<ICombatant>? Passed;
+    /// <summary>Set by Impact when the round went through what it hit (see Penetration): where it came out.</summary>
+    public Vector3? ExitAt;
     public readonly Godot.Collections.Array<Rid> Exclude = new();
 }
 
@@ -49,18 +52,24 @@ public partial class Ballistics : Node3D
     public static readonly Vector3 Gravity = new(0f, -9.81f, 0f);
 
     readonly List<Projectile> _live = new();
+    /// <summary>Mortar bombs in the last seconds of their fall: where each will land and when (its whistle is what gives it away).</summary>
+    public static readonly List<(Vector3 At, double When)> Incoming = new();
     public static readonly Dictionary<string, int> NearBlockTags = new(), ShotTags = new();
     public int LiveCount => _live.Count;
 
-    public override void _EnterTree() => I = this;
+    public override void _EnterTree()
+    {
+        I = this;
+        Incoming.Clear(); // a new match: the clock starts again
+    }
 
-    public void Clear() => _live.Clear();
+    public void Clear() { _live.Clear(); Incoming.Clear(); }
 
     /// <param name="ignore">A body the ray should pass through (a grenade's own body); otherwise the shooter's.</param>
     public void Fire(Vector3 origin, Vector3 dir, float speed, float drag, ICombatant? shooter, float damage, string weapon,
                      Rid ignore = default, bool silent = false, float intendedDist = 0f, string tag = "", bool explosive = false, float armM = 0f,
-                     float pen = -1f, float vehDamage = -1f, float crater = 0.65f, int frags = 45, bool rocket = false,
-                     bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false)
+                     float pen = -1f, float vehDamage = -1f, float crater = 0.65f, float fragR = 7f, float power = 1f, bool rocket = false,
+                     bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false, uint mask = 0xFFFFFFFF)
     {
         var p = new Projectile
         {
@@ -75,7 +84,9 @@ public partial class Ballistics : Node3D
             Pen = pen >= 0f ? pen : explosive ? 50f : damage * 0.12f,
             VehDamage = vehDamage >= 0f ? vehDamage : explosive ? 30f : damage * 0.02f,
             Crater = crater,
-            Frags = frags,
+            FragR = fragR,
+            Power = power,
+            Mask = mask,
             Rocket = rocket,
             Prox = prox,
             Whistle = whistle,
@@ -97,8 +108,12 @@ public partial class Ballistics : Node3D
         if (ignore.IsValid) p.Exclude.Add(ignore);
         else if (shooter != null) p.Exclude.Add(shooter.BodyRid);
         if (tag != "") ShotTags[tag] = ShotTags.GetValueOrDefault(tag) + 1;
+        Prof.Count(silent ? "proj:fragments" : "proj:rounds");
         _live.Add(p);
     }
+
+    /// <summary>Everyone on their feet and where their chest is, read once per tick (nobody moves while the rounds are being stepped).</summary>
+    static readonly List<(ICombatant Who, Vector3 Chest)> _standing = new();
 
     public override void _PhysicsProcess(double delta)
     {
@@ -106,6 +121,10 @@ public partial class Ballistics : Node3D
         float dt = (float)delta;
         var space = GetWorld3D().DirectSpaceState;
         var listener = SoundWorld.I.ListenerPos;
+        _standing.Clear();
+        if (_live.Count > 0)
+            foreach (var c in Combatants.All)
+                if (c.Alive) _standing.Add((c, c.ChestPos));
 
         for (int i = _live.Count - 1; i >= 0; i--)
         {
@@ -120,10 +139,26 @@ public partial class Ballistics : Node3D
             if (p.Whistle && p.Vel.Y < 0f) Whistling(p, listener, dt);
             if (!p.Silent) CheckCombatants(p, next);
 
-            var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(p.Pos, next, 0xFFFFFFFF, p.Exclude));
-            if (hit.Count > 0)
+            var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(p.Pos, next, p.Mask, p.Exclude));
+            // A round that only grazed past someone (beside the head) carries on from there, him left out; one that
+            // went through a wall, a door or a car carries on from the far side, slower and a little off line.
+            bool stopped = false;
+            for (int pass = 0; pass < 4 && hit.Count > 0; pass++)
             {
-                Impact(p, hit);
+                var at = hit["position"].AsVector3();
+                if (Impact(p, hit)) { stopped = true; break; }
+                if (p.ExitAt is Vector3 exit)
+                {
+                    p.ExitAt = null;
+                    float rest = MathF.Max(0.05f, next.DistanceTo(at) - exit.DistanceTo(at));
+                    at = exit;
+                    next = exit + p.Vel.Normalized() * rest;
+                    v = p.Vel;
+                }
+                hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(at, next, p.Mask, p.Exclude));
+            }
+            if (stopped)
+            {
                 RemoveAt(i);
                 continue;
             }
@@ -192,7 +227,10 @@ public partial class Ballistics : Node3D
             if (d > fuse + v.Def.Hull.Z * 0.3f) continue;
             // Blast and fragments into the airframe: worse the closer it went off.
             v.Damage(p.VehDamage * (1f - d / (fuse + v.Def.Hull.Z * 0.3f) * 0.6f), p.Shooter);
-            Grenade.Detonate(at, -seg.Normalized(), p.Shooter, p.Homing != null ? 20 : 6, 0f, p.Homing != null ? 2f : -6f, p.Weapon, v.GetRid());
+            // The crew saw the tracers come up: where the gun is goes out on the radio (other aircraft keep clear of it).
+            if (p.FromVehicle is { Destroyed: false } aa && v.Occupants.FirstOrDefault(o => o is { Alive: true }) is { } crew)
+                Radio.Report(crew, RadioKind.Armor, aa.Center, aa);
+            Grenade.Detonate(at, -seg.Normalized(), p.Shooter, p.FragR, 0f, p.Homing != null ? 2f : -6f, p.Weapon, v.GetRid(), power: p.Power);
             return true;
         }
         return false;
@@ -225,6 +263,8 @@ public partial class Ballistics : Node3D
             if (tFall > 4.2f) return;
             p.Whistled = true;
             var land = ground + (p.Vel with { Y = 0f }) * tFall;
+            Incoming.RemoveAll(x => x.When < Clock.Now - 2.0);
+            Incoming.Add((land, Clock.Now + tFall));
             if (land.DistanceTo(listener) > 250f) return;
             _whistleLoop ??= SoundSynth.WhistleLoop();
             p.Voice = new AudioStreamPlayer3D
@@ -294,10 +334,9 @@ public partial class Ballistics : Node3D
         var seg = next - p.Pos;
         float len2 = seg.LengthSquared();
         if (len2 < 1e-6f) return;
-        foreach (var c in Combatants.All)
+        foreach (var (c, chest) in _standing)
         {
-            if (!c.Alive || c == p.Shooter) continue;
-            var chest = c.ChestPos;
+            if (c == p.Shooter || !c.Alive) continue; // (someone may have gone down to an earlier round this tick)
             float t = (chest - p.Pos).Dot(seg) / len2;
             if (t < 0f || t > 1f) continue;
             float d = (p.Pos + seg * t).DistanceTo(chest);
@@ -309,7 +348,8 @@ public partial class Ballistics : Node3D
         }
     }
 
-    static void Impact(Projectile p, Godot.Collections.Dictionary hit)
+    /// <summary>What a round does where it strikes. False if it didn't stop there (it went on past).</summary>
+    static bool Impact(Projectile p, Godot.Collections.Dictionary hit)
     {
         var pos = hit["position"].AsVector3();
         var normal = hit["normal"].AsVector3();
@@ -318,39 +358,60 @@ public partial class Ballistics : Node3D
         if (collider is Node { } dn && dn.GetParent() is Drone drone)
         {
             drone.Hit(p.Shooter);
-            return;
+            return true;
         }
         if (collider is Vehicle veh)
         {
             veh.TakeProjectile(p, pos, normal);
             if (p.Explosive && pos.DistanceTo(p.Origin) >= p.ArmM)
-                Grenade.Detonate(pos + normal * 0.1f, normal, p.Shooter, p.Frags / 3, 0f, p.Frags > 50 ? 3f : -3f, p.Weapon);
-            return;
+                Grenade.Detonate(pos + normal * 0.1f, normal, p.Shooter, p.FragR * 0.6f, 0f, p.Power >= 6f ? 3f : -3f, p.Weapon, power: p.Power);
+            return true;
         }
         if (p.Explosive)
         {
             if (pos.DistanceTo(p.Origin) >= p.ArmM)
-                Grenade.Detonate(pos + normal * 0.05f, normal, p.Shooter, p.Frags, p.Crater, p.Whistle ? 0f : p.Frags > 50 ? 4f : -3f, p.Weapon, power: p.Whistle ? 4f : 1f);
+                Grenade.Detonate(pos + normal * 0.05f, normal, p.Shooter, p.FragR, p.Crater, p.Whistle ? 0f : p.Power >= 6f ? 4f : -3f, p.Weapon, power: p.Power, indirect: p.Whistle);
             else
             {
                 // Not armed yet: a dud that thumps into whatever it hit.
                 Effects.I.Impact(pos, normal, false, Surfaces.Of(collider, hit["shape"].AsInt32(), pos, normal));
                 SoundWorld.I.Emit(Snd.Impact, pos, 2f);
-                if (collider is ICombatant v && v.Alive)
-                    v.TakeHit(new HitInfo { Shooter = p.Shooter, Point = pos, Dir = p.Vel.Normalized(), Damage = 60f, Zone = Combatants.ZoneFor(v, pos), Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon });
+                if (collider is ICombatant v && !v.Dead)
+                    v.TakeHit(new HitInfo { Shooter = p.Shooter, Point = pos, Dir = p.Vel.Normalized(), Damage = 60f, Zone = Combatants.ZoneFor(v, pos), Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon, From = p.Origin });
             }
-            return;
+            return true;
         }
 
-        if (collider is ICombatant victim && victim.Alive)
+        // Down counts: a stray round or a fragment finds a wounded man on the ground as easily as anyone.
+        if (collider is ICombatant victim && !victim.Dead)
         {
             float speed = p.Vel.Length();
             var zone = Combatants.ZoneFor(victim, pos);
+            // The body's capsule is shoulder-wide all the way to the crown; the head in it isn't. At head
+            // height a round has to pass within a head's width of it: beside it below the chin it's the
+            // shoulder, beside it higher up it's a miss (a very near one) and it flies on.
+            if (zone == HitZone.Head && !Combatants.OnHead(victim, pos, p.Vel.Normalized()))
+            {
+                if (pos.Y - victim.FeetPos.Y < victim.BodyHeight - 0.2f) zone = HitZone.Torso;
+                else
+                {
+                    p.Exclude.Add(victim.BodyRid);
+                    p.Passed ??= new List<ICombatant>();
+                    if (!p.Silent && victim.Alive && !p.Passed.Contains(victim))
+                    {
+                        p.Passed.Add(victim);
+                        victim.OnNearMiss(0.2f, p.Origin);
+                    }
+                    return false;
+                }
+            }
+            if (!p.Silent) Prof.Count($"hit:{zone}");
+            Telemetry.Hit(victim, p.Shooter, pos, zone.ToString(), p.Weapon, pos.DistanceTo(p.Origin), p.Silent);
             float dmg = p.Damage * MathF.Pow(speed / p.MuzzleSpeed, 1.5f) * Combatants.ZoneMultiplier(zone);
             victim.TakeHit(new HitInfo
             {
                 Shooter = p.Shooter, Point = pos, Dir = p.Vel.Normalized(), Damage = dmg,
-                Zone = zone, Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon,
+                Zone = zone, Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon, From = p.Origin,
             });
             Effects.I.Blood(pos, -p.Vel.Normalized());
             if (!p.Silent) SoundWorld.I.Emit(Snd.HitFlesh, pos, -6f);
@@ -360,6 +421,24 @@ public partial class Ballistics : Node3D
         {
             var surface = Surfaces.Of(collider, hit["shape"].AsInt32(), pos, normal);
             Effects.I.Impact(pos, normal, p.Silent, surface);
+            if (Penetration.Through(p, hit, out var exit, out var through, out var what))
+            {
+                // On through it: a puff of whatever it is on the far side, and on it goes (the sweep picks it up there).
+                Effects.I.Impact(exit, through.Normalized(), true, surface);
+                if (!p.Silent)
+                {
+                    Prof.Count($"pen:{what}");
+                    foreach (var (c, chest) in _standing)
+                    {
+                        if (c == p.Shooter || !c.Alive) continue;
+                        float dm = pos.DistanceTo(chest);
+                        if (dm < 4f) c.OnNearMiss(dm + 1f, p.Origin);
+                    }
+                }
+                p.ExitAt = exit;
+                p.Vel = through;
+                return false;
+            }
             if (!p.Silent) Ricochet(p, pos, normal, surface is Surface.Rock or Surface.Stone or Surface.Metal);
             if (p.Shooter is Bot bot && p.IntendedDist > 0f)
             {
@@ -374,13 +453,14 @@ public partial class Ballistics : Node3D
             }
         }
 
-        if (p.Silent) return;
-        foreach (var c in Combatants.All)
+        if (p.Silent) return true;
+        foreach (var (c, chest) in _standing)
         {
-            if (!c.Alive || c == p.Shooter || c == collider) continue;
-            float d = pos.DistanceTo(c.ChestPos);
+            if (c == p.Shooter || c == collider || !c.Alive) continue;
+            float d = pos.DistanceTo(chest);
             if (d < 4f) c.OnNearMiss(d + 1f, p.Origin);
         }
+        return true;
     }
 
     /// <summary>

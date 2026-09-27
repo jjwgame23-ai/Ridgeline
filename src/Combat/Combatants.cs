@@ -24,6 +24,13 @@ public struct HitInfo
     public float Damage, Distance;
     public HitZone Zone;
     public string Weapon;
+    /// <summary>Where the round came from: the muzzle, or for a fragment the burst. Null when there's no telling (spall, fire, blood loss).</summary>
+    public Vector3? From;
+    /// <summary>
+    /// Aimed fire from the shooter's own weapon, so the victim can tell roughly where it came from. A
+    /// fragment, a shell or a dropped bomb says where it burst, not where whoever sent it is.
+    /// </summary>
+    public bool Direct => From is Vector3 f && Shooter != null && Shooter.FeetPos.DistanceTo(f) < 8f;
 }
 
 /// <summary>Anything that fights, can be seen and can be shot: the player and every bot.</summary>
@@ -69,12 +76,16 @@ public interface ICombatant
 public static class Combatants
 {
     public static readonly List<ICombatant> All = new();
+    /// <summary>The same people as <see cref="All"/>, for "is this one still in the world?" without a scan of the list.</summary>
+    static readonly HashSet<ICombatant> _in = new();
     public static event Action<ICombatant, HitInfo>? Killed;
     public static event Action<ICombatant, HitInfo>? Down;
     public static void ReportDowned(ICombatant victim, HitInfo hit) => Down?.Invoke(victim, hit);
 
-    public static void Register(ICombatant c) { if (!All.Contains(c)) All.Add(c); }
-    public static void Unregister(ICombatant c) => All.Remove(c);
+    public static void Register(ICombatant c) { if (_in.Add(c)) All.Add(c); }
+    public static void Unregister(ICombatant c) { if (_in.Remove(c)) All.Remove(c); }
+    public static bool Contains(ICombatant c) => _in.Contains(c);
+    public static void Clear() { All.Clear(); _in.Clear(); }
     public static void ReportKill(ICombatant victim, HitInfo hit) => Killed?.Invoke(victim, hit);
 
     public static void Blast(Vector3 pos, float power = 1f)
@@ -90,6 +101,17 @@ public static class Combatants
         if (y > h - 0.27f) return HitZone.Head;
         if (y < h * 0.48f) return HitZone.Legs;
         return HitZone.Torso;
+    }
+
+    /// <summary>
+    /// Does a round through this point, going this way, pass within a head's width of the head? (The body's
+    /// capsule is shoulder-wide right up to the crown; the head at the top of it isn't.)
+    /// </summary>
+    public static bool OnHead(ICombatant c, Vector3 point, Vector3 dir)
+    {
+        var eye = c.EyePos;
+        var centre = new Vector3(eye.X, c.FeetPos.Y + c.BodyHeight - 0.12f, eye.Z) - point;
+        return (centre - dir * centre.Dot(dir)).Length() < 0.13f;
     }
 
     public enum Part { Head, UpperChest, Chest, Hip }

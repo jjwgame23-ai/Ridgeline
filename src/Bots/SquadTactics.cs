@@ -52,16 +52,38 @@ public sealed partial class Squad
 
     public static string TeamName(int t) => t == 0 ? "Alpha" : t == 1 ? "Bravo" : "HQ";
 
-    /// <summary>Deal the squad (bar its leader) into two teams, alternating by role so each gets a support weapon and a specialist.</summary>
+    /// <summary>
+    /// Deal the squad (bar its leader) into two teams, alternating by role so each gets a support weapon
+    /// and a specialist. Once dealt, people stay in their team: a casualty or a newcomer doesn't reshuffle
+    /// the squad in the middle of a bound. Newcomers (and the revived) join the smaller team, and a team
+    /// left two short takes a man across, a rifleman before a specialist.
+    /// </summary>
     void SplitTeams()
     {
         _teamsAt = Clock.Now;
-        _team.Clear();
         var lead = Leader;
         var rest = Members.Where(m => m != lead && m.Alive && GodotObject.IsInstanceValid((GodotObject)m))
                           .OrderBy(m => RolePriority(m.Role)).ThenBy(m => m.Callsign).ToList();
-        if (rest.Count < 3) return;
-        for (int i = 0; i < rest.Count; i++) _team[rest[i]] = i % 2;
+        if (rest.Count < 3) { _team.Clear(); _buddy.Clear(); return; }
+        // Whoever's gone (dead, down, or now leading the squad) leaves their team; everyone else stays put.
+        foreach (var gone in _team.Keys.Where(k => !rest.Contains(k)).ToList()) _team.Remove(gone);
+        var n = new int[2];
+        foreach (int t in _team.Values) n[t]++;
+        foreach (var m in rest)
+        {
+            if (_team.ContainsKey(m)) continue;
+            int t = n[0] <= n[1] ? 0 : 1;
+            _team[m] = t;
+            n[t]++;
+        }
+        while (Math.Abs(n[0] - n[1]) >= 2)
+        {
+            int big = n[0] > n[1] ? 0 : 1;
+            var across = rest.Where(m => _team[m] == big).OrderByDescending(m => RolePriority(m.Role)).First();
+            _team[across] = big ^ 1;
+            n[big]--;
+            n[big ^ 1]++;
+        }
         PairUp();
     }
 
@@ -148,6 +170,10 @@ public sealed partial class Squad
     /// <summary>Bumped each time a drill starts, so each soldier reacts to it once.</summary>
     public int DrillId;
     public int AssaultTeam = 1;
+    /// <summary>Where the flanking team is going in a contact drill: one objective for the team (see FlankSpotFor).</summary>
+    public Vector3 FlankGoal;
+    /// <summary>Which way the flanking team goes round: Bravo right, Alpha left.</summary>
+    public string FlankSide => AssaultTeam == 1 ? "right" : "left";
     public Vector3 ImpactAt;
     double _consolidateUntil;
 
@@ -159,6 +185,7 @@ public sealed partial class Squad
         DrillUntil = Clock.Now + seconds;
         DrillId++;
         Drills++;
+        Telemetry.Drill(this, d, d == Drill.Indirect ? ImpactAt : ContactAt);
         if (DuelMode.Verbose) GD.Print($"[{Clock.Now:0}s] {Name} drill {d}" + (Leader is { } l ? $" (leader {l.Callsign}, {Alive} alive, contact {l.FeetPos.DistanceTo(d == Drill.Indirect ? ImpactAt : ContactAt):0} m)" : ""));
     }
 
@@ -187,11 +214,29 @@ public sealed partial class Squad
         float Near(int t) => Members.Where(m => m.Alive && TeamOf(m) == t).Select(m => m.FeetPos.DistanceTo(at)).DefaultIfEmpty(9999f).Min();
         AssaultTeam = Near(0) <= Near(1) ? 1 : 0;
         ContactAt = at;
+        // The flanking team's objective, from where the team is as a whole: wide round the side, about halfway in.
+        // One point for the team, so it goes as a team. (Each man used to work out his own from wherever he was
+        // standing, and they arrived as far apart as they'd started, by separate routes: a lot of the time a
+        // squad's men spent alone, 60 m and more from anyone else in it, was a flanking team strung out.)
+        var team = Members.Where(m => m.Alive && TeamOf(m) == AssaultTeam).ToList();
+        var from = team.Count > 0 ? team.Aggregate(Vector3.Zero, (a, m) => a + m.FeetPos) / team.Count : lead.FeetPos;
+        var to = (at - from) with { Y = 0f };
+        float span = MathF.Max(to.Length(), 1f);
+        var dir = to / span;
+        FlankGoal = from + dir * (span * 0.55f) + dir.Cross(Vector3.Up) * (AssaultTeam == 1 ? 1f : -1f) * MathF.Min(90f, span * 0.5f);
         StartDrill(Drill.Contact, 45.0);
         Flanks++;
-        var toThem = (at - lead.FeetPos) with { Y = 0f };
-        string side = toThem.Cross(Vector3.Up).Dot(Vector3.Right) > 0f ? "right" : "left";
-        if (lead is Bot l) Comms.Say(l, $"Contact {Comms.Bearing(lead.FeetPos, at)}! {TeamName(AssaultTeam ^ 1)}, suppress! {TeamName(AssaultTeam)}, flank {side}!");
+        if (lead is Bot l) Comms.Say(l, $"Contact {Comms.Bearing(lead.FeetPos, at)}! {TeamName(AssaultTeam ^ 1)}, suppress! {TeamName(AssaultTeam)}, flank {FlankSide}!");
+    }
+
+    /// <summary>My place at the flanking team's objective: the team in a line facing the enemy, a few metres apart.</summary>
+    public Vector3 FlankSpotFor(ICombatant m)
+    {
+        var team = Members.Where(x => x.Alive && TeamOf(x) == AssaultTeam).OrderBy(x => x.Callsign).ToList();
+        int i = Math.Max(0, team.IndexOf(m));
+        var face = (ContactAt - FlankGoal) with { Y = 0f };
+        var across = face.LengthSquared() > 1f ? face.Normalized().Cross(Vector3.Up) : Vector3.Right;
+        return FlankGoal + across * ((i - (team.Count - 1) * 0.5f) * 7f);
     }
 
     /// <summary>Break contact: outnumbered and outgunned, not holding ground. Bound back, team by team.</summary>

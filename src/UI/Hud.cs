@@ -21,15 +21,23 @@ public partial class Hud : CanvasLayer
 
     public string HelpText = RangeHelp;
 
+    /// <summary>Help text keys are written "{action}" and filled in from the current bindings (Controls.Fill).</summary>
+    const string Moves =
+        "{move_forward} {move_left} {move_back} {move_right} move · {sprint} sprint · {jump} jump / stand up\n" +
+        "{crouch} crouch · {prone} prone · {lean_left} / {lean_right} lean\n";
+
+    const string Short =
+        "{move_forward} {move_left} {move_back} {move_right} move · {sprint} sprint · {crouch} crouch · {prone} prone · {lean_left} / {lean_right} lean\n" +
+        "{fire} fire · {aim} aim · {reload} reload (twice: drop the mag) · {firemode} fire mode · {grenade} frag · {weapon1} / {weapon2} weapons\n";
+
     public const string ArenaHelp =
         "RIDGELINE — duel arena\n\n" +
-        "WASD move · Shift sprint · Space jump / stand up\n" +
-        "C crouch · Z prone · Q / E lean\n" +
-        "LMB fire · RMB aim (hold) · Shift while aiming: hold breath\n" +
-        "R reload · V fire mode · T check mag · G frag grenade\n" +
-        "1 carbine (red dot) · 2 marksman rifle (4x scope)\n\n" +
-        "F1 this help · F3 debug overlay · F6 bot debug\n" +
-        "Esc release mouse · F10 main menu · F11 fullscreen\n\n" +
+        Moves +
+        "{fire} fire · {aim} aim (hold) · {sprint} while aiming: hold breath\n" +
+        "{reload} reload (tap twice: drop the mag) · {firemode} fire mode · {check_ammo} check mag · {grenade} frag grenade\n" +
+        "{weapon1} carbine (red dot) · {weapon2} marksman rifle (4x scope)\n\n" +
+        "{help} this help · {debug_overlay} debug overlay · {bot_debug} bot debug\n" +
+        "Esc release mouse · {main_menu} main menu · {fullscreen} fullscreen\n\n" +
         "Bots notice you gradually — distance, movement, stance and\n" +
         "gunfire all matter. They hear footsteps and shots too.\n" +
         "When you die you spectate your team until the next round.";
@@ -39,11 +47,10 @@ public partial class Hud : CanvasLayer
         "Three factions fight over one settlement at a time. Every 5 s the\n" +
         "side with the most people alive inside the zone scores a point.\n" +
         "The zone moves every 8 minutes. First to 300 wins.\n\n" +
-        "The yellow diamond on the compass points at the zone. M opens the map.\n" +
+        "The yellow diamond on the compass points at the zone. {map} opens the map.\n" +
         "You respawn at your side's rally point 10 s after dying.\n\n" +
-        "WASD move · Shift sprint · C crouch · Z prone · Q / E lean\n" +
-        "LMB fire · RMB aim · R reload · V fire mode · G frag · 1 / 2 weapons\n" +
-        "F1 this help · F3 debug · F6 bot debug · F10 main menu · F11 fullscreen";
+        Short +
+        "{help} this help · {debug_overlay} debug · {bot_debug} bot debug · {main_menu} main menu · {fullscreen} fullscreen";
 
     public const string TerritoryHelp =
         "RIDGELINE — territory\n\n" +
@@ -52,26 +59,24 @@ public partial class Hud : CanvasLayer
         "Every death costs a ticket, and a side holding fewer points than the\n" +
         "leader bleeds tickets. Out of tickets: no more reinforcements.\n\n" +
         "You're in a squad; the compass diamond points at its objective.\n" +
-        "M map (pick a spawn there when dead). As squad leader: click a point to\n" +
-        "send your squad there, B to call them onto you. Otherwise follow your SL.\n" +
+        "{map} map (pick a spawn there when dead). As squad leader: click a point to\n" +
+        "send your squad there, {squad_follow} to call them onto you. Otherwise follow your SL.\n" +
         "Roles: pick yours in the menu, or with 1-8 while waiting to respawn.\n" +
-        "H: your role's tool (medic: patch up · engineer: sandbags · drone operator: quad; J / K: FPV / AT FPV).\n" +
+        "{gadget}: your role's tool (medic: patch up · engineer: sandbags · drone operator: quad; {drone_fpv} / {drone_fpv_at}: FPV / AT FPV).\n" +
         "Green triangles: your squad. The lines under the order tell you what the squad is doing and your part in it;\n" +
-        "the green diamond is your spot. Squad leader: N for squad commands.\n\n" +
-        "WASD move · Shift sprint · C crouch · Z prone · Q / E lean\n" +
-        "LMB fire · RMB aim · R reload · V fire mode · G frag · 1 / 2 weapons\n" +
-        "F1 this help · F3 debug · F6 bot debug · F7/F8 volume · F10 main menu · F11 fullscreen";
+        "the green diamond is your spot. Squad leader: {squad_menu} for squad commands.\n\n" +
+        Short +
+        "{help} this help · {debug_overlay} debug · {bot_debug} bot debug · {volume_down}/{volume_up} volume · {main_menu} main menu · {fullscreen} fullscreen";
 
     const string RangeHelp =
         "RIDGELINE — firing range prototype\n\n" +
-        "WASD move · Shift sprint · Space jump / stand up\n" +
-        "C crouch · Z prone · Q / E lean\n" +
-        "LMB fire · RMB aim (hold) · Shift while aiming: hold breath\n" +
-        "R reload · V fire mode · T check mag · G frag grenade\n" +
-        "1 carbine (red dot) · 2 marksman rifle (4x scope)\n\n" +
-        "F1 this help · F3 debug overlay · F4 sniper drill (range)\n" +
-        "F5 distant battle on/off (range) · F6 bot debug (arena)\n" +
-        "Esc release mouse · F10 main menu · F11 fullscreen\n\n" +
+        Moves +
+        "{fire} fire · {aim} aim (hold) · {sprint} while aiming: hold breath\n" +
+        "{reload} reload (tap twice: drop the mag) · {firemode} fire mode · {check_ammo} check mag · {grenade} frag grenade\n" +
+        "{weapon1} carbine (red dot) · {weapon2} marksman rifle (4x scope)\n\n" +
+        "{help} this help · {debug_overlay} debug overlay · {sniper_drill} sniper drill (range)\n" +
+        "{distant_battle} distant battle on/off (range) · {bot_debug} bot debug (arena)\n" +
+        "Esc release mouse · {main_menu} main menu · {fullscreen} fullscreen\n\n" +
         "Steel plates from 25 to 800 m. Watch for the swing,\n" +
         "then listen: the ring arrives at the speed of sound.\n" +
         "4x reticle dots are 1 mil apart; the SR-25 is zeroed at 200 m.";
@@ -118,7 +123,7 @@ public partial class Hud : CanvasLayer
         _toast.OffsetTop = -150; _toast.OffsetBottom = -70;
 
         _help = MakeLabel(15);
-        _help.Text = HelpText;
+        _help.Text = Controls.Fill(HelpText);
         _help.Visible = ShowHelp;
         _help.Position = new Vector2(24, 250);
         var panel = new StyleBoxFlat { BgColor = new Color(0, 0, 0, 0.55f) };
@@ -153,25 +158,20 @@ public partial class Hud : CanvasLayer
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (e is InputEventKey k && k.Pressed && !k.Echo)
+        if (e.IsActionPressed("help")) _help.Visible = !_help.Visible;
+        else if (e.IsActionPressed("debug_overlay")) _debugOn = !_debugOn;
+        else if (e.IsActionPressed("sniper_drill")) Drill?.Toggle();
+        else if (e.IsActionPressed("distant_battle"))
         {
-            switch (k.PhysicalKeycode)
+            if (War != null)
             {
-                case Key.F1: _help.Visible = !_help.Visible; break;
-                case Key.F3: _debugOn = !_debugOn; break;
-                case Key.F4: Drill?.Toggle(); break;
-                case Key.F5:
-                    if (War != null)
-                    {
-                        War.Enabled = !War.Enabled;
-                        Toast(War.Enabled ? "Distant battle: ON" : "Distant battle: OFF (sounds already in the air will still arrive)", 3f);
-                    }
-                    break;
-                case Key.Escape: Input.MouseMode = Input.MouseModeEnum.Visible; break;
-                case Key.F7: Settings.Nudge(-0.1f); break;
-                case Key.F8: Settings.Nudge(0.1f); break;
+                War.Enabled = !War.Enabled;
+                Toast(War.Enabled ? "Distant battle: ON" : "Distant battle: OFF (sounds already in the air will still arrive)", 3f);
             }
         }
+        else if (e.IsActionPressed("volume_down")) Settings.Nudge(-0.1f);
+        else if (e.IsActionPressed("volume_up")) Settings.Nudge(0.1f);
+        else if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.Escape }) Input.MouseMode = Input.MouseModeEnum.Visible;
         else if (e is InputEventMouseButton mb && mb.Pressed && Input.MouseMode != Input.MouseModeEnum.Captured)
         {
             Input.MouseMode = Input.MouseModeEnum.Captured;
@@ -215,7 +215,7 @@ public partial class Hud : CanvasLayer
 
         return
             $"FPS {Engine.GetFramesPerSecond():0}\n" +
-            $"{w.Def.Name}  {w.Ammo}/{w.Def.MagSize} +{w.Mags} mags{(w.Def.AutoCapable ? (w.Auto ? "  AUTO" : "  SEMI") : "")}\n" +
+            $"{w.Def.Name}  {w.Ammo}/{w.Def.MagSize} + {w.Mags.Describe()} ({w.Mags.Rounds} rds){(w.Def.AutoCapable ? (w.Auto ? "  AUTO" : "  SEMI") : "")}\n" +
             $"Health {P.Health:0}   {P.Stance}  {P.Speed:0.0} m/s  stamina {P.Stamina * 100:0}%  breath {P.Breath * 100:0}%{(P.HoldingBreath ? " (holding)" : "")}\n" +
             $"Suppression {P.Suppression * 100:0}%\n" +
             $"Range to aim point: {range}\n" +

@@ -60,6 +60,7 @@ public sealed class Batcher
         if (!_shapes.TryGetValue(sk, out var shape)) _shapes[sk] = shape = new BoxShape3D { Size = size };
         var cs = new CollisionShape3D { Shape = shape, Transform = xf };
         Surfaces.Tag(cs, mat); // what a round or a boot finds here: timber, sheet metal, earth, else masonry
+        Penetration.Tag(cs, mat, size); // and what a round gets through: an inside wall, a car, a shed...
         body.AddChild(cs);
         Shapes++;
 
@@ -195,6 +196,7 @@ public sealed class Builder
         body.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = size }, MaterialOverride = mat });
         var cs = new CollisionShape3D { Shape = new BoxShape3D { Size = size } };
         Surfaces.Tag(cs, mat);
+        Penetration.Tag(cs, mat, size);
         body.AddChild(cs);
     }
 

@@ -2,10 +2,12 @@ using System.Diagnostics;
 
 namespace Ridgeline;
 
-/// <summary>Cheap named timers for finding where frame time goes (printed by DevShot).</summary>
+/// <summary>Cheap named timers and counters for finding where frame time goes (printed by DevShot).</summary>
 public static class Prof
 {
     public static readonly Dictionary<string, (double Ms, long Calls)> Totals = new();
+    /// <summary>Event counts (how often something happened, not how long it took).</summary>
+    public static readonly Dictionary<string, long> Counts = new();
 
     public readonly struct Scope : IDisposable
     {
@@ -21,4 +23,6 @@ public static class Prof
     }
 
     public static Scope Time(string name) => new(name);
+
+    public static void Count(string name, long n = 1) => Counts[name] = Counts.GetValueOrDefault(name) + n;
 }

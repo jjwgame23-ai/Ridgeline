@@ -277,7 +277,7 @@ public partial class Drone : Node3D
         var p = GlobalPosition + Vector3.Down * 0.25f;
         var dir = (Vel * 0.5f + Vector3.Down * 2f);
         Ballistics.I.Fire(p, dir.Normalized(), dir.Length(), 0.01f, Operator, 0f, "drone-dropped grenade",
-                          ignore: _hit.GetRid(), silent: true, explosive: true, armM: 0f, pen: 20f, vehDamage: 40f, crater: 0.5f, frags: 45);
+                          ignore: _hit.GetRid(), silent: true, explosive: true, armM: 0f, pen: 20f, vehDamage: 40f, crater: 0.5f, fragR: 7f, power: 0.6f);
         SoundWorld.I?.Emit(Snd.Click, GlobalPosition, -4f);
         return true;
     }
@@ -292,15 +292,15 @@ public partial class Drone : Node3D
         {
             // An RPG warhead: a shaped charge into whatever it hit, from wherever the pilot brought it in (the roof, the rear).
             if (what is Vehicle)
-                Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "AT FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 500f, vehDamage: 480f, crater: 0.4f, frags: 20);
+                Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "AT FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 500f, vehDamage: 480f, crater: 0.4f, fragR: 5f, power: 1.8f);
             else
-                Grenade.Detonate(at + normal * 0.2f, normal, Operator, 25, 0.6f, 4f, "AT FPV drone", power: 1.8f);
+                Grenade.Detonate(at + normal * 0.2f, normal, Operator, 5f, 0.6f, 4f, "AT FPV drone", power: 1.8f);
         }
         else if (what is Vehicle)
             // A frag charge against a hull: shreds optics and anything soft, gets through thin armour.
-            Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 30f, vehDamage: 90f, crater: 0.4f, frags: 40);
+            Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 30f, vehDamage: 90f, crater: 0.4f, fragR: 9f, power: 1.5f);
         else
-            Grenade.Detonate(at + normal * 0.2f, normal, Operator, 55, 0.7f, 3f, "FPV drone", power: 1.5f);
+            Grenade.Detonate(at + normal * 0.2f, normal, Operator, 9f, 0.7f, 3f, "FPV drone", power: 1.5f);
         Dead = true;
         QueueFree();
     }

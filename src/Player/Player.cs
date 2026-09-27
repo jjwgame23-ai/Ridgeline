@@ -111,7 +111,7 @@ public partial class Player : CharacterBody3D, ICombatant
     {
         if (e is not InputEventMouseMotion mm || Input.MouseMode != Input.MouseModeEnum.Captured || !Alive) return;
         // Flying: the mouse is the cyclic (hold Alt to look around instead).
-        if (Ride is { Def.Air: true } && SeatIdx == Ride.DriverSeat && !Input.IsPhysicalKeyPressed(Key.Alt))
+        if (Ride is { Def.Air: true } && SeatIdx == Ride.DriverSeat && !Input.IsActionPressed("free_look"))
         {
             _stick += mm.Relative * 0.0035f;
             _stick = new Vector2(Mathf.Clamp(_stick.X, -1f, 1f), Mathf.Clamp(_stick.Y, -1f, 1f));

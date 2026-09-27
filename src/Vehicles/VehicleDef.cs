@@ -15,7 +15,8 @@ public sealed class VWeapon
     public float Speed, Drag, Damage, VehDamage, Pen;   // Pen: mm of rolled-steel-equivalent armour it gets through
     public bool Explosive;
     public float Crater;       // HE: crater radius
-    public int Frags;          // HE: fragments
+    public float FragR;        // HE: how far out a standing man has an even chance of a fragment hit (m)
+    public float Power = 1f;   // HE: charge relative to a hand grenade
     public float Rpm;
     public int Mag, Mags;
     public float Reload;
@@ -109,7 +110,7 @@ public sealed class VehicleDef
         new VWeapon { Name = "30mm AP", Sound = Snd.Autocannon, Speed = 1100f, Drag = 0.00018f, Damage = 140f, VehDamage = 32f, Pen = 60f,
                       Rpm = 200f, Mag = 70, Mags = 3, Reload = 5f, SpreadDeg = 0.12f, Kick = 0.08f, Flash = 1.8f },
         new VWeapon { Name = "30mm HE", Sound = Snd.Autocannon, Speed = 1000f, Drag = 0.00022f, Damage = 140f, VehDamage = 10f, Pen = 10f,
-                      Explosive = true, Crater = 0.4f, Frags = 12, Rpm = 200f, Mag = 90, Mags = 3, Reload = 5f, SpreadDeg = 0.15f, Kick = 0.08f, Flash = 1.8f },
+                      Explosive = true, Crater = 0.4f, FragR = 3.5f, Power = 0.25f, Rpm = 200f, Mag = 90, Mags = 3, Reload = 5f, SpreadDeg = 0.15f, Kick = 0.08f, Flash = 1.8f },
     };
 
     public static VWeapon[] Cannon(float cal) => new[]
@@ -118,7 +119,7 @@ public sealed class VehicleDef
                       VehDamage = cal > 110 ? 480f : 380f, Pen = cal > 110 ? 560f : 420f, Rpm = cal > 110 ? 7.5f : 9f, Mag = 1,
                       Mags = 22, Reload = 0f, SpreadDeg = 0.03f, Kick = 0.45f, Flash = 4f },
         new VWeapon { Name = $"{cal:0}mm HE", Sound = Snd.Cannon, Speed = 900f, Drag = 0.00012f, Damage = 400f, VehDamage = 120f, Pen = 60f,
-                      Explosive = true, Crater = cal > 110 ? 1.6f : 1.3f, Frags = 70, Rpm = cal > 110 ? 7.5f : 9f, Mag = 1,
+                      Explosive = true, Crater = cal > 110 ? 1.6f : 1.3f, FragR = cal > 110 ? 30f : 25f, Power = cal > 110 ? 12f : 9f, Rpm = cal > 110 ? 7.5f : 9f, Mag = 1,
                       Mags = 16, Reload = 0f, SpreadDeg = 0.05f, Kick = 0.45f, Flash = 4f },
     };
 
@@ -131,20 +132,20 @@ public sealed class VehicleDef
     public static VWeapon ChinGun() => new()
     {
         Name = "30mm chain gun", Sound = Snd.Autocannon, Speed = 800f, Drag = 0.00035f, Damage = 140f, VehDamage = 26f, Pen = 50f,
-        Explosive = true, Crater = 0.35f, Frags = 10, Rpm = 600f, Mag = 300, Mags = 3, Reload = 8f, SpreadDeg = 0.45f, Kick = 0.05f, Flash = 1.6f,
+        Explosive = true, Crater = 0.35f, FragR = 3.5f, Power = 0.25f, Rpm = 600f, Mag = 300, Mags = 3, Reload = 8f, SpreadDeg = 0.45f, Kick = 0.05f, Flash = 1.6f,
     };
 
     public static VWeapon Hydra() => new()
     {
         Name = "70mm rockets", Sound = Snd.Rocket, Speed = 600f, Drag = 0.0001f, Damage = 300f, VehDamage = 160f, Pen = 180f,
-        Explosive = true, Crater = 0.8f, Frags = 30, Rpm = 400f, Mag = 38, Mags = 0, Reload = 0f, SpreadDeg = 0.9f, Kick = 0f, Flash = 1.5f,
+        Explosive = true, Crater = 0.8f, FragR = 18f, Power = 4.5f, Rpm = 400f, Mag = 38, Mags = 0, Reload = 0f, SpreadDeg = 0.9f, Kick = 0f, Flash = 1.5f,
     };
 
     /// <summary>35 mm anti-aircraft: proximity-fused against aircraft; the AP belt is for ground targets.</summary>
     public static VWeapon[] AaGun() => new[]
     {
         new VWeapon { Name = "35mm HEI prox", Sound = Snd.Autocannon, Speed = 1175f, Drag = 0.00015f, Damage = 140f, VehDamage = 70f, Pen = 20f,
-                      Explosive = true, Crater = 0.3f, Frags = 10, Prox = true, Rpm = 1100f, Mag = 320, Mags = 2, Reload = 10f, SpreadDeg = 0.2f, Kick = 0.05f, Flash = 1.8f },
+                      Explosive = true, Crater = 0.3f, FragR = 4f, Power = 0.4f, Prox = true, Rpm = 1100f, Mag = 320, Mags = 2, Reload = 10f, SpreadDeg = 0.2f, Kick = 0.05f, Flash = 1.8f },
         new VWeapon { Name = "35mm AP", Sound = Snd.Autocannon, Speed = 1175f, Drag = 0.00015f, Damage = 140f, VehDamage = 30f, Pen = 55f,
                       Rpm = 1100f, Mag = 40, Mags = 2, Reload = 6f, SpreadDeg = 0.15f, Kick = 0.05f, Flash = 1.8f },
     };
@@ -152,7 +153,7 @@ public sealed class VehicleDef
     public static VWeapon MortarHe() => new()
     {
         Name = "81mm HE", Sound = Snd.MortarFire, Speed = 185f, Drag = 0f, Damage = 300f, VehDamage = 60f, Pen = 20f,
-        Explosive = true, Crater = 1.6f, Frags = 70, Rpm = 18f, Mag = 1, Mags = 40, Reload = 0f, SpreadDeg = 0.5f, Kick = 0.15f, Flash = 1.5f,
+        Explosive = true, Crater = 1.6f, FragR = 25f, Power = 4f, Rpm = 18f, Mag = 1, Mags = 40, Reload = 0f, SpreadDeg = 0.5f, Kick = 0.15f, Flash = 1.5f,
     };
 
     // ---------------------------------------------------------------- the catalogue

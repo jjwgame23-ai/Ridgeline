@@ -277,7 +277,7 @@ public partial class KothMode : Node, IMatch, IObjective
         if (mate != null && mate.FeetPos.DistanceTo(victim.FeetPos) < 80f)
         {
             Comms.Say(mate, $"Man down! {victim.Callsign} is down!");
-            if (hit.Shooter is { Alive: true } s) mate.Senses.Alert(s, 0.2f);
+            if (hit.Direct && hit.Shooter is { Alive: true } s) mate.Senses.Alert(s, 0.2f);
         }
     }
 

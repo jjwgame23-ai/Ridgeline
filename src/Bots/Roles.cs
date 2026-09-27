@@ -73,19 +73,19 @@ public static class Roles
         _ => 1,
     };
 
-    /// <summary>What the role key (H) does for the player.</summary>
-    public static string Gadget(Role r) => r switch
+    /// <summary>What the role key does for the player (keys from the current bindings).</summary>
+    public static string Gadget(Role r) => Controls.Fill(r switch
     {
-        Role.Medic => "H: patch up the nearest wounded friendly (or yourself)",
-        Role.Engineer => "H: build a sandbag wall in front of you",
+        Role.Medic => "{gadget}: patch up the nearest wounded friendly (or yourself)",
+        Role.Engineer => "{gadget}: build a sandbag wall in front of you",
         Role.Ammo => "you resupply friendlies near you automatically",
-        Role.Grenadier => "2: grenade launcher",
-        Role.AntiTank or Role.HeavyAT => "2: anti-tank launcher — go for the sides and rear",
-        Role.AntiAir => "2: guided anti-air missile — aim at a helicopter until the tone locks, then fire",
-        Role.Leader => "M map: click a point to order your squad · B: squad on you / work the objective",
-        Role.DroneOperator => "H: fly the quad (LMB drops a grenade, H again sends it home) · J: FPV strike drone (frag, for people) · K: AT FPV (shaped charge: climb and dive onto a vehicle's roof) — mouse steers, W/S throttle, LMB detonates",
+        Role.Grenadier => "{weapon2}: grenade launcher",
+        Role.AntiTank or Role.HeavyAT => "{weapon2}: anti-tank launcher — go for the sides and rear",
+        Role.AntiAir => "{weapon2}: guided anti-air missile — aim at a helicopter until the tone locks, then fire",
+        Role.Leader => "{map} map: click a point to order your squad · {squad_follow}: squad on you / work the objective",
+        Role.DroneOperator => "{gadget}: fly the quad ({fire} drops a grenade, {gadget} again sends it home) · {drone_fpv}: FPV strike drone (frag, for people) · {drone_fpv_at}: AT FPV (shaped charge: climb and dive onto a vehicle's roof) — mouse steers, {move_forward}/{move_back} throttle, {fire} detonates",
         _ => "",
-    };
+    });
 
     static readonly (SquadKind Kind, Role[] Roles, int Min)[] Templates =
     {

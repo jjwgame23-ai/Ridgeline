@@ -71,7 +71,15 @@ public sealed class BotBrain
     int _aidKind; // 0 treat, 1 resupply, 2 build
     Vector3 _buildAt, _buildFacing;
     public bool Following => _following;
-    bool _popPeek, _crouchLos = true;
+    /// <summary>Going round with the flanking team in a react-to-contact drill (not a lone man's flank).</summary>
+    bool _drillFlank;
+    /// <summary>Who the cover we're in was taken from.</summary>
+    ICombatant? _coverFrom;
+    /// <summary>Pushing on to the objective past a far-off enemy: keep at it a while, rather than flip back and forth.</summary>
+    double _pushOnUntil = -1;
+    bool _popPeek, _crouchLos = true, _proneLos, _exposedCrouched;
+    /// <summary>Flat on the ground for incoming (a mortar bomb whistling down close by) until this time.</summary>
+    double _hitTheDirtUntil = -1, _proneBlockedUntil = -1;
     double _popUntil, _popAt, _losCheckAt;
     bool _reacted, _wasVisible, _peeking, _autoBurst, _hasWaypoint, _pausing, _preferHead, _holdFire, _checkedSpawn;
     int _burstLeft;
@@ -105,15 +113,26 @@ public sealed class BotBrain
         if (s is not (BotState.InCover or BotState.TakeCover)) Cover = null;
         if (State == BotState.Aid && s != BotState.Aid) EndAid();
         if (s != BotState.Advance) _following = false;
+        if (s != BotState.Flank && _drillFlank) Prof.Count($"flank:drill-ended->{s}{(_b.Arrived ? " (there)" : "")}: {note}");
+        if (s != BotState.Flank) _drillFlank = false;
         _peeking = false;
         _b.StrafeDir = null;
         _b.LeanTarget = 0f;
+        Telemetry.State(_b, State, s, note);
         State = s;
         _stateSince = Now;
     }
 
     Vector3 ThreatEye(Threat t) => t.Visible ? t.Who.EyePos : t.LastKnownPos + Vector3.Up * 1.6f;
-    Vector3 AimPoint(Threat t) => Combatants.PointOn(t.Who, _aimPart);
+    /// <summary>Where we think the part we're aiming at is (see Threat.Tle): off to one side or the other at range.</summary>
+    Vector3 AimPoint(Threat t)
+    {
+        var p = Combatants.PointOn(t.Who, _aimPart);
+        if (t.Tle < 0.005f) return p;
+        var across = (p - _b.EyePos).Cross(Vector3.Up);
+        if (across.LengthSquared() < 1e-6f) return p;
+        return p + (across.Normalized() * t.TleDir.X + Vector3.Up * t.TleDir.Y) * t.Tle;
+    }
     static Vector3 SuppressPoint(Threat t) => t.LastKnownPos + Vector3.Up * 1.2f;
 
     bool MuzzleClear(Vector3 pt) =>
@@ -183,10 +202,12 @@ public sealed class BotBrain
         var t = Target;
         bool vis = t is { Visible: true };
         if (t != null) _lastContact = Now;
+        FollowThrough(t, vis);
         float dist = t != null ? _b.FeetPos.DistanceTo(t.LastKnownPos) : 999f;
         bool suppressed = _b.Suppression > 0.5f + _b.P.Courage * 0.35f;
 
         if (CheckGrenades()) return;
+        if (CheckIncoming()) return;
         if (State == BotState.Evade)
         {
             SetState(t != null ? BotState.Hold : BotState.Advance, "clear of the frag");
@@ -196,7 +217,9 @@ public sealed class BotBrain
         if (!_b.Reloading)
         {
             if (_b.Ammo == 0) { _b.StartReload(); Say("Reloading!"); }
-            else if (!vis && _b.Ammo < _b.Def.MagSize * 0.45f && (t == null || Now - t.LastSeen > 1.5)) _b.StartReload();
+            // Topping up in a lull: the part-used magazine goes in a pouch, unless the rounds are coming in now.
+            else if (!vis && _b.Ammo < _b.Def.MagSize * 0.45f && (t == null || Now - t.LastSeen > 1.5))
+                _b.StartReload(keep: !(suppressed || Now - _lastShotAt < 3.0 || Now - _lastHurt < 3.0));
         }
 
         PassiveSupply();
@@ -234,6 +257,8 @@ public sealed class BotBrain
         {
             // Armour close by, out of sight: stay put in cover until it's been quiet a while.
             if (Now < _armorWaryUntil && State is BotState.InCover or BotState.TakeCover) return;
+            // Going round with the flanking team: the leader called it, whether or not we can see them yet.
+            if (_drillFlank && !_b.Arrived && InState < DrillFlankTime) return;
             if (State != BotState.Advance) SetState(BotState.Advance, "no contacts");
             return;
         }
@@ -268,26 +293,42 @@ public sealed class BotBrain
             }
             // On the way to the objective, don't get pinned into a long-range duel with someone
             // who isn't even contesting it: push on and fight at the objective (unless the squad's fighting).
-            if (Objective != null && !InZone && dist > 80f && !suppressed && !(Sq?.Engaged ?? false)
-                && (t.LastKnownPos - Objective.Center with { Y = t.LastKnownPos.Y }).Length() > Objective.Radius + 40f)
+            bool pushOn = Objective != null && !InZone && !suppressed && !Relevant(t, dist);
+            // Once decided, it holds for a few seconds (unless it's gone wrong): otherwise a man flips between
+            // "push on" and "take the fight" every time his suppression or the squad's state ticks over the line.
+            if (pushOn || (Now < _pushOnUntil && dist > 60f && !suppressed && Now - _lastHurt > 3.0))
             {
                 if (State != BotState.Advance) { SetState(BotState.Advance, "pushing through to the objective"); _hasWaypoint = false; }
+                if (pushOn && _pushOnUntil < Now) _pushOnUntil = Now + 8.0;
                 return;
             }
+            // Just decided he isn't our business, and nothing's changed: carry on (shooting at him if he shows), rather
+            // than turn to fight him every time he pops up and ignore him every time he ducks.
+            if (State == BotState.Advance && t.Who == _ignored && Now < _ignoreUntil && !Relevant(t, dist)) return;
             if (State is BotState.InCover or BotState.Engage or BotState.Hold && TryLauncher(t)) return;
             switch (State)
             {
                 case BotState.TakeCover:
                     break;
+                // The flanking team keeps going when it's seen: going to ground halfway round, out in the
+                // open, is the worst of both. Only if it's gone wrong (hit, pinned, or on top of them) does it fight here.
+                case BotState.Flank when _drillFlank && !_b.Arrived && InState < DrillFlankTime && dist > 30f && !suppressed && Now - _lastHurt > 2.0:
+                    break;
                 case BotState.InCover:
-                    if (!_peeking && !CoverFinder.Protected(_b, Cover!.Value.Pos, t.Who.EyePos, true))
+                    // Cover is judged against whoever it was taken from, and given a few seconds to prove
+                    // itself. (Judged against whoever happened to be the target this instant, and every
+                    // shift of theirs, men shuffled a metre or two from spot to spot every couple of seconds:
+                    // 640 times in a 6-minute match, none of them getting anywhere.)
+                    var coverFrom = _coverFrom is { Alive: true } cf && _b.Senses.Find(cf) is { } cth ? cth : t;
+                    if (!_peeking && (InState > 3f || Now - _lastHurt < 1.0) && !CoverFinder.Protected(_b, Cover!.Value.Pos, ThreatEye(coverFrom), true))
                     {
                         if (!GoToCover(t, 10f, suppressed)) SetState(BotState.Engage, "cover blown");
                     }
                     else if (!_peeking) TryBound(t);
                     break;
                 case BotState.Engage:
-                    bool exposed = !CoverFinder.Protected(_b, _b.FeetPos, t.Who.EyePos, _b.Crouched);
+                    // Exposed as he is now: lying flat, a fold in the ground or a kerb can be enough.
+                    bool exposed = _b.Prone ? !CoverFinder.ProtectedProne(_b, _b.FeetPos, t.Who.EyePos) : !CoverFinder.Protected(_b, _b.FeetPos, t.Who.EyePos, _b.Crouched);
                     if (exposed && (suppressed || _b.Reloading || _b.Health < 40f)) GoToCover(t, suppressed ? 14f : 10f, suppressed);
                     else if (dist > 8f && TryBound(t)) { }
                     else if (exposed && dist > 25f && InState > 2f + _b.P.Aggression * 5f && _rng.Randf() < 0.25f) GoToCover(t, 8f, false);
@@ -309,18 +350,16 @@ public sealed class BotBrain
         double since = Now - Math.Max(t.LastSeen, t.LastHeard);
 
         // With an objective, don't get dragged off chasing noises: an unseen enemy that isn't
-        // near the objective or right on top of us isn't worth leaving it for.
-        if (Objective != null && State is not (BotState.TakeCover or BotState.Advance))
+        // near the objective or right on top of us isn't worth leaving it for. (A drill's flanking
+        // team isn't chasing anything: the leader sent it round, and it goes.)
+        if (Objective != null && State is not (BotState.TakeCover or BotState.Advance) && !_drillFlank)
         {
-            float fromObj = (t.LastKnownPos - Objective.Center with { Y = t.LastKnownPos.Y }).Length();
-            bool relevant = fromObj < Objective.Radius + 40f || dist < 35f
-                            || (Sq is { Engaged: true } && Sq.ContactAt.DistanceTo(t.LastKnownPos) < 150f)
-                            || (Watch is Vector3 w && (t.LastKnownPos - w with { Y = t.LastKnownPos.Y }).Length() < 110f); // what an overwatch team is there to watch
-
+            bool relevant = Relevant(t, dist);
             bool stale = Now - t.LastSeen > 12.0 && InState > 8f;
             if (!relevant || stale)
             {
                 SetState(BotState.Advance, relevant ? "back to the objective" : "ignoring, objective first");
+                if (!relevant) { _ignored = t.Who; _ignoreUntil = Now + 8.0; }
                 _hasWaypoint = false;
                 return;
             }
@@ -347,28 +386,29 @@ public sealed class BotBrain
         {
             case BotState.Engage:
                 SetState(BotState.Hold, "lost sight");
-                _holdUntil = Now + _b.P.Patience;
+                _holdUntil = Now + HuntPatience(dist);
                 // Keep them pinned where they ducked.
-                if (Now - t.LastSeen < 1.0 && _rng.Randf() < 0.3f + _b.P.Aggression * 0.4f)
+                if (Now >= _suppressUntil && Now - t.LastSeen < 1.0 && _rng.Randf() < 0.3f + _b.P.Aggression * 0.4f)
                     _suppressUntil = Now + _rng.RandfRange(1.5f, 3f);
                 break;
             case BotState.TakeCover:
                 break;
             case BotState.InCover:
-                if (since > _b.P.Patience) Hunt(t);
+                if (since > HuntPatience(dist)) Hunt(t);
                 else if (!TryBound(t)) MaybeSuppress(t);
                 break;
             case BotState.Hold:
                 if (Now > _holdUntil)
                 {
-                    if (since > _b.P.Patience * 2f + 8f) GiveUp(t);
+                    if (since > HuntPatience(dist) * 2f + 8f) GiveUp(t);
                     else Hunt(t);
                 }
                 else if (!TryBound(t)) MaybeSuppress(t);
                 break;
             case BotState.Flank:
-                if (_b.Arrived || InState > 20f)
+                if (_b.Arrived || InState > (_drillFlank ? DrillFlankTime : 20f))
                 {
+                    if (_drillFlank) Prof.Count(_b.Arrived ? "flank:drill-arrived" : "flank:drill-timed-out");
                     SetState(BotState.Hold, "flank set");
                     _holdUntil = Now + _b.P.Patience * 0.6f;
                 }
@@ -389,6 +429,9 @@ public sealed class BotBrain
                 break;
             case BotState.Advance:
                 if (Objective != null && (t.LastKnownPos - Objective.Center with { Y = t.LastKnownPos.Y }).Length() > Objective.Radius + 40f && dist > 35f) break;
+                // Further off, keep going with the squad (it's heading there anyway): one man doesn't set off across
+                // open ground after someone out of sight 200 m away.
+                if (dist > 80f) break;
                 if (t.Confirmed) Hunt(t);
                 else
                 {
@@ -446,6 +489,15 @@ public sealed class BotBrain
         _b.MoveTo(t.LastKnownPos, d < 12f ? MoveMode.Walk : MoveMode.Run);
     }
 
+    /// <summary>
+    /// How long we watch where they went to ground before going after them ourselves. A few seconds close in (he's
+    /// round that corner); at range, much longer: there you keep your head down and keep firing on his position,
+    /// and it's the fire team that moves, bounding or going round, not one man running at him across 200 m of
+    /// open ground. (Everyone used to set off after a few seconds whatever the range: suppressive fire stopped
+    /// almost as soon as the enemy ducked, and men were hit crossing open ground on their own.)
+    /// </summary>
+    float HuntPatience(float dist) => _b.P.Patience * (1f + Mathf.Clamp((dist - 40f) / 40f, 0f, 5f));
+
     /// <summary>A teammate is moving: pin the enemy so they can't peek him.</summary>
     bool InZone => Objective != null && (_b.FeetPos - Objective.Center with { Y = _b.FeetPos.Y }).Length() < Objective.Radius;
 
@@ -484,6 +536,14 @@ public sealed class BotBrain
         }
         if (Sq?.BeyondLoa(goal) == true) return false;
         var spot = CoverFinder.FindForward(_b, ThreatEye(t), goal, _rng, Surroundings.BoundStep(Env));
+        bool rush = false;
+        // In the open with nothing to bound to: a rush, to drop and fire again further on. (Without it an
+        // attack across open ground had no way forward at all, and fights sat at 200 m for minutes.)
+        if (spot == null && Env is EnvKind.Open or EnvKind.Forest)
+        {
+            spot = CoverFinder.FindRush(_b, ThreatEye(t), goal, _rng, 12f, 22f);
+            rush = spot != null;
+        }
         if (spot is not CoverSpot s) return false;
 
         // The other team keeps their heads down while we go (bounding overwatch).
@@ -496,12 +556,16 @@ public sealed class BotBrain
             }
         Bounds++;
         Sq?.MarkMoving(_b, Now + 5.0);
-        Say(_rng.Randf() < 0.5f ? "Moving up!" : "Moving!");
-        SetState(BotState.TakeCover, "bounding forward");
+        Say(rush ? (_rng.Randf() < 0.5f ? "I'm up!" : "Rushing!") : _rng.Randf() < 0.5f ? "Moving up!" : "Moving!");
+        SetState(BotState.TakeCover, rush ? RushNote : "bounding forward");
+        if (rush) Prof.Count("bound:rush"); else Prof.Count("bound:to cover");
         Cover = s;
         _b.MoveTo(s.Pos, MoveMode.Sprint);
         return true;
     }
+
+    /// <summary>A dash across open ground to drop and fire from (see CoverFinder.FindRush).</summary>
+    const string RushNote = "rushing";
 
     /// <summary>
     /// The last few tens of metres: buddy rushes. One of the pair gets up and dashes a few
@@ -515,17 +579,39 @@ public sealed class BotBrain
         if (!Sq!.IsMover(_b, Now, _rng)) return false;
         if (Sq.BeyondLoa(t.LastKnownPos)) return false;
         var spot = CoverFinder.FindForward(_b, ThreatEye(t), t.LastKnownPos, _rng, 9f);
+        bool rush = false;
+        if (spot == null && Env is EnvKind.Open or EnvKind.Forest)
+        {
+            spot = CoverFinder.FindRush(_b, ThreatEye(t), t.LastKnownPos, _rng, 6f, 10f);
+            rush = spot != null;
+        }
         if (spot is not CoverSpot s) return false;
         if (bb.Senses.Find(t.Who) != null) bb.Brain.CoverMe(t.Who);
         Bounds++;
         Say(_rng.Randf() < 0.5f ? "I'm up!" : "Moving!");
-        SetState(BotState.TakeCover, "rushing (buddy covering)");
+        SetState(BotState.TakeCover, rush ? RushNote : "rushing (buddy covering)");
         Cover = s;
         _b.MoveTo(s.Pos, MoveMode.Sprint);
         return true;
     }
 
     float FromObjective(Vector3 p) => Objective == null ? 0f : (p - Objective.Center with { Y = p.Y }).Length();
+
+    /// <summary>
+    /// Is this enemy our business, or do we press on to the objective past him? One test, whether he's in sight or
+    /// not. (There were two, and they disagreed: in sight, a man 50 m off, or one while the squad was fighting
+    /// somebody else, was taken on; out of sight, he was ignored; so men flipped between the two every time he
+    /// showed and hid.) Ours: anyone at or near the objective, anyone close, anyone shooting at us, anyone at all
+    /// while the squad's in a fight (we don't walk on and leave it), what an overwatch team is there to watch.
+    /// </summary>
+    bool Relevant(Threat t, float dist)
+    {
+        if (Objective == null) return true;
+        return FromObjective(t.LastKnownPos) < Objective.Radius + 40f || dist < 80f
+               || Now - _lastShotAt < 10.0 || Now - _lastHurt < 10.0
+               || Sq is { Engaged: true }
+               || (Watch is Vector3 w && (t.LastKnownPos - w with { Y = t.LastKnownPos.Y }).Length() < 110f);
+    }
 
     public void CoverMe(ICombatant enemy)
     {
@@ -542,14 +628,52 @@ public sealed class BotBrain
         Say("Covering!");
     }
 
+    /// <summary>
+    /// How long after they were last seen we'll keep putting rounds where they went to ground. A man who ducked
+    /// is still there, most likely, for a good while; and fire on his position is what keeps him down while
+    /// our people move. (It used to stop five seconds after he dropped out of sight: most of a firefight went
+    /// quiet between glimpses.)
+    /// </summary>
+    double SuppressFor => Role == Role.AutoRifleman ? 25.0 : 15.0;
+
+    /// <summary>The man we were shooting at, while he was in sight.</summary>
+    Threat? _sawTarget;
+    /// <summary>Someone we've just decided to leave alone (see Think), and until when.</summary>
+    ICombatant? _ignored;
+    double _ignoreUntil;
+
+    /// <summary>
+    /// He's just dropped out of sight while we were firing at him: keep the rounds going onto where he went down
+    /// for a few seconds. That's the point of the fire: he can't come back up to shoot, or get up and move, while
+    /// it's landing on him. (It used to happen only some of the time, and only for a man out in the open; from
+    /// cover the peek ended on its own clock and the fire with it.)
+    /// </summary>
+    void FollowThrough(Threat? t, bool vis)
+    {
+        if (vis) { _sawTarget = t; return; }
+        if (t == null || t != _sawTarget) { _sawTarget = null; return; }
+        _sawTarget = null;
+        if (Now - _b.LastShotTime > 2.5 || Now < _suppressUntil || _b.Reloading || _b.Ammo < _b.Def.MagSize * 0.25f) return;
+        _suppressUntil = Now + (Role == Role.AutoRifleman ? _rng.RandfRange(3f, 6f) : _rng.RandfRange(2f, 4f));
+        if (State == BotState.InCover && _peeking) _peekUntil = Math.Max(_peekUntil, _suppressUntil);
+        Prof.Count("supp:follow-through");
+    }
+
     void MaybeSuppress(Threat t)
     {
         // The automatic rifleman's job is exactly this: long, steady fire on where they are.
         bool ar = Role == Role.AutoRifleman;
-        if (Now - t.LastSeen > (ar ? 10.0 : 5.0) || Now < _suppressUntil + (ar ? 0.6 : 1.5) || _b.Ammo < _b.Def.MagSize * (ar ? 0.15f : 0.4f)) return;
+        double since = Now - t.LastSeen;
+        if (since > SuppressFor) { Prof.Count("supp:no (too long since seen)"); return; }
+        if (Now < _suppressUntil + (ar ? 0.6 : 1.5)) { Prof.Count("supp:no (in or just after a window)"); return; }
+        if (_b.Ammo < _b.Def.MagSize * (ar ? 0.15f : 0.4f)) { Prof.Count("supp:no (magazine low)"); return; }
         bool support = Now < _supportUntil; // the base of fire in a squad drill: that's their whole job
-        if (_rng.Randf() > (0.12f + _b.P.Aggression * 0.2f) * (ar ? 3f : 1f) * (support ? 2.5f : 1f)) return;
+        // Less keen the longer it's been (they may have moved), unless covering someone.
+        float fresh = support ? 1f : 1f - 0.6f * (float)(since / SuppressFor);
+        if (_rng.Randf() > (0.12f + _b.P.Aggression * 0.2f) * (ar ? 3f : 1f) * (support ? 2.5f : 1f) * fresh) { Prof.Count("supp:no (not this time)"); return; }
+        Prof.Count("supp:window opened");
         _suppressUntil = Now + (ar ? _rng.RandfRange(3f, 6f) : _rng.RandfRange(1.5f, 3.5f));
+        if (State == BotState.InCover) _hideUntil = Now; // up and firing now (see ActCover), not whenever the next peek comes round
     }
 
     // ================================================================ role work
@@ -570,10 +694,7 @@ public sealed class BotBrain
         if (d < 35f || d > 300f) return false;
         if (t.Visible && d < 60f && !CoverFinder.Protected(_b, t.Who.FeetPos, _b.EyePos, true)) return false;
         if (_rng.Randf() > 0.35f + _b.P.Aggression * 0.35f) return false;
-        foreach (var m in Mates())
-            if (m.FeetPos.DistanceTo(t.LastKnownPos) < 14f) return false;
-        foreach (var c in Combatants.All)
-            if (c is Player { Alive: true } pl && pl.Team == _b.Team && pl.FeetPos.DistanceTo(t.LastKnownPos) < 14f) return false;
+        if (OwnNear(t.LastKnownPos, 14f)) return false;
         float skill = _b.P.Skill;
         float rangeErr = _rng.RandfRange(-1f, 1f) * (0.03f + (1f - skill) * 0.08f + (float)since * 0.01f);
         float yawErr = _rng.RandfRange(-1f, 1f) * (0.4f + (1f - skill) * 1.5f);
@@ -596,12 +717,22 @@ public sealed class BotBrain
     /// </summary>
     bool Board(Threat? t, bool vis)
     {
-        if (_b.Ride != null || Sq == null || Now < _boardCheck) return false;
-        if (vis && t != null && t.LastKnownPos.DistanceTo(_b.FeetPos) < 120f) return false;
+        if (_b.Ride != null || Sq == null) return false;
+        bool close = vis && t != null && t.LastKnownPos.DistanceTo(_b.FeetPos) < 120f;
+        // On the way to it: keep going, between the checks too, unless they're close or we're hit. (Before, the
+        // fight logic took over between checks, and a crewman with an enemy in sight 150 m off went "to the
+        // vehicle", "take the fight", "to the vehicle", twice a second, and did neither.) A crew's job is its
+        // vehicle, not a rifle.
+        if (Now < _boardCheck)
+            return State == BotState.Advance && Note is "to the transport" or "to the vehicle" && !close && Now - _lastHurt > 2.0;
+        if (close) return false;
         Vehicle? v = null;
         SeatRole? seat = null;
-        if (Sq.Kind is SquadKind.Armor or SquadKind.Transport or SquadKind.Air or SquadKind.Mortar && Sq.Vehicle is { Destroyed: false } own) { v = own; seat = SeatRole.Driver; }
-        else if (Sq.Kind == SquadKind.Logistics && Sq.Vehicle is { Destroyed: false } truck && Sq.FobSite != null && Sq.FobBuildStart < 0) { v = truck; seat = SeatRole.Driver; }
+        // Not one the motor pool has given up on (it can't move): the crew got out of it for a reason. (Before, a
+        // truck with its wheels shot out had its driver bailing out and climbing back in every second, and it was
+        // never written off and replaced, since it was never empty.)
+        if (Sq.Kind is SquadKind.Armor or SquadKind.Transport or SquadKind.Air or SquadKind.Mortar && Sq.Vehicle is { Destroyed: false, Useless: false } own) { v = own; seat = SeatRole.Driver; }
+        else if (Sq.Kind == SquadKind.Logistics && Sq.Vehicle is { Destroyed: false, Useless: false } truck && Sq.FobSite != null && Sq.FobBuildStart < 0) { v = truck; seat = SeatRole.Driver; }
         else if (Sq.Transport is { Destroyed: false, Boarding: true } ride) { v = ride; seat = SeatRole.Passenger; }
         if (v == null)
         {
@@ -633,7 +764,7 @@ public sealed class BotBrain
         }
         // Round to the back (the ramp, the rear doors), onto ground we can stand on, not into the middle of the hull.
         var door = v.GlobalPosition + v.GlobalBasis.Z * (v.Def.Hull.Z * 0.5f + 1.2f);
-        var navDoor = NavigationServer3D.MapGetClosestPoint(_b.GetWorld3D().NavigationMap, door);
+        var navDoor = Valley.ClosestOnFoot(_b.GetWorld3D(), door);
         if (((navDoor - door) with { Y = 0f }).Length() < 4f) door = navDoor;
         if (State != BotState.Advance || _b.GoalPos.DistanceTo(door) > 2f)
         {
@@ -790,11 +921,16 @@ public sealed class BotBrain
                         return true;
                     }
                 }
-                if (State is BotState.Advance or BotState.Search or BotState.Investigate or BotState.Flank)
+                // Not our turn to go: hold where we are and keep their heads down. (This used to be undone
+                // by the rest of Think a moment later: hold, walk off, hold, walk off, every fifth of a second.)
+                if (State is BotState.Advance or BotState.Search or BotState.Investigate or BotState.Flank
+                    || (State == BotState.Hold && Note == "covering the withdrawal"))
                 {
-                    SetState(BotState.Hold, "covering the withdrawal");
+                    if (State != BotState.Hold) SetState(BotState.Hold, "covering the withdrawal");
                     _holdUntil = Now + 3.0;
                     _b.Stop();
+                    if (t != null && !t.Visible && Now > _suppressUntil && Now - t.LastSeen < 8.0) _suppressUntil = Now + _rng.RandfRange(1.5f, 3f);
+                    return true;
                 }
                 return false;
             }
@@ -806,15 +942,15 @@ public sealed class BotBrain
                 if (team < 0) return false;
                 if (team == Sq.AssaultTeam)
                 {
-                    // Go wide round the side the leader called, closing to about half the distance.
-                    var to = (Sq.ContactAt - _b.FeetPos) with { Y = 0f };
-                    float d = to.Length();
+                    // Go wide round the side the leader called, closing to about half the distance: as a team, to the
+                    // team's objective, each man to his place in its line.
+                    float d = ((Sq.ContactAt - _b.FeetPos) with { Y = 0f }).Length();
                     if (d < 40f) return false;
-                    var dir = to / d;
-                    var right = dir.Cross(Vector3.Up) * (Sq.AssaultTeam == 1 ? 1f : -1f);
-                    var goal = _b.FeetPos + dir * (d * 0.55f) + right * MathF.Min(90f, d * 0.5f);
+                    var goal = Sq.FlankSpotFor(_b);
                     if (ground != null) goal = ground.Ground(goal);
                     SetState(BotState.Flank, $"flanking with {Squad.TeamName(team)}");
+                    _drillFlank = true;
+                    Prof.Count("flank:drill-start");
                     _b.MoveTo(goal, d > 120f ? MoveMode.Sprint : MoveMode.Run);
                     return true;
                 }
@@ -1030,7 +1166,7 @@ public sealed class BotBrain
     }
 
     /// <summary>What an ammo bearer can do something about: rifle ammo, not a drone team's drones.</summary>
-    static float Carried(ICombatant c) => c is Bot { Ops: not null } cb ? (cb.Def.Mags == 0 ? 1f : cb.Mags / (float)cb.Def.Mags) : c.AmmoLevel;
+    static float Carried(ICombatant c) => c is Bot { Ops: not null } cb ? (cb.Def.Mags == 0 ? 1f : cb.Mags.Rounds / (float)(cb.Def.MagSize * cb.Def.Mags)) : c.AmmoLevel;
 
     /// <summary>Ammo bearers top up anyone who comes near, without stopping what they're doing.</summary>
     void PassiveSupply()
@@ -1076,7 +1212,7 @@ public sealed class BotBrain
             float bestScore = float.MaxValue;
             foreach (var c in Combatants.All)
             {
-                if (c.Dead || c.Team != _b.Team || (c.Downed && Role != Role.Medic)) continue;
+                if (c.Dead || c.Team != _b.Team || (c.Downed && Role != Role.Medic) || (Role == Role.Ammo && c == _b) || c.Ride != null) continue;
                 if (_claimed.TryGetValue(c, out var by) && by != _b && GodotObject.IsInstanceValid(by) && by.Alive && by.Brain.State == BotState.Aid) continue;
                 float d = c.FeetPos.DistanceTo(_b.FeetPos);
                 if (d > reach) continue;
@@ -1253,8 +1389,7 @@ public sealed class BotBrain
         if (d < (room ? 5f : 9f) || d > 34f) return false;
         _nextNade = Now + 2.0;
         if (_rng.Randf() > 0.3f + _b.P.Aggression * 0.35f + (room ? 0.35f : 0f)) return false;
-        foreach (var m in Mates())
-            if (m.FeetPos.DistanceTo(t.LastKnownPos) < 10f) return false; // not on our own guys
+        if (OwnNear(t.LastKnownPos, 10f)) return false; // not on our own guys
         if (!_b.ThrowGrenadeAt(t.LastKnownPos)) return false;
         _nextNade = Now + 12.0;
         Say("Frag out!");
@@ -1262,7 +1397,11 @@ public sealed class BotBrain
         return true;
     }
 
-    /// <summary>A live grenade we know about is close: get away from it.</summary>
+    /// <summary>
+    /// A live grenade we know about is close: get something solid between us and it (a wall, a corner, a
+    /// car) if there's anything within a few strides, and get down behind it; otherwise run from it.
+    /// Out in the open its fragments reach well past where anyone can run in three seconds.
+    /// </summary>
     bool CheckGrenades()
     {
         var space = _b.GetWorld3D().DirectSpaceState;
@@ -1271,7 +1410,7 @@ public sealed class BotBrain
             if (!GodotObject.IsInstanceValid(g) || g.Fuse > 3.2f || g.Smoke) continue; // still in the air, or only smoke
             var gp = g.GlobalPosition;
             float d = gp.DistanceTo(_b.FeetPos);
-            if (d > 9f) continue;
+            if (d > 20f) continue;
             bool noticed = d < 4f || space.IntersectRay(PhysicsRayQueryParameters3D.Create(_b.EyePos, gp + Vector3.Up * 0.1f, 1)).Count == 0;
             if (!noticed) continue;
             var away = _b.FeetPos - gp;
@@ -1281,7 +1420,15 @@ public sealed class BotBrain
             {
                 Say("Grenade!");
                 SetState(BotState.Evade, "grenade!");
-                _b.MoveTo(_b.FeetPos + away.Normalized() * 11f, MoveMode.Sprint); // pick the escape once
+                // Pick the escape once: behind something, if it's close enough to reach before it goes off.
+                if (CoverFinder.Find(_b, gp + Vector3.Up * 0.3f, MathF.Min(7f, g.Fuse * 4f), _rng) is CoverSpot s)
+                {
+                    Note = "grenade! into cover";
+                    _b.MoveTo(s.Pos, MoveMode.Sprint);
+                }
+                // Far enough off already (his own, thrown from the open, say): flat on the ground where he is.
+                else if (d > 10f) { Note = "grenade! down"; _b.Stop(); }
+                else _b.MoveTo(_b.FeetPos + away.Normalized() * 11f, MoveMode.Sprint);
             }
             _evadeUntil = Now + g.Fuse + 0.4;
             return true;
@@ -1292,8 +1439,9 @@ public sealed class BotBrain
     bool GoToCover(Threat t, float radius, bool urgent)
     {
         Covers++;
+        _coverFrom = t.Who;
         var spot = CoverFinder.Find(_b, ThreatEye(t), radius, _rng);
-        if (spot is not CoverSpot s) return false;
+        if (spot is not CoverSpot s) { Prof.Count("cover:search-failed"); return false; }
         if (s.Pos.DistanceTo(_b.FeetPos) < 0.7f)
         {
             SetState(BotState.InCover, "in cover");
@@ -1354,6 +1502,12 @@ public sealed class BotBrain
         switch (State)
         {
             case BotState.Advance: ActAdvance(); break;
+            case BotState.TakeCover when _b.Arrived && Note == RushNote:
+                // The end of a rush: down, and back to firing.
+                SetState(BotState.Engage, "down, firing");
+                _crouchLos = _proneLos = true; // (re-checked in half a second)
+                _exposedCrouched = true;
+                break;
             case BotState.TakeCover:
                 if (_b.Arrived)
                 {
@@ -1376,11 +1530,19 @@ public sealed class BotBrain
         if (vis && Now > _losCheckAt)
         {
             _losCheckAt = Now + 0.5;
-            var low = _b.FeetPos + Vector3.Up * 1.17f;
-            _crouchLos = _b.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(low, Combatants.PointOn(t!.Who, Combatants.Part.UpperChest), 1)).Count == 0;
+            var space = _b.GetWorld3D().DirectSpaceState;
+            var them = Combatants.PointOn(t!.Who, Combatants.Part.UpperChest);
+            _crouchLos = space.IntersectRay(PhysicsRayQueryParameters3D.Create(_b.FeetPos + Vector3.Up * 1.17f, them, 1)).Count == 0;
+            var low = _b.FeetPos + Vector3.Up * 0.38f;
+            // From the ground he has to see them, and they can't be too far above or below him to aim at lying down.
+            float pitch = Mathf.RadToDeg(MathF.Asin(Mathf.Clamp((them - low).Normalized().Y, -1f, 1f)));
+            _proneLos = pitch > -18f && pitch < 23f && space.IntersectRay(PhysicsRayQueryParameters3D.Create(low, them, 1)).Count == 0;
+            _exposedCrouched = !CoverFinder.Protected(_b, _b.FeetPos, t.Who.EyePos, true);
         }
+        // Down on the ground and the ground in front is in the way of the barrel: up onto a knee for a while.
+        if (_b.Prone && vis && _holdFire && _reacted) _proneBlockedUntil = Now + 6.0;
 
-        _b.SetCrouch(WantCrouch(t, vis));
+        _b.SetStance(WantStance(t, vis));
         WantsAds = State switch
         {
             BotState.Advance or BotState.TakeCover or BotState.Evade or BotState.Flank or BotState.Aid => false,
@@ -1415,6 +1577,13 @@ public sealed class BotBrain
                 }
             }
             else { _b.Stop(); _hasWaypoint = false; }
+            return;
+        }
+        // Leading, and the squad's strung out behind: wait for them to close up (see Squad.StrungOut).
+        if (Sq != null && Sq.Leader == _b && !InZone && Sq.StrungOut(_b))
+        {
+            if (_b.Moving) { _b.Stop(); _hasWaypoint = false; }
+            Note = "waiting for the squad";
             return;
         }
         if (_following && Now > _followAt)
@@ -1608,13 +1777,16 @@ public sealed class BotBrain
         if (!_peeking)
         {
             _b.LeanTarget = 0f;
-            _b.MoveTo(c.Pos, MoveMode.Walk);
+            // Back to the spot if we've been pushed off it (asking every tick while already there costs a sweep test each time).
+            if (!_b.Arrived || _b.FeetPos.DistanceTo(c.Pos) > 0.6f) _b.MoveTo(c.Pos, MoveMode.Walk);
             if (Now > _hideUntil && !_b.Reloading && _b.Ammo > 0 && _b.Suppression < 0.75f)
             {
                 _peeking = true;
                 // Half the time a quick pop — up, a couple of rounds, back down.
                 _popPeek = _rng.Randf() < 0.5f;
                 _peekUntil = Now + (_popPeek ? _rng.RandfRange(0.5f, 1.0f) : _rng.RandfRange(1.2f, 3.2f) * (0.7f + _b.P.Aggression * 0.6f));
+                // Keeping their heads down: up for the whole string of fire.
+                if (Now < _suppressUntil) _peekUntil = Math.Max(_peekUntil, _suppressUntil);
                 // Pre-fire: spray where they were as we come out, before we can even see them.
                 if (!vis && Now - t.LastSeen < 3.0 && _rng.Randf() < 0.35f + _b.P.Aggression * 0.4f)
                     _prefireUntil = Now + 0.6;
@@ -1622,7 +1794,7 @@ public sealed class BotBrain
         }
         else
         {
-            if (c.Side && c.LeanDir == 0f) _b.MoveTo(c.PeekPos, MoveMode.Walk);
+            if (c.Side && c.LeanDir == 0f && (!_b.Arrived || _b.FeetPos.DistanceTo(c.PeekPos) > 0.6f)) _b.MoveTo(c.PeekPos, MoveMode.Walk);
             _b.LeanTarget = c.LeanDir;
             bool bail = Now > _peekUntil || _b.Ammo == 0 || _b.Reloading || _b.Suppression > 0.8f + _b.P.Courage * 0.15f;
             if (bail)
@@ -1672,19 +1844,70 @@ public sealed class BotBrain
         _b.StrafeDir = _strafe;
     }
 
-    bool WantCrouch(Threat? t, bool vis)
+    /// <summary>
+    /// On his feet, on a knee or flat on the ground. Out in the open at range with nothing to get behind,
+    /// a soldier fights lying down: a fraction of the target, much harder to pick out, and a steadier aim;
+    /// but slow to get up and move, and blind over any fold in the ground. So:
+    /// - fighting in the open (not in a street or a room) beyond ~40 m with no cover: prone, if he can still
+    ///   see them from down there (else a knee); pinned down there with no cover: prone;
+    /// - an observation or overwatch post in the open: prone;
+    /// - a mortar bomb whistling in close: flat, wherever he is (a grenade with nowhere to hide behind too);
+    /// - otherwise as before: a knee behind cover and at range, on his feet to move and up close.
+    /// </summary>
+    Posture WantStance(Threat? t, bool vis)
     {
         float d = t != null ? _b.FeetPos.DistanceTo(t.LastKnownPos) : 999f;
-        return State switch
+        bool open = Env is EnvKind.Open or EnvKind.Forest; // a street or a floor: lying down just gets you trodden on and shot from above
+        bool mayLie = open && Now > _proneBlockedUntil;
+        if (Now < _hitTheDirtUntil && State != BotState.Evade) return Posture.Prone;
+        switch (State)
         {
-            BotState.InCover => !_peeking || (!(Cover?.Low ?? false) && !(Cover?.Side ?? false)),
-            BotState.Engage => d > 30f && _crouchLos,        // don't duck out of your own sight line
-            BotState.Hold => Cover == null && d > 18f && Now > _popUntil,
-            BotState.Aid => _aidUntil > 0,   // kneeling to work
-            // At an observation post, stay low: a head on a ridgeline is what gets seen first.
-            BotState.Advance => Overwatch && InZone && _pausing,
-            _ => false,
-        };
+            case BotState.InCover:
+                return !_peeking || (!(Cover?.Low ?? false) && !(Cover?.Side ?? false)) ? Posture.Crouch : Posture.Stand;
+            case BotState.Engage:
+                if (mayLie && d > 40f && _exposedCrouched && (_proneLos || _b.Suppression > 0.7f)) return Posture.Prone;
+                return d > 30f && _crouchLos ? Posture.Crouch : Posture.Stand; // don't duck out of your own sight line
+            case BotState.Hold:
+                if (Cover != null || d <= 18f) return Posture.Stand;
+                // Down on the ground he stays down (no bobbing up to look: getting up takes a second each way);
+                // pinned in the open, he gets down. Otherwise a knee, up now and then for a look.
+                if (mayLie && d > 40f && (_b.Prone || _b.Suppression > 0.6f)) return Posture.Prone;
+                return Now < _popUntil ? Posture.Stand : Posture.Crouch;
+            case BotState.Aid:
+                return _aidUntil > 0 ? Posture.Crouch : Posture.Stand; // kneeling to work
+            case BotState.Evade:
+                // Down behind it; or, with nothing to get behind, flat, as low as can be, till it goes off.
+                return !_b.Arrived ? Posture.Stand : Note.EndsWith("cover") ? Posture.Crouch : Posture.Prone;
+            case BotState.Advance:
+                // At an observation post, stay low: a head on a ridgeline is what gets seen first.
+                return Overwatch && InZone && _pausing ? (mayLie ? Posture.Prone : Posture.Crouch) : Posture.Stand;
+            default:
+                return Posture.Stand;
+        }
+    }
+
+    /// <summary>
+    /// A mortar bomb whistling down close by (it's heard for the last few seconds of its fall): hit the
+    /// dirt where you stand; there's no outrunning it. Under a roof, stay put. The squad gets off the
+    /// impact area once it's landed (the indirect-fire drill).
+    /// </summary>
+    bool CheckIncoming()
+    {
+        if (Now < _hitTheDirtUntil) { _b.Stop(); return true; }
+        if (Ballistics.Incoming.Count == 0 || Env == EnvKind.Interior) return false;
+        foreach (var (at, when) in Ballistics.Incoming)
+        {
+            double left = when - Now;
+            if (left < -0.2 || left > 3.2 || at.DistanceTo(_b.FeetPos) > 45f) continue;
+            _hitTheDirtUntil = when + _rng.RandfRange(0.6f, 1.5f);
+            Prof.Count("incoming:hit-the-dirt");
+            if (State is not (BotState.Hold or BotState.InCover or BotState.Engage)) SetState(BotState.Hold, "incoming! down!");
+            _holdUntil = _hitTheDirtUntil;
+            _b.Stop();
+            Say(_rng.Randf() < 0.5f ? "Incoming!" : "Get down!");
+            return true;
+        }
+        return false;
     }
 
     void UpdateAim(Threat? t, bool vis)
@@ -1800,18 +2023,29 @@ public sealed class BotBrain
         }
 
         // Not visible: suppressing their cover, or pre-firing the angle as we peek.
-        bool suppress = Now < _suppressUntil && Now - t.LastSeen < 6.0 && _b.Ammo > _b.Def.MagSize * 0.25f;
+        bool suppress = Now < _suppressUntil && Now - t.LastSeen < SuppressFor && _b.Ammo > _b.Def.MagSize * 0.25f;
         bool prefire = Now < _prefireUntil;
         if (!suppress && !prefire) { if (_burstLeft > 0 && !_autoBurst) _burstLeft = 0; return; }
         var sp = SuppressPoint(t);
         if (Mathf.RadToDeg(_b.Aim.Dir.AngleTo(sp - eye)) > 4f) return;
-        // Wait until fully leaned out, and check the round's real path clears our own cover.
-        if (!_b.LeanSettled || Now < _nextShotAt || FriendlyInLine(eye, sp) || !_b.ShotReaches(sp, 4f)) return;
+        // Wait until fully leaned out, and check the round's real path clears our own cover. It needn't reach the
+        // very spot: fire on a position 200 m off that kicks up the dirt in front of it is doing its job. (Held to
+        // within 4 m at any range, much of the fire men meant to put down wasn't: a fold in the ground short of
+        // the enemy stopped it.)
+        if (!_b.LeanSettled || Now < _nextShotAt || FriendlyInLine(eye, sp)) return;
+        if (!_b.ShotReaches(sp, suppress ? MathF.Max(4f, eye.DistanceTo(sp) * 0.05f) : 4f)) return;
         if (_burstLeft <= 0)
         {
-            _autoBurst = _b.Def.AutoCapable;
-            _burstLeft = _autoBurst ? _rng.RandiRange(3, 6) : _rng.RandiRange(1, 2);
-            _burstPause = prefire ? 0.1f : _rng.RandfRange(0.5f, 1.2f);
+            // A machine gun keeps them down with bursts; a rifleman with steady single shots at a position he can't
+            // see (automatic from a rifle at that range is noise and an empty magazine), unless it's close.
+            // Keeping it up for minutes, not seconds: a machine gun's sustained rate (a burst every few seconds,
+            // ~80 rounds a minute) and a rifleman's (a shot every second or two), not their rapid rates.
+            bool mg = Role == Role.AutoRifleman;
+            _autoBurst = _b.Def.AutoCapable && (mg || prefire || eye.DistanceTo(sp) < 60f);
+            if (prefire) { _burstLeft = _autoBurst ? _rng.RandiRange(3, 6) : _rng.RandiRange(1, 2); _burstPause = 0.1f; }
+            else if (mg) { _burstLeft = _rng.RandiRange(4, 8); _burstPause = _rng.RandfRange(1.5f, 3.5f); }
+            else if (_autoBurst) { _burstLeft = _rng.RandiRange(3, 6); _burstPause = _rng.RandfRange(0.5f, 1.2f); }
+            else { _burstLeft = 1; _burstPause = _rng.RandfRange(0.8f, 2.2f); }
         }
         FireMode = prefire ? "prefire" : "suppress";
         Shoot(eye.DistanceTo(sp));
@@ -1865,18 +2099,31 @@ public sealed class BotBrain
         float len = seg.Length();
         if (len < 0.01f) return false;
         var dir = seg / len;
+        float reach = len + 4f;
         foreach (var c in Combatants.All)
         {
-            if (c == _b || !c.Alive || c.Team != _b.Team) continue;
-            foreach (var p in new[] { c.ChestPos, c.EyePos, c.FeetPos + Vector3.Up * 0.6f })
-            {
-                float along = (p - eye).Dot(dir);
-                if (along < -0.3f || along > len + 1.5f) continue;
-                float off = (eye + dir * Mathf.Max(along, 0f)).DistanceTo(p);
-                if (off < 0.85f + along * 0.02f) return true;
-            }
+            // The wounded on the ground too: a round (or a fragment) finds a man who's down as surely as one who isn't.
+            if (c == _b || c.Dead || c.Team != _b.Team) continue;
+            var feet = c.FeetPos;
+            if ((feet - eye).LengthSquared() > reach * reach) continue; // nowhere near the line
+            if (NearLine(eye, dir, len, c.ChestPos) || NearLine(eye, dir, len, c.EyePos) || NearLine(eye, dir, len, feet + Vector3.Up * 0.6f)) return true;
         }
         return false;
+    }
+
+    /// <summary>Any of ours (on their feet or down, the player too) this close to where a grenade or a 40 mm round would land?</summary>
+    bool OwnNear(Vector3 p, float r)
+    {
+        foreach (var c in Combatants.All)
+            if (c != _b && !c.Dead && c.Team == _b.Team && c.FeetPos.DistanceTo(p) < r) return true;
+        return false;
+    }
+
+    static bool NearLine(Vector3 eye, Vector3 dir, float len, Vector3 p)
+    {
+        float along = (p - eye).Dot(dir);
+        if (along < -0.3f || along > len + 1.5f) return false;
+        return (eye + dir * Mathf.Max(along, 0f)).DistanceTo(p) < 0.85f + along * 0.02f;
     }
 
 
@@ -1902,9 +2149,25 @@ public sealed class BotBrain
         _b.GetTree().CreateTimer(_rng.RandfRange(0.4f, 1.0f)).Timeout += () =>
         {
             if (!GodotObject.IsInstanceValid(_b) || !_b.Alive) return; // died before getting the words out
-            foreach (var m in Mates()) m.Senses.Share(who, pos);
+            // Heard by whoever is within shouting distance, and by the rest of the squad on its radio.
+            // The rest of the side learns of it the slow way: the map and fire support (Intel), recon reports.
+            var me = _b.FeetPos;
+            foreach (var m in Mates())
+            {
+                float apart = m.FeetPos.DistanceTo(me);
+                if (apart > ShoutRange && !(m.Squad != null && m.Squad == Sq && apart < SquadRadioRange)) continue;
+                // A callout is a bearing and a rough range from the caller: a few metres out per hundred.
+                var err = new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * (d * 0.05f);
+                m.Senses.Share(who, pos + err);
+            }
         };
     }
+
+    /// <summary>How long the flanking team keeps going round before it takes up the fight wherever it is.</summary>
+    const float DrillFlankTime = 45f;
+
+    /// <summary>How far a shouted callout carries over a firefight, and a squad's own radio net.</summary>
+    const float ShoutRange = 60f, SquadRadioRange = 600f;
 
     /// <summary>Out of a vehicle (dismounted, or thrown out): back to being infantry.</summary>
     public void OnDismounted()
@@ -1923,9 +2186,15 @@ public sealed class BotBrain
 
     public void OnHurt(HitInfo hit)
     {
-        Sq?.Engage(hit.Shooter?.FeetPos ?? _b.FeetPos);
+        // Shot by the enemy: we can tell roughly where from, and the squad is in a fight with them.
+        // A fragment, a shell or a bomb says where it burst, not where whoever sent it is (a shelled
+        // squad gets off the impact area instead); and our own side's fire isn't a new enemy.
+        if (hit.Direct && hit.Shooter!.Team != _b.Team)
+        {
+            Sq?.Engage(hit.Shooter.FeetPos);
+            _b.Senses.Alert(hit.Shooter, 0.15f);
+        }
         _lastHurt = Now;
-        if (hit.Shooter != null) _b.Senses.Alert(hit.Shooter, 0.15f);
         if (_peeking)
         {
             _peeking = false;

@@ -89,7 +89,16 @@ public partial class MainMenu : Control
         Pick("Render scale", Settings.Scales.Select(f => $"{f * 100:0}%").ToArray(), Array.FindIndex(Settings.Scales, f => MathF.Abs(f - Settings.RenderScale) < 0.01f), i => Settings.RenderScale = Settings.Scales[i]);
         Pick("Anti-aliasing", new[] { "Off", "MSAA 2x", "MSAA 4x" }, Settings.Msaa, i => Settings.Msaa = i);
         Pick("Shadows", new[] { "Off", "Low", "High" }, Settings.Shadows, i => Settings.Shadows = i);
-        box.AddChild(new Label { Text = "F11 toggles fullscreen anywhere. Shadows apply from the next match.", Modulate = new Color(1, 1, 1, 0.4f) });
+        box.AddChild(new Label { Text = Controls.Fill("{fullscreen} toggles fullscreen anywhere. Shadows apply from the next match."), Modulate = new Color(1, 1, 1, 0.4f) });
+
+        // Controls: every binding, rebindable, behind a toggle like the graphics.
+        var ctlToggle = new Button { Text = "Controls ▾", Flat = true, Alignment = HorizontalAlignment.Left };
+        box.AddChild(ctlToggle);
+        var ctl = new VBoxContainer { Visible = false };
+        ctl.AddThemeConstantOverride("separation", 4);
+        box.AddChild(ctl);
+        ctlToggle.Pressed += () => { ctl.Visible = !ctl.Visible; ctlToggle.Text = ctl.Visible ? "Controls ▴" : "Controls ▾"; };
+        BuildControls(ctl);
 
         Add(box, "TERRITORY — 3 factions × 12", new GameSetup { Map = "valley", TeamSize = 12 });
         Add(box, "TERRITORY — 3 factions × 20", new GameSetup { Map = "valley", TeamSize = 20 });
@@ -114,8 +123,97 @@ public partial class MainMenu : Control
         quit.Pressed += () => GetTree().Quit();
         box.AddChild(quit);
 
-        var hint = new Label { Text = "F10 returns to this menu from anywhere", HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.45f) };
+        var hint = new Label { Text = Controls.Fill("{main_menu} returns to this menu from anywhere"), HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.45f) };
         box.AddChild(hint);
+    }
+
+    // ---------------------------------------------------------------- controls
+
+    readonly Dictionary<(string Id, int Slot), Button> _keyButtons = new();
+    readonly Dictionary<string, Button> _resetButtons = new();
+    (string Id, int Slot)? _capture;
+    Label _conflicts = null!;
+
+    void BuildControls(VBoxContainer ctl)
+    {
+        ctl.AddChild(new Label
+        {
+            Text = "Click a key, then press the new key or mouse button (Esc cancels, Backspace clears it). "
+                 + "Two things can share a key only if they're never used in the same place (on foot, in a vehicle, flying a drone, spectating).",
+            AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(440, 0), Modulate = new Color(1, 1, 1, 0.55f),
+        });
+        _conflicts = new Label { AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(440, 0), Modulate = new Color(1f, 0.55f, 0.45f) };
+        ctl.AddChild(_conflicts);
+        foreach (var g in Controls.All.GroupBy(a => a.Group))
+        {
+            var head = new Label { Text = g.Key.ToUpperInvariant(), Modulate = new Color(1, 1, 1, 0.5f) };
+            head.AddThemeFontSizeOverride("font_size", 13);
+            ctl.AddChild(head);
+            var grid = new GridContainer { Columns = 4 };
+            grid.AddThemeConstantOverride("h_separation", 8);
+            grid.AddThemeConstantOverride("v_separation", 3);
+            ctl.AddChild(grid);
+            foreach (var a in g)
+            {
+                grid.AddChild(new Label { Text = a.Label, TooltipText = a.Note, CustomMinimumSize = new Vector2(250, 0), MouseFilter = MouseFilterEnum.Pass });
+                for (int slot = 0; slot < 2; slot++)
+                {
+                    var b = new Button { CustomMinimumSize = new Vector2(92, 0), TooltipText = a.Note };
+                    int s = slot;
+                    b.Pressed += () => StartCapture(a.Id, s);
+                    grid.AddChild(b);
+                    _keyButtons[(a.Id, slot)] = b;
+                }
+                var reset = new Button { Text = "↺", TooltipText = "Back to the default", Flat = true, CustomMinimumSize = new Vector2(28, 0) };
+                reset.Pressed += () => { Controls.Reset(a.Id); RefreshControls(); };
+                grid.AddChild(reset);
+                _resetButtons[a.Id] = reset;
+            }
+        }
+        var all = new Button { Text = "Reset all controls to the defaults", CustomMinimumSize = new Vector2(300, 0) };
+        all.Pressed += () => { Controls.ResetAll(); RefreshControls(); };
+        ctl.AddChild(all);
+        RefreshControls();
+    }
+
+    void StartCapture(string id, int slot)
+    {
+        _capture = (id, slot);
+        RefreshControls();
+    }
+
+    void RefreshControls()
+    {
+        var clash = Controls.Conflicts();
+        var hot = new HashSet<(string, string)>();
+        foreach (var (a, b, binding) in clash) { hot.Add((a.Id, binding)); hot.Add((b.Id, binding)); }
+        foreach (var ((id, slot), btn) in _keyButtons)
+        {
+            var cur = Controls.Current(id);
+            string? binding = slot < cur.Length ? cur[slot] : null;
+            btn.Text = _capture == (id, slot) ? "press a key…" : binding != null ? Controls.Name(binding) : "—";
+            btn.Modulate = binding != null && hot.Contains((id, binding)) ? new Color(1f, 0.45f, 0.4f) : Colors.White;
+        }
+        foreach (var (id, reset) in _resetButtons) reset.Visible = !Controls.IsDefault(id);
+        _conflicts.Text = clash.Count == 0 ? "" : "Same key, same place: " + string.Join("; ", clash.Select(c => $"{Controls.Name(c.Binding)} is both {c.A.Label} and {c.B.Label}"));
+        _conflicts.Visible = clash.Count > 0;
+    }
+
+    public override void _Input(InputEvent e)
+    {
+        if (_capture is not (string id, int slot)) return;
+        string? binding;
+        if (e is InputEventKey { Pressed: true, Echo: false } k)
+        {
+            if (k.PhysicalKeycode == Key.Escape) { _capture = null; RefreshControls(); GetViewport().SetInputAsHandled(); return; }
+            binding = k.PhysicalKeycode is Key.Backspace or Key.Delete ? null : Controls.FromEvent(k);
+        }
+        else if (e is InputEventMouseButton { Pressed: true } mb) binding = Controls.FromEvent(mb);
+        else return;
+        _capture = null;
+        Controls.Set(id, slot, binding);
+        RefreshControls();
+        GetViewport().SetInputAsHandled();
     }
 
     void Add(VBoxContainer box, string text, GameSetup setup)

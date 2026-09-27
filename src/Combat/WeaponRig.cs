@@ -12,7 +12,8 @@ public partial class WeaponRig : Node3D
     sealed class Slot
     {
         public WeaponDef Def = null!;
-        public int Ammo, Mags;
+        public int Ammo;
+        public Magazines Mags = null!;
         public bool Auto;
         public float Zero;
         public Node3D Model = null!, Muzzle = null!;
@@ -28,14 +29,15 @@ public partial class WeaponRig : Node3D
     Slot[] _slots = null!;
     int _cur, _pending = -1;
     float _cool, _reloadT, _reloadDur, _switchT, _t, _kickBack, _sprintT, _swayAmp = 1f;
-    bool _reloadEmpty;
+    bool _reloadEmpty, _reloadKeep;
+    float _reloadPressT = -9f;
     int _reloadStage;
     Vector2 _punch, _punchVel, _lag, _lagVel, _sway;
     readonly RandomNumberGenerator _rng = new();
 
     public WeaponDef Def => _slots[_cur].Def;
     public int Ammo => _slots[_cur].Ammo;
-    public int Mags => _slots[_cur].Mags;
+    public Magazines Mags => _slots[_cur].Mags;
     public bool Auto => _slots[_cur].Auto;
     public float AimT { get; private set; }
     public bool Reloading => _reloadT > 0f;
@@ -56,7 +58,7 @@ public partial class WeaponRig : Node3D
         model.Position = d.HipOffset;
         return new Slot
         {
-            Def = d, Ammo = d.MagSize + (d.MagSize > 1 ? 1 : 0), Mags = d.Mags, Auto = d.AutoCapable,
+            Def = d, Ammo = d.MagSize + (d.MagSize > 1 ? 1 : 0), Mags = new Magazines(d.MagSize, d.Mags), Auto = d.AutoCapable,
             Zero = Ballistics.ZeroAngle(d.MuzzleVel, d.Drag, d.ZeroM),
             Model = model, Muzzle = muzzle,
         };
@@ -129,14 +131,31 @@ public partial class WeaponRig : Node3D
             }
         }
 
-        // --- reload
-        if (canAct && Input.IsActionJustPressed("reload") && !Busy && s.Mags > 0 && s.Ammo <= d.MagSize)
+        // --- reload: a tap keeps the magazine coming off (back in a pouch, a little slower); tap again straight
+        // away, before it's out, and it's dropped instead, for speed. "Quick reload" does that in one press, if bound.
+        bool tap = canAct && Input.IsActionJustPressed("reload"), quick = canAct && Input.IsActionJustPressed("reload_drop");
+        if ((tap || quick) && Reloading && _reloadKeep && _reloadStage == 0 && _t - _reloadPressT < 0.45f)
+        {
+            _reloadKeep = false;
+            if (Magazines.InMag(s.Ammo, d.MagSize) > 0)
+            {
+                float cut = Magazines.RetainTime * P.Body.ReloadMult;
+                _reloadT = MathF.Max(0.05f, _reloadT - cut);
+                _reloadDur = MathF.Max(0.1f, _reloadDur - cut);
+            }
+            Hud.Toast("Dropping the mag", 1f);
+        }
+        else if ((tap || quick) && !Busy && s.Mags.Worth(s.Ammo, d.MagSize))
         {
             _reloadEmpty = s.Ammo == 0;
-            _reloadDur = (_reloadEmpty ? d.ReloadEmpty : d.Reload) * P.Body.ReloadMult;
+            _reloadKeep = !quick;
+            bool stow = _reloadKeep && Magazines.InMag(s.Ammo, d.MagSize) > 0;
+            _reloadDur = ((_reloadEmpty ? d.ReloadEmpty : d.Reload) + (stow ? Magazines.RetainTime : 0f)) * P.Body.ReloadMult;
             _reloadT = _reloadDur;
             _reloadStage = 0;
+            _reloadPressT = _t;
         }
+        else if (tap && !Busy && s.Mags.Any) Hud.Toast("Nothing fuller to change to", 1.2f);
         float reloadTilt = 0f;
         if (_reloadT > 0f)
         {
@@ -148,9 +167,10 @@ public partial class WeaponRig : Node3D
             if (_reloadStage == 2 && _reloadEmpty && prog > 0.85f) { SoundWorld.I.Emit(Snd.Bolt, ear, 0f, P); _reloadStage = 3; }
             if (_reloadT <= 0f)
             {
-                // Squad-style: a partial mag is dropped, a round stays chambered on a tactical reload.
-                s.Ammo = _reloadEmpty || d.MagSize == 1 ? d.MagSize : d.MagSize + 1;
-                s.Mags--;
+                // The fullest magazine goes on; the one that came off is kept or dropped (see Magazines). A round
+                // stays chambered through a reload that isn't from empty.
+                int got = s.Mags.Swap(Magazines.InMag(s.Ammo, d.MagSize), _reloadKeep);
+                s.Ammo = _reloadEmpty || d.MagSize == 1 ? got : got + 1;
             }
             reloadTilt = Mathf.Sin(Mathf.Clamp(prog, 0f, 1f) * Mathf.Pi);
         }
@@ -202,7 +222,8 @@ public partial class WeaponRig : Node3D
     {
         var d = s.Def;
         s.Ammo--;
-        _cool = 60f / d.Rpm;
+        // Due one cycle after the last round, not after this frame (else the rate of fire depends on the frame rate).
+        _cool = (_cool > -0.034f ? _cool : 0f) + 60f / d.Rpm;
 
         float spread = Mathf.Lerp(d.SpreadHipDeg * (P.Moving ? 1.8f : 1f), d.SpreadAdsDeg, AimT);
         var eye = P.Cam.GlobalPosition;
@@ -217,12 +238,13 @@ public partial class WeaponRig : Node3D
         var dir = (eye + aim * d.ZeroM - origin).Normalized();
         dir = dir.Rotated(GlobalBasis.X.Normalized(), s.Zero);
         Ballistics.I.Fire(origin, dir, d.MuzzleVel * (1f + _rng.RandfRange(-0.006f, 0.006f)), d.Drag, P, d.Damage, d.Name,
-            explosive: d.Explosive, armM: d.ArmM, pen: d.Pen, vehDamage: d.VehDamage, crater: d.Crater, frags: d.Frags, rocket: d.Rocket,
+            explosive: d.Explosive, armM: d.ArmM, pen: d.Pen, vehDamage: d.VehDamage, crater: d.Crater, fragR: d.FragR, power: d.Power, rocket: d.Rocket,
             homing: d.Guided && LockProgress >= 1f ? LockTarget : null, heavyCrack: d.Rocket);
         LockProgress = 0f;
         if (d.Rocket) Effects.I.MuzzleDust(P.GlobalPosition - AimDir * 2f, -AimDir); // backblast
         SoundWorld.I.Emit(d.Sound, MuzzlePos, 0f, P, facing: dir);
         Effects.I.MuzzleFlash(MuzzlePos, AimDir);
+        Telemetry.Shot(P, origin, eye + aim * 300f, d.Name, "player", null);
 
         float m = P.RecoilMult;
         _punchVel += new Vector2(d.PunchDeg * _rng.RandfRange(0.8f, 1.2f), _rng.RandfRange(-1f, 1f) * d.PunchDeg * 0.5f) * 14f * m;
@@ -263,13 +285,13 @@ public partial class WeaponRig : Node3D
     }
 
     /// <summary>Spare ammo across everything carried, 0..1.</summary>
-    public float AmmoLevel => _slots.Average(s => s.Def.Mags == 0 ? 1f : (float)s.Mags / s.Def.Mags);
+    public float AmmoLevel => _slots.Average(s => s.Def.Mags == 0 ? 1f : (float)s.Mags.Rounds / (s.Def.MagSize * s.Def.Mags));
 
     public bool Refill()
     {
         bool any = false;
         foreach (var s in _slots)
-            if (s.Mags < s.Def.Mags) { s.Mags = s.Def.Mags; any = true; }
+            if (s.Mags.Rounds < s.Def.MagSize * s.Def.Mags) { s.Mags.Refill(s.Def.Mags); any = true; }
         return any;
     }
 
@@ -287,6 +309,6 @@ public partial class WeaponRig : Node3D
         float f = s.Ammo / (float)s.Def.MagSize;
         string feel = s.Ammo == 0 ? "empty" : f > 0.9f ? "full" : f > 0.6f ? "mostly full" : f > 0.35f ? "about half" : f > 0.12f ? "getting light" : "nearly empty";
         string mode = s.Def.AutoCapable ? (s.Auto ? " · AUTO" : " · SEMI") : "";
-        return $"{s.Def.Name} — mag feels {feel} · {s.Mags} spare mag{(s.Mags == 1 ? "" : "s")}{mode}";
+        return $"{s.Def.Name} — mag feels {feel} · {s.Mags.Describe()}{mode}";
     }
 }

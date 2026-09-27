@@ -32,6 +32,8 @@ public partial class Vehicle : CharacterBody3D
     /// <summary>Where the last hit came from, and how hard it hit (penetration, mm): 40+ is something that can kill armour.</summary>
     public Vector3 LastHitFrom;
     public float LastHitPen;
+    /// <summary>Who hit it last (so a crash it was shot into is theirs).</summary>
+    public ICombatant? LastHitBy;
     /// <summary>Smoke grenade launchers: salvos left.</summary>
     public int SmokeSalvos;
     /// <summary>Back towards the goal rather than turning round to drive there (out of a firing position, away from a threat).</summary>
@@ -103,6 +105,8 @@ public partial class Vehicle : CharacterBody3D
         ? Turrets[0].YawNode.GlobalPosition + GlobalBasis.Y * (Turrets[0].Def.Size.Y * 0.8f)
         : Center + GlobalBasis.Y * (Def.Hull.Y * 0.5f + 0.3f);
     public bool Crewed => Occupants.Any(o => o != null);
+    /// <summary>Can't move, or can hardly move and is badly hit: the motor pool gives up on it (see MotorPool.Abandon).</summary>
+    public bool Useless => Immobile || (EngineHit && Hp < Def.Hp * 0.3f);
     public ICombatant? Driver => Occupants[DriverSeat];
     public int DriverSeat => Def.Seats.FindIndex(s => s.Role == SeatRole.Driver);
     public int GunnerSeat => Def.Seats.FindIndex(s => s.Role == SeatRole.Gunner);
@@ -250,7 +254,7 @@ public partial class Vehicle : CharacterBody3D
         _engine.PitchScale = (driven ? 0.85f : 0.75f) + load * 0.65f + MathF.Abs(Throttle) * 0.1f;
         _engine.VolumeDb = driven ? -11f + load * 5f : -25f;
         CabinSound();
-        foreach (var kv in _ranOver.Where(kv => Clock.Now - kv.Value > 2.0).ToList()) _ranOver.Remove(kv.Key);
+        if (_ranOver.Count > 0) foreach (var kv in _ranOver.Where(kv => Clock.Now - kv.Value > 2.0).ToList()) _ranOver.Remove(kv.Key);
     }
 
     bool GroundAt(Vector3 p, out Vector3 hit)
@@ -321,7 +325,7 @@ public partial class Vehicle : CharacterBody3D
             if (MathF.Abs(local.X) > hx || MathF.Abs(local.Z) > hz || local.Y > 2f || local.Y < -1f) continue;
             _ranOver[c] = Clock.Now;
             float dmg = MathF.Abs(Speed) * (Def.Heavy ? 22f : 12f);
-            c.TakeHit(new HitInfo { Shooter = Driver, Point = c.ChestPos, Dir = Forward, Damage = dmg, Zone = HitZone.Torso, Distance = 0f, Weapon = Def.Name });
+            c.TakeHit(new HitInfo { Shooter = Driver, Point = c.ChestPos, Dir = Forward, Damage = dmg, Zone = HitZone.Torso, Distance = 0f, Weapon = Def.Name, From = GlobalPosition });
         }
     }
 
@@ -392,6 +396,22 @@ public partial class Vehicle : CharacterBody3D
         if (t.Weapon.Mag == 1) { t.ReloadT = 60f / t.Weapon.Rpm; t.Loaded[idx] = 0; }
     }
 
+    /// <summary>A full load: every ammunition type topped up, in the gun and in the racks (rearming at a FOB, a truck or base).</summary>
+    public void Restock()
+    {
+        foreach (var t in Turrets)
+        {
+            for (int i = 0; i < t.Def.Ammo.Length; i++)
+            {
+                t.Stock[i] = t.Def.Ammo[i].Mags;
+                t.Loaded[i] = t.Def.Ammo[i].Mag; // rocket pods have no spare load: they're refilled where they hang
+            }
+            if (t.Def.Coax != null) { t.CoaxStock = t.Def.Coax.Mags; t.CoaxLoaded = t.Def.Coax.Mag; }
+        }
+        SmokeSalvos = Def.Heavy ? 2 : 0;
+        FlaresLeft = Def.Flares;
+    }
+
     public void Reload(int turret)
     {
         var t = Turrets[turret];
@@ -415,7 +435,7 @@ public partial class Vehicle : CharacterBody3D
             w = t.Def.Coax;
             muzzle = t.CoaxMuzzle!;
             t.CoaxLoaded--;
-            t.CoaxCool = 60f / w.Rpm;
+            t.CoaxCool = (t.CoaxCool > -0.009f ? t.CoaxCool : 0f) + 60f / w.Rpm; // one cycle after the last round, not after this tick
         }
         else
         {
@@ -424,7 +444,7 @@ public partial class Vehicle : CharacterBody3D
             w = t.Weapon;
             muzzle = t.Muzzle;
             t.Loaded[t.AmmoIdx]--;
-            t.Cool = 60f / w.Rpm;
+            t.Cool = (t.Cool > -0.009f ? t.Cool : 0f) + 60f / w.Rpm;
             if (t.Loaded[t.AmmoIdx] <= 0 && t.Stock[t.AmmoIdx] > 0) t.ReloadT = w.Mag == 1 ? 60f / w.Rpm : w.Reload;
             t.Kick = w.Kick;
         }
@@ -437,12 +457,13 @@ public partial class Vehicle : CharacterBody3D
         var from = muzzle.GlobalPosition;
         LastFired = Clock.Now;
         Ballistics.I.Fire(from, dir, w.Speed, w.Drag, gunner, w.Damage, w.Name, GetRid(), explosive: w.Explosive, armM: w.Explosive ? 8f : 0f,
-            pen: w.Pen, vehDamage: w.VehDamage, crater: w.Crater, frags: w.Frags, rocket: w.Sound == Snd.Rocket, prox: w.Prox,
+            pen: w.Pen, vehDamage: w.VehDamage, crater: w.Crater, fragR: w.FragR, power: w.Power, rocket: w.Sound == Snd.Rocket, prox: w.Prox,
             whistle: t.Def.Indirect, shooterVehicle: this, heavyCrack: w.Sound is Snd.Hmg or Snd.Autocannon or Snd.Cannon or Snd.Rocket);
         // Aboard, you're in the gun's near field (and may be hearing through a chase camera): no muzzle directivity.
         SoundWorld.I.Emit(w.Sound, from, 0f, gunner, facing: Player.I is { } pl && pl.Ride == this ? default : dir);
         Effects.I.MuzzleFlash(from, dir, w.Flash);
         if (w.Flash > 2f) Effects.I.MuzzleDust(GlobalPosition + dir * 3f, dir);
+        Telemetry.Shot(gunner, from, t.AimAt ?? from + dir * 300f, w.Name, $"from {Def.Name}", (gunner as Bot)?.Crew.Target as ICombatant);
         return true;
     }
 
@@ -455,6 +476,7 @@ public partial class Vehicle : CharacterBody3D
         LastHit = Clock.Now;
         LastHitFrom = p.Shooter is { } sh && GodotObject.IsInstanceValid((GodotObject)sh) ? sh.EyePos : pos - p.Vel.Normalized() * 150f;
         LastHitPen = p.Pen;
+        if (p.Shooter != null) LastHitBy = p.Shooter;
         float armor = ArmorFacing(-p.Vel.Normalized(), out float cos);
         // Sloped armour: a round striking at an angle has more steel to go through.
         float effective = armor / MathF.Pow(MathF.Max(0.3f, cos), 0.7f);
@@ -527,17 +549,22 @@ public partial class Vehicle : CharacterBody3D
     /// <summary>The armour a round from <paramref name="from"/> would meet (for gunners deciding if a shot is worth it).</summary>
     public float ArmorToward(Vector3 from) => ArmorFacing((from - Center).Normalized(), out _);
 
-    /// <summary>Blast outside the hull: light vehicles get torn up, armour shrugs it off.</summary>
-    public static void BlastAll(Vector3 pos, float power)
+    /// <summary>
+    /// Blast outside the hull: light vehicles get torn up, armour shrugs it off. The reach grows with the
+    /// cube root of the charge (5 m for a hand grenade, ~11 m for a tank's HE shell).
+    /// </summary>
+    public static void BlastAll(Vector3 pos, float power, ICombatant? by = null)
     {
-        foreach (var v in All.ToArray())
+        float reach = 5f * MathF.Cbrt(MathF.Max(power, 0.05f));
+        for (int i = All.Count - 1; i >= 0; i--)
         {
+            var v = All[i];
             if (v.Destroyed) continue;
             float d = v.Center.DistanceTo(pos) - v.Def.Hull.X * 0.5f;
-            if (d > 5f) continue;
+            if (d > reach) continue;
             float armor = MathF.Min(v.Def.ArmorSide, v.Def.ArmorTop);
             if (armor > 20f) continue;
-            v.Damage(power * 60f * (1f - MathF.Max(d, 0f) / 5f) * (armor < 6f ? 1f : 0.4f), null);
+            v.Damage(power * 60f * (1f - MathF.Max(d, 0f) / reach) * (armor < 6f ? 1f : 0.4f), by);
         }
     }
 
@@ -546,6 +573,7 @@ public partial class Vehicle : CharacterBody3D
         if (Destroyed || dmg <= 0f) return;
         Hp -= dmg;
         LastHit = Clock.Now;
+        if (by != null) LastHitBy = by;
         if (Hp <= 0f) { if (!AirDoom(by)) Destroy(by); }
         else if (Def.Air && dmg > 60f && _rng.Randf() < 0.15f) Immobile = true; // tail rotor
         else if (Hp < Def.Hp * 0.25f && !EngineHit && _rng.Randf() < 0.3f) EngineHit = true;
@@ -563,7 +591,7 @@ public partial class Vehicle : CharacterBody3D
         _cabin.Stop();
         _sound.Tail?.Stop();
         var c = Center;
-        Grenade.Detonate(c, Vector3.Up, by, Def.Heavy ? 40 : 20, 0f, Def.Heavy ? 6f : 2f, Def.Name + " cook-off");
+        Grenade.Detonate(c, Vector3.Up, by, Def.Heavy ? 15f : 8f, 0f, Def.Heavy ? 6f : 2f, Def.Name + " cook-off", power: Def.Heavy ? 12f : 3f);
         // In the air the fire goes with the wreck (FallWreck); on the ground it burns here.
         if (airborne) _trail ??= Effects.I.Burn(c, 45f);
         else
@@ -580,7 +608,8 @@ public partial class Vehicle : CharacterBody3D
             Occupants[i] = null;
             var at = GlobalPosition + GlobalBasis.X * (Def.Hull.X * 0.5f + 1.2f) * (i % 2 == 0 ? -1f : 1f) + Forward * (i * 0.8f - 1.5f);
             o.Dismount(at);
-            if (!o.Dead) o.TakeHit(new HitInfo { Shooter = by, Point = o.ChestPos, Dir = Vector3.Up, Damage = _rng.Randf() < 0.55f ? 400f : 60f, Zone = HitZone.Torso, Weapon = Def.Name + " burning" });
+            // Blown apart in the air, nobody aboard lives; on the ground, some make it out.
+            if (!o.Dead) o.TakeHit(new HitInfo { Shooter = by, Point = o.ChestPos, Dir = Vector3.Up, Damage = airborne || _rng.Randf() < 0.55f ? 400f : 60f, Zone = HitZone.Torso, Weapon = Def.Name + " burning" });
         }
         // A burnt-out wreck stays where it died.
         var charred = new StandardMaterial3D { AlbedoColor = new Color(0.07f, 0.065f, 0.06f), Roughness = 1f };
@@ -630,6 +659,7 @@ public partial class Vehicle : CharacterBody3D
         if (i < 0) return;
         Occupants[i] = null;
         if (Def.Seats[i].Role == SeatRole.Driver) { Throttle = Steer = 0f; Brake = true; }
+        if (i == DriverSeat && Def.Air && !_landed) TakeControls();
         // Out the side, away from the hull.
         var side = GlobalBasis.X * (Def.Hull.X * 0.5f + 1.0f) * (Def.Seats[i].Pos.X < 0f ? -1f : 1f);
         var at = GlobalPosition + side + Forward * MathF.Min(Def.Seats[i].Pos.Z, 1f) * -1f;
@@ -654,7 +684,12 @@ public partial class Vehicle : CharacterBody3D
         {
             var o = Occupants[i];
             if (o == null) continue;
-            if (o.Dead || !GodotObject.IsInstanceValid((GodotObject)o)) { Occupants[i] = null; continue; }
+            if (o.Dead || !GodotObject.IsInstanceValid((GodotObject)o))
+            {
+                Occupants[i] = null;
+                if (i == DriverSeat && Def.Air && !_landed) TakeControls();
+                continue;
+            }
             o.SyncSeat(SeatWorld(i), Def.Seats[i].Turret >= 0 ? Turrets[Def.Seats[i].Turret].YawNode.GlobalRotation.Y : GlobalRotation.Y);
         }
     }

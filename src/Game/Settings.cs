@@ -110,6 +110,6 @@ public static class Settings
         Volume = Mathf.Clamp(MathF.Round((Volume + by) * 10f) / 10f, 0f, 2f);
         Apply();
         Save();
-        Hud.Toast($"Volume {Volume * 100:0}%  (F7 / F8)", 1.5f);
+        Hud.Toast($"Volume {Volume * 100:0}%  ({Controls.Keys("volume_down")} / {Controls.Keys("volume_up")})", 1.5f);
     }
 }

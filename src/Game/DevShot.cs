@@ -172,6 +172,7 @@ public partial class DevShot : Node
             _shotCam.MakeCurrent();
         }
         if (_n == 60) _wall.Restart();
+        if (_n == 900 && Args().ContainsKey("navbench") && Valley.Current is { } vm) NavBench(vm);
         if (_n < _frames) return;
         GD.Print(SoundWorld.Report);
         GD.Print($"devshot: {(_frames - 60) / 60.0:0}s of game in {_wall.Elapsed.TotalSeconds:0.0}s wall after startup");
@@ -179,11 +180,56 @@ public partial class DevShot : Node
                  $"bullets={Ballistics.I?.LiveCount} pendingSounds={SoundWorld.I?.PendingCount}");
         foreach (var kv in Prof.Totals.OrderByDescending(k => k.Value.Ms))
             GD.Print($"prof {kv.Key,-11} {kv.Value.Ms,9:0} ms total  {kv.Value.Calls,8} calls  {kv.Value.Ms / Math.Max(1, kv.Value.Calls),7:0.000} ms/call");
+        foreach (var kv in Prof.Counts.OrderBy(k => k.Key))
+            GD.Print($"count {kv.Key,-28} {kv.Value,9}");
         foreach (var kv in Ballistics.NearBlockTags.OrderByDescending(k => k.Value))
             GD.Print($"nearblock {kv.Key}: {kv.Value} of {Ballistics.ShotTags.GetValueOrDefault(kv.Key)}");
         // Headless runs have nothing rendered; they're used to smoke-test code paths.
         if (DisplayServer.GetName() != "headless") GetViewport().GetTexture().GetImage().SavePng(_path);
         GetTree().Quit();
+    }
+
+    /// <summary>navbench: what the navmesh queries cost on this map, and do the tile-local ones agree with the map-wide ones?</summary>
+    static void NavBench(Valley v)
+    {
+        var rng = new RandomNumberGenerator { Seed = 7 };
+        var sw = new System.Diagnostics.Stopwatch();
+        foreach (var (name, nav) in new[] { ("people", v.Nav), ("vehicles", v.VehicleNav) })
+        {
+            var map = nav.Map;
+            double full = 0, local = 0;
+            int differ = 0, n = 200;
+            for (int i = 0; i < n; i++)
+            {
+                float x = rng.RandfRange(-v.Half + 80f, v.Half - 80f), z = rng.RandfRange(-v.Half + 80f, v.Half - 80f);
+                var p = new Vector3(x, v.HeightAt(x, z) + rng.RandfRange(-1f, 4f), z);
+                sw.Restart(); var a = NavigationServer3D.MapGetClosestPoint(map, p); full += sw.Elapsed.TotalMilliseconds;
+                sw.Restart(); var b = nav.ClosestPoint(p); local += sw.Elapsed.TotalMilliseconds;
+                if (a.DistanceTo(b) > 0.05f && MathF.Abs(a.DistanceTo(p) - b.DistanceTo(p)) > 0.05f) differ++;
+            }
+            GD.Print($"navbench {name}: closest point map-wide {full / n:0.000} ms, tile-local {local / n:0.000} ms, {differ}/{n} disagree ({nav.Polygons} polygons)");
+        }
+        // Paths: the whole map, against only the tiles round the start and the end.
+        double pf = 0, pr = 0;
+        int same = 0, tried = 0;
+        for (int i = 0; i < 40; i++)
+        {
+            float x = rng.RandfRange(-v.Half + 150f, v.Half - 150f), z = rng.RandfRange(-v.Half + 150f, v.Half - 150f);
+            var a = v.Ground(new Vector3(x, 0f, z));
+            float ang = rng.Randf() * Mathf.Tau, dist = rng.RandfRange(30f, 400f);
+            var b = v.Ground(a + new Vector3(MathF.Cos(ang), 0f, MathF.Sin(ang)) * dist);
+            sw.Restart(); var p1 = NavBaker.Path(v.GetWorld3D().NavigationMap, a, b); pf += sw.Elapsed.TotalMilliseconds;
+            var box = new Rect2(new Vector2(MathF.Min(a.X, b.X), MathF.Min(a.Z, b.Z)), new Vector2(MathF.Abs(a.X - b.X), MathF.Abs(a.Z - b.Z))).Grow(120f);
+            var q = new NavigationPathQueryParameters3D { Map = v.GetWorld3D().NavigationMap, StartPosition = a, TargetPosition = b, PathSearchMaxPolygons = 16000,
+                PathPostprocessing = NavigationPathQueryParameters3D.PathPostProcessing.Corridorfunnel, IncludedRegions = v.Nav.RegionsIn(box) };
+            var r = new NavigationPathQueryResult3D();
+            sw.Restart(); NavigationServer3D.QueryPath(q, r); pr += sw.Elapsed.TotalMilliseconds;
+            var p2 = r.Path;
+            tried++;
+            float L(Vector3[] pts) { float s = 0f; for (int k = 1; k < pts.Length; k++) s += pts[k].DistanceTo(pts[k - 1]); return s; }
+            if (p1.Length > 0 && p2.Length > 0 && p1[^1].DistanceTo(p2[^1]) < 0.5f && MathF.Abs(L(p1) - L(p2)) < 1f) same++;
+        }
+        GD.Print($"navbench paths: map-wide {pf / tried:0.000} ms, nearby tiles only {pr / tried:0.000} ms, {same}/{tried} identical");
     }
 
     /// <summary>A cluster of frags on one spot and a lone one beside it: do they merge?</summary>
@@ -206,10 +252,10 @@ public partial class DevShot : Node
 
     void SendKeys()
     {
-        void Key(Godot.Key k) => Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = k, Pressed = true });
-        if (_debug) Key(Godot.Key.F6);
-        if (_map) Key(Godot.Key.M);
-        if (_view == "eyes") Key(Godot.Key.C);
-        if (_view == "free") Key(Godot.Key.F);
+        void Press(string action) => Input.ParseInputEvent(new InputEventAction { Action = action, Pressed = true });
+        if (_debug) Press("bot_debug");
+        if (_map) Press("map");
+        if (_view == "eyes") Press("spectate_view");
+        if (_view == "free") Press("spectate_free");
     }
 }

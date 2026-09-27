@@ -314,10 +314,12 @@ public partial class TerritoryMode : Node, IMatch
         _nextBleed = Clock.Now + BleedEvery;
         _hud.Center("Take and hold the settlements", 5f);
         Log($"--- TERRITORY {Setup.TeamSize}x3, {n} points, {StartTickets} tickets, {Squads[0].Count} squads per side ---");
+        if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
     }
 
     public override void _ExitTree()
     {
+        Telemetry.Stop();
         Combatants.Killed -= OnKilled;
         Combatants.Down -= OnDowned;
         Comms.Said -= OnSaid;
@@ -331,7 +333,9 @@ public partial class TerritoryMode : Node, IMatch
         Motor.OnLost(v);
         Spend(v.Team, v.Def.Tickets);
         _hud.Event($"{KothMode.TeamNames[v.Team]} lost a {v.Def.Name} ({v.Def.Tickets} tickets){(by != null ? $" to {by.Callsign}" : "")}", v.Team == 0 ? -1 : by?.Team == 0 ? 1 : 0);
-        Log($"[{Clock.Now:0}s] VEHICLE LOST {v.Def.Name} (team {v.Team}) by {by?.Callsign ?? "?"}");
+        Log($"[{Clock.Now:0}s] VEHICLE LOST {v.Def.Name} (team {v.Team}) by {by?.Callsign ?? "?"}"
+            + (by is Bot kb ? $" ({(kb.Ride != null ? kb.Ride.Def.Name : Roles.Name(kb.Role))}, {kb.FeetPos.DistanceTo(v.GlobalPosition):0} m)" : "")
+            + (v.Def.Air ? $", {v.Agl:0} m up" : ""));
     }
 
     void OnFobLost(Fob f, string how)
@@ -995,6 +999,7 @@ public partial class TerritoryMode : Node, IMatch
     public override void _Process(double delta)
     {
         double now = Clock.Now;
+        Telemetry.Tick(this);
 
         for (int i = _respawns.Count - 1; i >= 0; i--)
         {
@@ -1051,7 +1056,9 @@ public partial class TerritoryMode : Node, IMatch
                 $"states {string.Join(" ", Bots.Where(b => b.Alive).GroupBy(b => b.Brain.State).Select(g => $"{g.Key}:{g.Count()}"))}  " +
                 $"ground {string.Join(" ", Bots.Where(b => b.Alive && b.Ride == null).GroupBy(b => b.Brain.Env).Select(g => $"{Surroundings.Name(g.Key)}:{g.Count()}"))}  " +
                 $"upstairs {Bots.Count(b => b.Alive && b.Ride == null && b.FeetPos.Y - Map.HeightAt(b.FeetPos.X, b.FeetPos.Z) > 2.5f)}  " +
-                $"nav iteration {NavigationServer3D.MapGetIterationId(Map.GetWorld3D().NavigationMap)} base->{NavigationServer3D.MapGetClosestPoint(Map.GetWorld3D().NavigationMap, Map.Bases[0]).DistanceTo(Map.Bases[0]):0} m");
+                $"prone {Bots.Count(b => b.Alive && b.Prone)}  dry {Bots.Count(b => b.Alive && b.Ammo == 0 && !b.Mags.Any)}  low {Bots.Count(b => b.Alive && b.Mags.Rounds <= b.Def.MagSize)}  " +
+                $"nav iteration {NavigationServer3D.MapGetIterationId(Map.GetWorld3D().NavigationMap)}" +
+                (NavigationServer3D.MapGetIterationId(Map.GetWorld3D().NavigationMap) > 0 ? $" base->{Map.Nav.ClosestPoint(Map.Bases[0]).DistanceTo(Map.Bases[0]):0} m" : ""));
             if (!_navLogged && Map.Nav.Finished && NavigationServer3D.MapGetIterationId(Map.GetWorld3D().NavigationMap) > 0)
             {
                 _navLogged = true;
@@ -1067,7 +1074,7 @@ public partial class TerritoryMode : Node, IMatch
                 foreach (var pc in Map.Perches.Where(p => p.Floor >= 1).OrderBy(_ => _rng.Randi()).Take(40))
                 {
                     tried++;
-                    var near = NavigationServer3D.MapGetClosestPoint(nm, pc.Pos);
+                    var near = Map.Nav.ClosestPoint(pc.Pos);
                     bool on = near.DistanceTo(pc.Pos) < 0.8f;
                     if (on) onMesh++;
                     var street = Map.Ground(Map.Bases[0]);
@@ -1198,6 +1205,7 @@ public partial class TerritoryMode : Node, IMatch
     void Announce(int lost, int gained, string text)
     {
         Log($"[{Clock.Now:0}s] {text}");
+        Telemetry.Note(text);
         _hud.Event(text, lost == 0 ? -1 : gained == 0 ? 1 : 0);
         if (lost >= 0) _commandAt[lost] = Math.Min(_commandAt[lost], Clock.Now + 2.0);
     }
@@ -1246,7 +1254,8 @@ public partial class TerritoryMode : Node, IMatch
         if (mate != null && mate.FeetPos.DistanceTo(victim.FeetPos) < 80f)
         {
             Comms.Say(mate, $"Man down! {victim.Callsign} is down!");
-            if (hit.Shooter is { Alive: true } s) mate.Senses.Alert(s, 0.2f);
+            // Shot dead in front of him: he has a rough idea where from (a shell or a fragment gives nothing away).
+            if (hit.Direct && hit.Shooter is { Alive: true } s) mate.Senses.Alert(s, 0.2f);
         }
     }
 

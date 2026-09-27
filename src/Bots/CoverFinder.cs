@@ -22,11 +22,37 @@ public static class CoverFinder
     static readonly SphereShape3D Probe = new() { Radius = 0.32f };
     static readonly float[] Radii = { 0f, 1.5f, 3f, 5f, 7.5f, 10f, 13f, 16f };
 
+    /// <summary>Anything at all between a and b: for seeing, and for a clear line to shoot along.</summary>
     static bool Blocked(PhysicsDirectSpaceState3D s, Vector3 a, Vector3 b) =>
         s.IntersectRay(PhysicsRayQueryParameters3D.Create(a, b, World)).Count > 0;
 
+    /// <summary>
+    /// Would rounds from a stop before b: cover, not just something to hide behind? An inside wall, a door, a car
+    /// or a shed hides a man, but a rifle round goes on through it (see Penetration), so the line is followed on
+    /// through those to whatever's behind.
+    /// </summary>
+    static bool Stops(PhysicsDirectSpaceState3D s, Vector3 a, Vector3 b)
+    {
+        var from = a;
+        var dir = (b - a).Normalized();
+        float len = a.DistanceTo(b);
+        for (int layer = 0; layer < 3; layer++)
+        {
+            var hit = s.IntersectRay(PhysicsRayQueryParameters3D.Create(from, b, World));
+            if (hit.Count == 0) return false;
+            if (!Penetration.RifleGoesThrough(hit, dir, out var exit)) return true;
+            if ((exit - a).Dot(dir) >= len) return false;
+            from = exit;
+        }
+        return true; // three layers of it: that'll do
+    }
+
     public static bool Protected(Bot b, Vector3 feet, Vector3 threatEye, bool crouched) =>
-        Blocked(b.GetWorld3D().DirectSpaceState, threatEye, feet + Vector3.Up * (crouched ? 0.95f : 1.4f));
+        Stops(b.GetWorld3D().DirectSpaceState, threatEye, feet + Vector3.Up * (crouched ? 0.95f : 1.4f));
+
+    /// <summary>Would lying flat here hide us from that eye (a fold in the ground, a kerb, a low wall)?</summary>
+    public static bool ProtectedProne(Bot b, Vector3 feet, Vector3 threatEye) =>
+        Stops(b.GetWorld3D().DirectSpaceState, threatEye, feet + Vector3.Up * 0.35f);
 
     static bool Reserved(Bot b, Vector3 p)
     {
@@ -73,7 +99,7 @@ public static class CoverFinder
                 var p = origin + new Vector3(MathF.Cos(a), 0f, MathF.Sin(a)) * r;
                 if (!Standable(space, p, origin.Y, out var snap)) continue;
                 if (Reserved(b, snap)) continue;
-                if (!Blocked(space, threatEye, snap + Vector3.Up * 0.95f)) continue; // not hidden even crouched
+                if (!Stops(space, threatEye, snap + Vector3.Up * 0.95f)) continue; // not covered even crouched
 
                 var (low, side, lean, peek, dT) = Assess(space, snap, threatEye);
 
@@ -151,7 +177,7 @@ public static class CoverFinder
             float gain = dist - (goal - snap with { Y = goal.Y }).Length();
             if (gain < 5f) continue;
             if (Reserved(b, snap)) continue;
-            if (!Blocked(space, threatEye, snap + Vector3.Up * 0.95f)) continue; // must hide us crouched
+            if (!Stops(space, threatEye, snap + Vector3.Up * 0.95f)) continue; // must cover us crouched
             var (low, side, lean, peek, dT) = Assess(space, snap, threatEye);
             if (dT < 9f) continue;
             float score = gain * 0.35f + (low || side ? 6f : 0f) + (lean != 0f ? 1.5f : 0f) + rng.RandfRange(0f, 2f);
@@ -160,6 +186,43 @@ public static class CoverFinder
             if (score <= bestScore) continue;
             bestScore = score;
             best = new CoverSpot { Pos = snap, PeekPos = peek, Low = low, Side = side, LeanDir = lean };
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Open ground with no cover to bound to: a rush instead. A spot a few seconds' sprint on toward
+    /// <paramref name="goal"/> to dash to and drop at, lying down: best a fold in the ground (hidden
+    /// lying flat), else somewhere to fire from lying down. The way infantry cross open ground under
+    /// fire: up, three to five seconds' run, down, fire, while the others cover.
+    /// </summary>
+    public static CoverSpot? FindRush(Bot b, Vector3 threatEye, Vector3 goal, RandomNumberGenerator rng, float minR, float maxR)
+    {
+        using var _ = Prof.Time("cover");
+        var space = b.GetWorld3D().DirectSpaceState;
+        var origin = b.FeetPos;
+        var to = (goal - origin) with { Y = 0f };
+        float dist = to.Length();
+        if (dist < minR + 8f) return null;
+        float baseAng = MathF.Atan2(to.Z, to.X);
+        CoverSpot? best = null;
+        float bestScore = float.MinValue;
+        for (int k = 0; k < 12; k++)
+        {
+            float ang = baseAng + Mathf.DegToRad(rng.RandfRange(-35f, 35f));
+            float r = rng.RandfRange(minR, maxR);
+            var p = origin + new Vector3(MathF.Cos(ang), 0f, MathF.Sin(ang)) * r;
+            if (!Standable(space, p, origin.Y, out var snap)) continue;
+            if (Reserved(b, snap)) continue;
+            float gain = dist - (goal - snap with { Y = goal.Y }).Length();
+            if (gain < minR * 0.6f) continue;
+            bool hidden = Stops(space, threatEye, snap + Vector3.Up * 0.35f);        // dead ground, lying down
+            bool canFire = !Blocked(space, snap + Vector3.Up * 0.38f, threatEye);   // or a line to fire along from there
+            if (!hidden && !canFire) continue;
+            float score = (hidden ? 4f : 0f) + (canFire ? 3f : 0f) + gain * 0.1f + rng.RandfRange(0f, 1.5f);
+            if (score <= bestScore) continue;
+            bestScore = score;
+            best = new CoverSpot { Pos = snap, PeekPos = snap };
         }
         return best;
     }

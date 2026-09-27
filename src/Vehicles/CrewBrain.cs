@@ -70,6 +70,16 @@ public sealed class CrewBrain
             Comms.Say(_b, $"Fire mission, {Comms.Bearing(v.GlobalPosition, tg)}, {v.GlobalPosition.DistanceTo(tg):0} meters. Rounds out!");
         }
         if (now < _nextRound) return;
+        // Check fire: our own people have moved into the target area since the mission was called (an
+        // assault going in, a squad passing through). Every round is cleared before it goes, not just the first.
+        if (Combatants.All.Any(f => f.Team == _b.Team && !f.Dead && f.FeetPos.DistanceTo(_mission) < 70f))
+        {
+            _roundsLeft = 0;
+            _nextMission = now + 10.0;
+            Note = "check fire: friendlies in the target area";
+            Comms.Say(_b, "Check fire, check fire! Friendlies in the target area.");
+            return;
+        }
         // Each bomb a little off: the tube and the ranging aren't perfect.
         var spread = new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * 22f;
         t.AimAt = _mission + spread;
@@ -103,22 +113,28 @@ public sealed class CrewBrain
         return (gun || cannon) && he ? 1500f : cannon ? 1400f : 900f;
     }
 
-    /// <summary>Would a shot from here to there endanger our own: someone close to the line, or near where HE lands.</summary>
-    static bool Friendly(Vehicle v, Vector3 from, Vector3 to, bool explosive)
+    /// <summary>
+    /// Would a shot from here to there endanger our own: someone close to the line, or within the reach of
+    /// its fragments where it lands (<paramref name="blast"/>: 0 for solid shot and bullets).
+    /// </summary>
+    static bool Friendly(Vehicle v, Vector3 from, Vector3 to, float blast)
     {
         var seg = to - from;
         float len2 = seg.LengthSquared();
         foreach (var c in Combatants.All)
         {
-            if (c.Team != v.CrewTeam || !c.Alive || c.Ride != null) continue;
+            if (c.Team != v.CrewTeam || c.Dead || c.Ride != null) continue;
             var p = c.ChestPos;
-            if (explosive && p.DistanceTo(to) < 14f) return true;
+            if (blast > 0f && p.DistanceTo(to) < blast) return true;
             float t = len2 > 1f ? Mathf.Clamp((p - from).Dot(seg) / len2, 0f, 1f) : 0f;
             if (t * MathF.Sqrt(len2) < 6f) continue; // right by the vehicle: under the gun
             if ((from + seg * t).DistanceTo(p) < 2.5f) return true;
         }
         return false;
     }
+
+    /// <summary>How close to our own people HE may land: past most of its fragments' reach (a hand grenade's worth at the least).</summary>
+    static float DangerClose(VWeapon w) => MathF.Max(14f, w.FragR * 1.3f);
 
     void Gun(Vehicle v, int ti, float dt)
     {
@@ -243,7 +259,7 @@ public sealed class CrewBrain
         if (now > _ffAt)
         {
             _ffAt = now + 0.25;
-            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, p, !useCoax && w.Explosive);
+            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, p, !useCoax && w.Explosive ? DangerClose(w) : 0f);
             if (_ffBlocked) HeldForFriendlies++;
         }
         if (_ffBlocked) { Note = "holding: friendlies in the way"; return; }
@@ -267,7 +283,8 @@ public sealed class CrewBrain
         {
             _areaPickAt = now + _rng.RandfRange(2f, 4f);
             _areaPoint = at + new Vector3(_rng.RandfRange(-6f, 6f), _rng.RandfRange(-0.5f, 1.5f), _rng.RandfRange(-6f, 6f));
-            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, _areaPoint, true);
+            int heIdx = Array.FindIndex(t.Def.Ammo, a => a.Explosive);
+            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, _areaPoint, heIdx >= 0 ? DangerClose(t.Def.Ammo[heIdx]) : 0f);
         }
         t.AimAt = _areaPoint;
         Note = v.FireAtWhy;

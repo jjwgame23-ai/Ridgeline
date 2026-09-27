@@ -29,7 +29,7 @@ public sealed class PointObjective : IObjective
             var q = Center + new Vector3(MathF.Cos(a0), 0f, MathF.Sin(a0)) * rng.RandfRange(3f, 8f);
             return q with { Y = g0.HeightAt(q.X, q.Z) };
         }
-        float a = rng.Randf() * Mathf.Tau, r = rng.RandfRange(0f, 6f);
+        float a = rng.Randf() * Mathf.Tau, r = rng.RandfRange(2.5f, 6f);
         var p = Center + new Vector3(MathF.Cos(a) * r, 0f, MathF.Sin(a) * r);
         return Effects.Ground is IGround g ? p with { Y = g.HeightAt(p.X, p.Z) } : p;
     }
@@ -103,7 +103,8 @@ public sealed partial class Squad
 
     public double EngagedUntil = -1;
     public Vector3 ContactAt;
-    public bool Engaged => Clock.Now < EngagedUntil;
+    /// <summary>In a fight: shot at, hurt or close to the enemy lately, or running a contact drill (a flank takes longer than the lull that would otherwise end it).</summary>
+    public bool Engaged => Clock.Now < EngagedUntil || (Drill is Drill.Contact or Drill.BreakContact && Clock.Now < DrillUntil);
     public void Engage(Vector3 at)
     {
         bool fresh = !Engaged;
@@ -187,7 +188,9 @@ public sealed partial class Squad
 
     public void Join(ICombatant c)
     {
-        Members.RemoveAll(m => !GodotObject.IsInstanceValid((GodotObject)m) || !m.Alive);
+        // Clear out the dead, not the wounded: a man who's down is still ours, and back in the squad
+        // (and its fire team, and its roll call) when a medic gets him up again.
+        Members.RemoveAll(m => !GodotObject.IsInstanceValid((GodotObject)m) || m.Dead);
         if (!Members.Contains(c)) Members.Add(c);
     }
 

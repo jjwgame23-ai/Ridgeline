@@ -51,11 +51,12 @@ public partial class Fob : Node3D
     /// <summary>Explosions and shells wear it down.</summary>
     public static void BlastAll(Vector3 pos, float power)
     {
+        float reach = 8f * MathF.Cbrt(MathF.Max(power, 0.05f));
         foreach (var f in All.ToArray())
         {
             float d = f.GlobalPosition.DistanceTo(pos);
-            if (d > 8f) continue;
-            f.Hp -= power * 90f * (1f - d / 8f);
+            if (d > reach) continue;
+            f.Hp -= power * 90f * (1f - d / reach);
             if (f.Hp <= 0f) f.Remove("destroyed");
         }
     }

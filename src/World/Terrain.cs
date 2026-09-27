@@ -189,6 +189,31 @@ public partial class Terrain : Node3D, IGround
             : d + (c - d) * (1f - tx) + (b - d) * (1f - tz);
     }
 
+    /// <summary>
+    /// Does the ground itself rise above the straight line from a to b somewhere between them? For sight
+    /// lines: a look at the height grid before casting a ray, which would only find the same hill. It says
+    /// yes only where the line runs below the lowest corner of a grid cell (however that cell's two
+    /// triangles are cut, the ground there is higher still), so it's never wrong about a clear line; where
+    /// it can't tell, it says no and the ray decides. <paramref name="at"/> is roughly where it's blocked.
+    /// </summary>
+    public bool Blocks(Vector3 a, Vector3 b, out Vector3 at)
+    {
+        at = b;
+        var d = b - a;
+        float flat = new Vector2(d.X, d.Z).Length();
+        if (flat < Spacing * 3f) return false;
+        int n = (int)(flat / (Spacing * 0.75f));
+        for (int k = 1; k < n; k++)
+        {
+            var p = a + d * ((float)k / n);
+            float fx = Mathf.Clamp(p.X / Spacing + Half, 0f, Res - 1.001f), fz = Mathf.Clamp(p.Z / Spacing + Half, 0f, Res - 1.001f);
+            int i = (int)fx, j = (int)fz;
+            float low = MathF.Min(MathF.Min(H(i, j), H(i + 1, j)), MathF.Min(H(i, j + 1), H(i + 1, j + 1)));
+            if (p.Y < low - 0.05f) { at = p; return true; }
+        }
+        return false;
+    }
+
     // ---------------------------------------------------------------- holes
 
     /// <summary>
@@ -470,6 +495,9 @@ void fragment() {
     }
 
     public int TreeCount => _species.Sum(s => s.Xf.Count);
+
+    /// <summary>Where every tree (and bush) stands, on the ground plane (for maps and plots).</summary>
+    public IEnumerable<Vector2> TreePositions() => _species.SelectMany(s => s.Xf).Select(x => new Vector2(x.Origin.X, x.Origin.Z));
 
     readonly Dictionary<(int, int), int> _treeCells = new();
     const float TreeCell = 20f;

@@ -292,7 +292,7 @@ public sealed partial class Squad
             var dir = (to - from).Normalized();
             p = from + dir * MathF.Max(0f, from.DistanceTo(h) - 1.2f) - Vector3.Up * 1f;
         }
-        var snapped = NavigationServer3D.MapGetClosestPoint(w.NavigationMap, p + Vector3.Up * 0.5f);
+        var snapped = Valley.ClosestOnFoot(w, p + Vector3.Up * 0.5f);
         // Snapped somewhere else entirely (a roof, the other side of a wall): stay on the edge point.
         return ((snapped - p) with { Y = 0f }).Length() < 2f && MathF.Abs(snapped.Y - raw.Base.Y) < 2.5f ? snapped : raw.Base;
     }

@@ -122,19 +122,22 @@ public partial class TerritoryHud : CanvasLayer
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (e is not InputEventKey { Pressed: true, Echo: false } k) return;
-        if (k.PhysicalKeycode == Key.M)
+        if (e.IsActionPressed("map"))
         {
             _map.Visible = !_map.Visible;
             Input.MouseMode = _map.Visible ? Input.MouseModeEnum.Visible : Input.MouseModeEnum.Captured;
+            return;
         }
-        else if (k.PhysicalKeycode == Key.B) Mode.ToggleFollow();
-        else if (k.PhysicalKeycode == Key.N && Mode.PlayerBody is { Alive: true })
+        if (e.IsActionPressed("squad_follow")) { Mode.ToggleFollow(); return; }
+        if (e.IsActionPressed("squad_menu") && Mode.PlayerBody is { Alive: true })
         {
             if (!Mode.PlayerLeads) { Center("Only the squad leader gives orders (pick the leader role)", 2f); return; }
             MenuOpen = !MenuOpen;
+            return;
         }
-        else if (MenuOpen && k.PhysicalKeycode >= Key.Key1 && k.PhysicalKeycode < Key.Key1 + Commands.Length)
+        // The number keys in a menu, and Esc, are fixed.
+        if (e is not InputEventKey { Pressed: true, Echo: false } k) return;
+        if (MenuOpen && k.PhysicalKeycode >= Key.Key1 && k.PhysicalKeycode < Key.Key1 + Commands.Length)
         {
             MenuOpen = false;
             Mode.SquadCommand((int)(k.PhysicalKeycode - Key.Key1));
@@ -241,7 +244,7 @@ public partial class TerritoryHud : CanvasLayer
         }
         if (!(m.PlayerBody is { Alive: true } && m.PlayerLeads)) MenuOpen = false;
         _menu.Visible = MenuOpen;
-        if (MenuOpen) _menu.Text = "[b]SQUAD COMMANDS[/b]\n" + string.Join("\n", Commands.Select((c, i) => $"{i + 1}  {c}")) + "\n[color=#888]N or Esc: close[/color]";
+        if (MenuOpen) _menu.Text = "[b]SQUAD COMMANDS[/b]\n" + string.Join("\n", Commands.Select((c, i) => $"{i + 1}  {c}")) + $"\n[color=#888]{Controls.Keys("squad_menu")} or Esc: close[/color]";
 
         _center.Visible = now < _centerUntil;
         _kills.RemoveAll(k => now - k.at > 10);
@@ -266,7 +269,7 @@ public partial class TerritoryHud : CanvasLayer
         var b = s.Target;
         string who = b == null ? "nobody" :
             $"{b.Callsign} ({Roles.Name(b.Role)}, {b.Squad?.Name ?? KothMode.TeamNames[b.Team]} {b.Squad?.KindName.ToLowerInvariant()}) · {(b.Alive ? $"{b.Health:0} hp" : "dead")} · {b.Brain.State}{(b.Brain.Target != null ? $" → {b.Brain.Target.Who.Callsign}" : "")} · {b.Brain.Note}";
-        _spec.Text = $"{respawn}SPECTATING [{s.ViewMode}]  {who}\n[LMB/RMB] switch · [C] chase/eyes · [F] free cam · [M] map · [F6] bot debug";
+        _spec.Text = $"{respawn}SPECTATING [{s.ViewMode}]  {who}\n" + Controls.Fill("[{spectate_next}/{spectate_prev}] switch · [{spectate_view}] chase/eyes · [{spectate_free}] free cam · [{map}] map · [{bot_debug}] bot debug");
     }
 }
 

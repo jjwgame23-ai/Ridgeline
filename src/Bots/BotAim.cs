@@ -110,7 +110,7 @@ public sealed class BotAim
                     * (_b.Brain.WantsAds ? 1f : 2.2f)
                     * (1f + _b.Suppression * 2.5f)
                     * (_b.Velocity.Length() > 0.5f ? 1.8f : 1f)
-                    * (_b.Crouched ? 0.75f : 1f)
+                    * (_b.Prone ? (_b.Role is Role.AutoRifleman or Role.Marksman ? 0.35f : 0.5f) : _b.Crouched ? 0.75f : 1f) // prone: rested (a bipod, for some)
                     * (1f + _b.Body.AimPenalty + (1f - _b.Stamina) * 0.6f); // winded: the sights bob with your breathing
         desired += new Vector2(
             MathF.Sin(_t * 1.7f + _seed) * 0.6f + MathF.Sin(_t * 4.3f + _seed * 2f) * 0.25f,
@@ -121,7 +121,8 @@ public sealed class BotAim
         var step = diff * Mathf.Min(1f, dt * 14f);
         float cap = P.TurnSpeed * dt;
         if (step.Length() > cap) step = step.Normalized() * cap;
-        Pitch = Mathf.Clamp(Pitch + step.X, -80f, 80f);
+        // Lying flat, the rifle only comes up or down so far.
+        Pitch = Mathf.Clamp(Pitch + step.X, _b.Prone ? -20f : -80f, _b.Prone ? 25f : 80f);
         Yaw = Wrap(Yaw + step.Y);
     }
 }

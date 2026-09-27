@@ -1,0 +1,811 @@
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ground: #edefe9;
+  --panel: #ffffff;
+  --ink: #1c211b;
+  --muted: #5d665b;
+  --faint: #8c9489;
+  --rule: #d3d8ce;
+  --well: #e3e7de;
+  --focus: #1c211b;
+  --alpha: #3f73e6;
+  --bravo: #d8483a;
+  --charlie: #b98f00;
+  --map-surround: #1a1d18;
+  --display: "Barlow Semi Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --text: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #111410;
+    --panel: #191d18;
+    --ink: #e4e8e0;
+    --muted: #98a094;
+    --faint: #6d7569;
+    --rule: #2b3129;
+    --well: #222721;
+    --focus: #e4e8e0;
+    --alpha: #6d9bff;
+    --bravo: #f0705f;
+    --charlie: #e8c33a;
+    --map-surround: #0b0d0a;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #111410;
+  --panel: #191d18;
+  --ink: #e4e8e0;
+  --muted: #98a094;
+  --faint: #6d7569;
+  --rule: #2b3129;
+  --well: #222721;
+  --focus: #e4e8e0;
+  --alpha: #6d9bff;
+  --bravo: #f0705f;
+  --charlie: #e8c33a;
+  --map-surround: #0b0d0a;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--ground); color: var(--ink); font: 14px/1.45 var(--text); }
+.app {
+  box-sizing: border-box; height: 100%; min-height: 560px;
+  display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px;
+  padding-inline: 16px; padding-block: 12px;
+}
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 24px; }
+.title { display: grid; gap: 2px; }
+.eyebrow { font: 600 11px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+h1 { margin: 0; font: 700 26px/1.05 var(--display); letter-spacing: 0.01em; text-wrap: balance; }
+.sub { margin: 0; color: var(--muted); font-size: 13px; }
+.tally { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 500 12px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.tally .side { display: grid; grid-template-columns: auto auto; gap: 2px 8px; align-items: baseline; }
+.tally .name { grid-column: 1 / -1; font: 700 12px/1 var(--display); letter-spacing: 0.12em; }
+.tally .k { color: var(--muted); }
+
+main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; }
+.mapwrap { position: relative; min-height: 0; background: var(--map-surround); border: 1px solid var(--rule); overflow: hidden; touch-action: none; }
+#map { display: block; width: 100%; height: 100%; cursor: grab; }
+#map.dragging { cursor: grabbing; }
+.hud { position: absolute; left: 10px; bottom: 30px; display: flex; gap: 10px; align-items: center; pointer-events: none;
+  font: 500 12px/1 var(--mono); color: #f2f4ee; text-shadow: 0 1px 2px #000, 0 0 6px #000; font-variant-numeric: tabular-nums; }
+.zoom { position: absolute; right: 10px; top: 10px; display: grid; gap: 4px; }
+.zoom button, .transport button, .speeds button, .chip {
+  font: 600 13px/1 var(--display); letter-spacing: 0.04em; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 3px; cursor: pointer; }
+.zoom button { width: 32px; height: 32px; font-size: 17px; }
+button:focus-visible, select:focus-visible, input:focus-visible, .chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.tip { position: absolute; pointer-events: none; padding: 4px 7px; background: rgba(12, 14, 11, 0.86); color: #f2f4ee;
+  font: 500 12px/1.3 var(--text); border-radius: 3px; white-space: nowrap; transform: translate(12px, -50%); }
+
+aside { min-height: 0; overflow: auto; display: grid; align-content: start; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--rule); padding: 12px; display: grid; gap: 8px; }
+.card h2 { margin: 0; font: 700 12px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+.legend { display: grid; grid-template-columns: 22px 1fr; gap: 6px 8px; align-items: center; font-size: 13px; }
+.legend canvas { width: 22px; height: 16px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+select { font: 500 13px var(--text); color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 3px; padding: 5px 6px; max-width: 100%; }
+.chip { padding: 6px 9px; font-size: 12px; }
+.chip[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.who { display: grid; gap: 6px; }
+.who .callsign { font: 700 22px/1 var(--display); }
+.who .meta { color: var(--muted); font-size: 13px; }
+.state { font: 600 15px/1.2 var(--display); letter-spacing: 0.02em; }
+.why { color: var(--ink); font-size: 13px; }
+.bars { display: grid; grid-template-columns: 78px 1fr 36px; gap: 5px 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.bar { height: 6px; background: var(--well); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ink); }
+.num { font: 500 12px var(--mono); font-variant-numeric: tabular-nums; text-align: right; color: var(--ink); }
+.hist { margin: 0; padding: 0; list-style: none; display: grid; gap: 3px; font-size: 12px; }
+.hist li { display: grid; grid-template-columns: 50px 1fr; gap: 6px; }
+.hist time, .feed time { font: 500 11px/1.5 var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); font-size: 13px; margin: 0; }
+.feed { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 12.5px; }
+.feed li button { all: unset; display: grid; grid-template-columns: 50px 1fr; gap: 6px; width: 100%; box-sizing: border-box; padding: 3px 4px; border-radius: 3px; cursor: pointer; }
+.feed li button:hover { background: var(--well); }
+.feed li button:focus-visible { outline: 2px solid var(--focus); }
+.sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+
+footer { display: grid; gap: 8px; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.transport .play { width: 44px; height: 36px; font-size: 16px; background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.transport .step { height: 36px; padding: 0 10px; }
+.clock { font: 500 20px/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.clock small { font-size: 13px; color: var(--muted); }
+.speeds { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+.speeds button { border: 0; border-radius: 0; padding: 9px 10px; font-size: 12px; background: var(--panel); }
+.speeds button + button { border-left: 1px solid var(--rule); }
+.speeds button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.tl { position: relative; height: 64px; background: var(--panel); border: 1px solid var(--rule); cursor: pointer; }
+#timeline { display: block; width: 100%; height: 100%; }
+.tl-cap { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+
+@media (max-width: 860px) {
+  .app { height: auto; min-height: 0; }
+  main { grid-template-columns: 1fr; }
+  .mapwrap { height: min(72vh, 560px); }
+  aside { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="app">
+  <header>
+    <div class="title">
+      <span class="eyebrow">Ridgeline · after-action replay</span>
+      <h1 id="mapname">Replay</h1>
+      <p class="sub" id="matchline">{{MATCH}}</p>
+    </div>
+    <div class="tally" id="tally" aria-live="polite"></div>
+  </header>
+
+  <main>
+    <div class="mapwrap" id="mapwrap">
+      <canvas id="map" aria-label="Map of the battlefield: soldiers, vehicles, fire and casualties at the current time. Drag to pan, scroll to zoom, click a soldier to follow him."></canvas>
+      <div class="hud"><span id="grid" hidden></span></div>
+      <div class="zoom">
+        <button id="zin" aria-label="Zoom in" title="Zoom in">+</button>
+        <button id="zout" aria-label="Zoom out" title="Zoom out">&minus;</button>
+        <button id="zfit" aria-label="Show the whole map" title="Whole map">&#9635;</button>
+      </div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+
+    <aside>
+      <section class="card" aria-labelledby="h-who">
+        <h2 id="h-who">Soldier</h2>
+        <div id="who"><p class="empty">Click someone on the map to follow him: what he was doing, why, his health and whether he could see his target.</p></div>
+      </section>
+      <section class="card" aria-labelledby="h-focus">
+        <h2 id="h-focus">Show</h2>
+        <label class="row" for="squad"><span class="eyebrow" style="letter-spacing:.1em">Squad</span>
+          <select id="squad"><option value="">Everyone</option></select></label>
+        <div class="row">
+          <button class="chip" id="t-tracers" aria-pressed="true">Tracers</button>
+          <button class="chip" id="t-trails" aria-pressed="false">Trails</button>
+          <button class="chip" id="t-names" aria-pressed="false">Names</button>
+          <button class="chip" id="t-targets" aria-pressed="false">Who's aiming at whom</button>
+        </div>
+      </section>
+      <section class="card" aria-labelledby="h-feed">
+        <h2 id="h-feed">Last 30 seconds</h2>
+        <ul class="feed" id="feed"></ul>
+      </section>
+      <section class="card" aria-labelledby="h-key">
+        <h2 id="h-key">Key</h2>
+        <div class="legend" id="legend"></div>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    <div class="transport">
+      <button class="play" id="play" aria-label="Play">&#9654;</button>
+      <button class="step" id="back" aria-label="Back 10 seconds" title="Back 10 s (left arrow)">&minus;10 s</button>
+      <button class="step" id="fwd" aria-label="Forward 10 seconds" title="Forward 10 s (right arrow)">+10 s</button>
+      <span class="clock" id="clock">T+00:00 <small>/ 00:00</small></span>
+      <span class="speeds" role="group" aria-label="Playback speed" id="speeds"></span>
+    </div>
+    <div class="tl" id="tl"><canvas id="timeline" aria-label="Timeline: rounds fired every 5 seconds by each side, casualties along the bottom. Click to jump."></canvas></div>
+    <div class="tl-cap" id="tlcap"></div>
+  </footer>
+</div>
+
+<script>
+(() => {
+const D = /*REPLAY_DATA*/null;
+if (!D) { document.getElementById("matchline").textContent = "No match data in this page."; return; }
+
+// ---------------------------------------------------------------- data
+function dec(s, T) {
+  const b = atob(s), u = new Uint8Array(b.length);
+  for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+  return new T(u.buffer);
+}
+const times = dec(D.times, Float32Array);
+const N = D.n, P = D.people.length, V = D.veh.length;
+const pos = dec(D.pos, Int16Array), st = dec(D.st, Uint8Array), hp = dec(D.hp, Uint8Array);
+const tgt = dec(D.tgt, Int16Array), fl = dec(D.fl, Uint8Array);
+const vpos = dec(D.vpos, Int16Array), vfl = dec(D.vfl, Uint8Array);
+const drones = dec(D.drones, Int32Array);
+const sht = dec(D.sht, Float32Array), shp = dec(D.shp, Int16Array), shk = dec(D.shk, Uint8Array);
+const ABSENT = -32768;
+const T0 = times[0], T1 = times[N - 1];
+const TEAM_RGB = [[70, 130, 255], [235, 80, 65], [235, 195, 30]];
+const TEAM_NAME = ["ALPHA", "BRAVO", "CHARLIE"];
+const STANCE = ["standing", "crouched", "prone"];
+const ROLE = { SL: "squad leader", RIF: "rifleman", AR: "automatic rifleman", GL: "grenadier", MED: "medic", LAT: "anti-tank (light)",
+  HAT: "anti-tank (heavy)", MM: "marksman", ENG: "engineer", AMMO: "ammo bearer", CRW: "crewman", RTO: "radio operator", DRN: "drone operator", MTR: "mortarman", AA: "anti-air" };
+const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const people = D.people.map(([name, team, squad, role, human]) => ({ name, team, squad, role, human: !!human }));
+const squadOf = D.squads.reduce((m, [n, k]) => (m[n] = k, m), {});
+const changes = D.changes;
+const fmt = s => { s = Math.max(0, Math.round(s)); return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`; };
+
+// ---------------------------------------------------------------- state
+let t = T0, playing = false, speed = 4, selected = -1, follow = false, focusSquad = "";
+const show = { tracers: true, trails: false, names: false, targets: false };
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---------------------------------------------------------------- map view
+const cv = document.getElementById("map"), cx = cv.getContext("2d");
+const wrap = document.getElementById("mapwrap");
+const img = new Image();
+let imgReady = false;
+img.onload = () => { imgReady = true; draw(); };
+img.src = D.map.img;
+const SIZE = D.map.size, HALF = SIZE / 2;
+let view = { x: 0, z: 0, k: 1 }; // centre (m) and pixels per metre (CSS px)
+let W = 0, H = 0, DPR = 1;
+function fit() {
+  view.x = 0; view.z = 0;
+  view.k = Math.min(W, H) / SIZE * 0.98;
+}
+function resize() {
+  const r = wrap.getBoundingClientRect();
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.max(1, r.width); H = Math.max(1, r.height);
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+  resizeTimeline();
+}
+const sx = x => (x - view.x) * view.k + W / 2;
+const sz = z => (z - view.z) * view.k + H / 2;
+const wx = px => (px - W / 2) / view.k + view.x;
+const wz = py => (py - H / 2) / view.k + view.z;
+
+// ---------------------------------------------------------------- sampling
+function frameAt(time) {
+  // index i with times[i] <= time < times[i+1], and how far between
+  let lo = 0, hi = N - 1;
+  if (time <= times[0]) return [0, 0];
+  if (time >= times[N - 1]) return [N - 1, 0];
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (times[mid] <= time) lo = mid; else hi = mid; }
+  return [lo, (time - times[lo]) / Math.max(1e-3, times[lo + 1] - times[lo])];
+}
+function personAt(i, f, j, out) {
+  const a = (i * P + j) * 2, ax = pos[a], az = pos[a + 1];
+  if (ax === ABSENT) return false;
+  let x = ax, z = az;
+  if (f > 0 && i + 1 < N) {
+    const b = ((i + 1) * P + j) * 2, bx = pos[b], bz = pos[b + 1];
+    if (bx !== ABSENT) {
+      const dx = bx - ax, dz = bz - az;
+      if (dx * dx + dz * dz < 400 * 400) { x = ax + dx * f; z = az + dz * f; } // over 40 m in half a second: a respawn or a seat, not a walk
+      else if (f > 0.5) { x = bx; z = bz; }
+    }
+  }
+  out.x = x / 10; out.z = z / 10;
+  return true;
+}
+function vehicleAt(i, f, j, out) {
+  const a = (i * V + j) * 2, ax = vpos[a], az = vpos[a + 1];
+  if (ax === ABSENT) return false;
+  let x = ax, z = az, hx = 0, hz = 0;
+  if (i + 1 < N) {
+    const b = ((i + 1) * V + j) * 2, bx = vpos[b], bz = vpos[b + 1];
+    if (bx !== ABSENT) { x = ax + (bx - ax) * f; z = az + (bz - az) * f; hx = bx - ax; hz = bz - az; }
+  }
+  out.x = x / 10; out.z = z / 10; out.hx = hx; out.hz = hz;
+  return true;
+}
+function lastChange(j, time) {
+  const list = changes[j];
+  if (!list) return null;
+  let lo = 0, hi = list.length - 1, best = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (list[mid][0] <= time) { best = mid; lo = mid + 1; } else hi = mid - 1; }
+  return best;
+}
+
+// ---------------------------------------------------------------- drawing
+const tmp = { x: 0, z: 0 }, tmp2 = { x: 0, z: 0 }, vt = { x: 0, z: 0, hx: 0, hz: 0 };
+function dimmed(j) { return focusSquad && people[j].squad !== focusSquad; }
+
+function drawGrid() {
+  const step = view.k > 0.6 ? 100 : 500;
+  const x0 = Math.ceil((wx(0) + HALF) / step) * step - HALF, x1 = wx(W);
+  const z0 = Math.ceil((wz(0) + HALF) / step) * step - HALF, z1 = wz(H);
+  cx.lineWidth = 1;
+  cx.strokeStyle = "rgba(255,255,255,0.13)";
+  cx.beginPath();
+  for (let x = x0; x <= x1; x += step) { const p = Math.round(sx(x)) + 0.5; cx.moveTo(p, 0); cx.lineTo(p, H); }
+  for (let z = z0; z <= z1; z += step) { const p = Math.round(sz(z)) + 0.5; cx.moveTo(0, p); cx.lineTo(W, p); }
+  cx.stroke();
+  if (view.k > 0.35) {
+    cx.font = "500 10px 'IBM Plex Mono', monospace";
+    cx.fillStyle = "rgba(255,255,255,0.55)";
+    for (let x = x0; x <= x1; x += step) cx.fillText(String(Math.round((x + HALF) / 100)).padStart(2, "0"), sx(x) + 3, 12);
+    for (let z = z0; z <= z1; z += step) cx.fillText(String(Math.round((HALF - z) / 100)).padStart(2, "0"), 3, sz(z) - 3);
+  }
+}
+
+function drawPerson(x, y, stance, down, col, alpha, r) {
+  cx.globalAlpha = alpha;
+  if (down) {
+    cx.lineWidth = 1.6; cx.strokeStyle = rgba(col, 1);
+    cx.beginPath(); cx.arc(x, y, r, 0, Math.PI * 2); cx.stroke();
+    cx.beginPath(); cx.moveTo(x - r * 0.6, y); cx.lineTo(x + r * 0.6, y); cx.stroke();
+  } else if (stance === 2) {
+    cx.fillStyle = rgba(col, 1); cx.strokeStyle = "rgba(0,0,0,0.75)"; cx.lineWidth = 1;
+    cx.beginPath(); cx.ellipse(x, y, r * 1.35, r * 0.55, 0, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  } else {
+    cx.fillStyle = rgba(col, 1); cx.strokeStyle = "rgba(0,0,0,0.75)"; cx.lineWidth = 1;
+    cx.beginPath(); cx.arc(x, y, r, 0, Math.PI * 2); cx.fill(); cx.stroke();
+    if (stance === 1) { cx.fillStyle = "rgba(0,0,0,0.6)"; cx.beginPath(); cx.arc(x, y, r * 0.38, 0, Math.PI * 2); cx.fill(); }
+  }
+  cx.globalAlpha = 1;
+}
+
+function draw() {
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  cx.fillStyle = getComputedStyle(wrap).backgroundColor;
+  cx.fillRect(0, 0, W, H);
+  if (imgReady) {
+    cx.imageSmoothingEnabled = view.k < 3;
+    cx.drawImage(img, sx(-HALF), sz(-HALF), SIZE * view.k, SIZE * view.k);
+  }
+  drawGrid();
+  const [i, f] = frameAt(t);
+  const r = Math.max(2.6, Math.min(7, 2.2 + view.k * 1.4));
+
+  // casualties so far
+  for (const c of D.cas) {
+    if (c[0] > t) break;
+    const age = t - c[0], a = age < 15 ? 0.95 : 0.4;
+    const x = sx(c[3]), y = sz(c[4]), col = TEAM_RGB[c[2]] || [255, 255, 255];
+    cx.globalAlpha = a; cx.strokeStyle = rgba(col, 1); cx.lineWidth = 2;
+    if (c[1]) { const s = r * 1.1; cx.beginPath(); cx.moveTo(x - s, y - s); cx.lineTo(x + s, y + s); cx.moveTo(x - s, y + s); cx.lineTo(x + s, y - s); cx.stroke(); }
+    else { cx.beginPath(); cx.arc(x, y, r * 1.2, 0, Math.PI * 2); cx.stroke(); }
+  }
+  cx.globalAlpha = 1;
+
+  // explosions: a ring out to the fragments' reach
+  for (const b of D.booms) {
+    if (b[0] > t) break;
+    const age = t - b[0];
+    if (age > 1.6) continue;
+    const k = age / 1.6, rr = Math.max(4, b[4] * view.k) * (0.35 + 0.65 * k);
+    cx.strokeStyle = `rgba(255,190,90,${(1 - k) * 0.9})`; cx.lineWidth = 2;
+    cx.beginPath(); cx.arc(sx(b[1]), sz(b[2]), rr, 0, Math.PI * 2); cx.stroke();
+    cx.fillStyle = `rgba(255,230,160,${(1 - k) * 0.35})`; cx.fill();
+  }
+
+  // trails: the last 20 s
+  if (show.trails || selected >= 0) {
+    const i0 = Math.max(0, frameAt(t - 20)[0]);
+    for (let j = 0; j < P; j++) {
+      if (!show.trails && j !== selected) continue;
+      if (dimmed(j) && j !== selected) continue;
+      const col = TEAM_RGB[people[j].team] || [255, 255, 255];
+      cx.strokeStyle = rgba(col, j === selected ? 0.95 : 0.45); cx.lineWidth = j === selected ? 2 : 1;
+      cx.beginPath();
+      let pen = false;
+      for (let k = i0; k <= i; k++) {
+        const a = (k * P + j) * 2;
+        if (pos[a] === ABSENT) { pen = false; continue; }
+        const x = sx(pos[a] / 10), y = sz(pos[a + 1] / 10);
+        if (pen) cx.lineTo(x, y); else { cx.moveTo(x, y); pen = true; }
+      }
+      if (pen && personAt(i, f, j, tmp)) cx.lineTo(sx(tmp.x), sz(tmp.z));
+      cx.stroke();
+    }
+  }
+
+  // tracers
+  if (show.tracers) {
+    const life = playing ? Math.max(0.35, 0.09 * speed) : 0.9;
+    let lo = 0, hi = sht.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (sht[mid] < t - life) lo = mid + 1; else hi = mid; }
+    for (let s = lo; s < sht.length && sht[s] <= t; s++) {
+      const k = shk[s], team = k & 3, kind = k >> 2;
+      const a = 1 - (t - sht[s]) / life;
+      const x0 = sx(shp[s * 4] / 10), y0 = sz(shp[s * 4 + 1] / 10), x1 = sx(shp[s * 4 + 2] / 10), y1 = sz(shp[s * 4 + 3] / 10);
+      const col = TEAM_RGB[team];
+      cx.lineWidth = kind === 3 ? 2.2 : 1.2;
+      cx.setLineDash(kind === 1 ? [5, 4] : []);
+      cx.strokeStyle = rgba(kind === 3 ? [255, 236, 190] : col.map(c => Math.min(255, c + 60)), Math.max(0, a) * (kind === 1 ? 0.7 : 0.95));
+      cx.beginPath(); cx.moveTo(x0, y0); cx.lineTo(x1, y1); cx.stroke();
+    }
+    cx.setLineDash([]);
+  }
+
+  // vehicles
+  for (let j = 0; j < V; j++) {
+    if (!vehicleAt(i, f, j, vt)) continue;
+    const [name, kind, team] = D.veh[j];
+    const flags = vfl[i * V + j], dead = flags & 1, crewed = flags & 2, air = flags & 4, landed = flags & 8;
+    const x = sx(vt.x), y = sz(vt.z), s = Math.max(5, Math.min(14, 3 + view.k * 3.2));
+    const col = TEAM_RGB[team] || [200, 200, 200];
+    cx.save(); cx.translate(x, y);
+    if (vt.hx || vt.hz) cx.rotate(Math.atan2(vt.hz, vt.hx));
+    cx.lineWidth = 1.6;
+    if (dead) { cx.fillStyle = "rgba(20,20,20,0.85)"; cx.strokeStyle = "rgba(255,140,60,0.8)"; }
+    else { cx.fillStyle = crewed ? rgba(col, 0.95) : "rgba(30,30,30,0.55)"; cx.strokeStyle = crewed ? "rgba(0,0,0,0.85)" : rgba(col, 0.95); }
+    cx.beginPath();
+    if (air) { cx.moveTo(s * 1.1, 0); cx.lineTo(0, s * 0.7); cx.lineTo(-s * 1.1, 0); cx.lineTo(0, -s * 0.7); cx.closePath(); }
+    else cx.rect(-s * 0.95, -s * 0.6, s * 1.9, s * 1.2);
+    cx.fill(); cx.stroke();
+    if (!dead && !air) { cx.fillStyle = "rgba(0,0,0,0.55)"; cx.fillRect(s * 0.35, -s * 0.15, s * 0.6, s * 0.3); }
+    cx.restore();
+    if (air && !landed && !dead) { cx.strokeStyle = rgba(col, 0.6); cx.lineWidth = 1; cx.beginPath(); cx.arc(x, y, s * 1.6, 0, Math.PI * 2); cx.stroke(); }
+    if (show.names || view.k > 1.6) {
+      cx.font = "600 11px 'Barlow Semi Condensed', sans-serif"; cx.fillStyle = "#f4f6f0"; cx.strokeStyle = "rgba(0,0,0,0.8)"; cx.lineWidth = 3;
+      cx.strokeText(name, x + s + 3, y - s * 0.6); cx.fillText(name, x + s + 3, y - s * 0.6);
+    }
+  }
+
+  // drones
+  for (let d = 0; d < D.ndrones; d++) {
+    if (drones[d * 4] !== i) continue;
+    const col = TEAM_RGB[drones[d * 4 + 1]] || [255, 255, 255], x = sx(drones[d * 4 + 2] / 10), y = sz(drones[d * 4 + 3] / 10);
+    cx.fillStyle = rgba(col, 0.95); cx.strokeStyle = "rgba(0,0,0,0.8)"; cx.lineWidth = 1;
+    cx.beginPath(); cx.moveTo(x, y - 5); cx.lineTo(x + 4.5, y + 3.5); cx.lineTo(x - 4.5, y + 3.5); cx.closePath(); cx.fill(); cx.stroke();
+  }
+
+  // who's aiming at whom
+  if (show.targets || selected >= 0) {
+    for (let j = 0; j < P; j++) {
+      if (!show.targets && j !== selected) continue;
+      const g = tgt[i * P + j];
+      if (g < 0 || !personAt(i, f, j, tmp) || !personAt(i, f, g, tmp2)) continue;
+      if (st[i * P + j] & 128) continue;
+      const seen = fl[i * P + j] & 1, col = TEAM_RGB[people[j].team];
+      cx.strokeStyle = rgba(col, j === selected ? 0.9 : 0.35); cx.lineWidth = 1;
+      cx.setLineDash(seen ? [] : [3, 4]);
+      cx.beginPath(); cx.moveTo(sx(tmp.x), sz(tmp.z)); cx.lineTo(sx(tmp2.x), sz(tmp2.z)); cx.stroke();
+    }
+    cx.setLineDash([]);
+  }
+
+  // people
+  for (let j = 0; j < P; j++) {
+    const s = st[i * P + j];
+    if (s & 128) continue; // aboard a vehicle
+    if (!personAt(i, f, j, tmp)) continue;
+    const col = TEAM_RGB[people[j].team] || [255, 255, 255];
+    drawPerson(sx(tmp.x), sz(tmp.z), (s >> 4) & 3, (s >> 6) & 1, col, dimmed(j) ? 0.22 : 1, r);
+    if (show.names || view.k > 2.4 || (focusSquad && !dimmed(j))) {
+      cx.font = "600 11px 'Barlow Semi Condensed', sans-serif"; cx.fillStyle = "#f4f6f0"; cx.strokeStyle = "rgba(0,0,0,0.8)"; cx.lineWidth = 3;
+      cx.strokeText(people[j].name, sx(tmp.x) + r + 3, sz(tmp.z) + 4); cx.fillText(people[j].name, sx(tmp.x) + r + 3, sz(tmp.z) + 4);
+    }
+  }
+  // you, if you played this match
+  for (let j = 0; j < P; j++) {
+    if (!people[j].human || st[i * P + j] & 128 || !personAt(i, f, j, tmp)) continue;
+    const x = sx(tmp.x), y = sz(tmp.z);
+    cx.strokeStyle = "#ffffff"; cx.lineWidth = 2; cx.setLineDash([3, 2]);
+    cx.beginPath(); cx.arc(x, y, r + 4, 0, Math.PI * 2); cx.stroke(); cx.setLineDash([]);
+    cx.font = "700 12px 'Barlow Semi Condensed', sans-serif"; cx.fillStyle = "#ffffff"; cx.strokeStyle = "rgba(0,0,0,0.85)"; cx.lineWidth = 3;
+    cx.strokeText("YOU", x + r + 6, y - 6); cx.fillText("YOU", x + r + 6, y - 6);
+  }
+  if (selected >= 0 && personAt(i, f, selected, tmp)) {
+    const x = sx(tmp.x), y = sz(tmp.z);
+    cx.strokeStyle = "#ffffff"; cx.lineWidth = 2; cx.beginPath(); cx.arc(x, y, r + 5, 0, Math.PI * 2); cx.stroke();
+    cx.strokeStyle = "rgba(0,0,0,0.7)"; cx.lineWidth = 1; cx.beginPath(); cx.arc(x, y, r + 7, 0, Math.PI * 2); cx.stroke();
+  }
+
+  // squad drills, as the leader called them
+  for (const d of D.drills) {
+    if (d[0] > t) break;
+    const age = t - d[0];
+    if (age > 9) continue;
+    const a = age < 7 ? 1 : 1 - (age - 7) / 2, col = TEAM_RGB[d[2]] || [255, 255, 255];
+    const label = `${d[1]} · ${d[3].replace(/([a-z])([A-Z])/g, "$1 $2").toUpperCase()}`;
+    const x = sx(d[4]), y = sz(d[5]) - 14;
+    cx.globalAlpha = a;
+    cx.font = "700 12px 'Barlow Semi Condensed', sans-serif";
+    const w = cx.measureText(label).width + 10;
+    cx.fillStyle = "rgba(10,12,9,0.8)"; cx.fillRect(x - w / 2, y - 11, w, 16);
+    cx.fillStyle = rgba(col, 1); cx.fillRect(x - w / 2, y - 11, 3, 16);
+    cx.fillStyle = "#f4f6f0"; cx.fillText(label, x - w / 2 + 6, y + 1);
+    cx.globalAlpha = 1;
+  }
+
+  // scale bar
+  const metres = view.k > 4 ? 25 : view.k > 1.6 ? 50 : view.k > 0.6 ? 100 : view.k > 0.25 ? 250 : 500;
+  const bx = 12, by = H - 14, bl = metres * view.k;
+  cx.lineCap = "butt";
+  cx.strokeStyle = "rgba(0,0,0,0.85)"; cx.lineWidth = 5; cx.beginPath(); cx.moveTo(bx, by); cx.lineTo(bx + bl, by); cx.stroke();
+  cx.strokeStyle = "#f4f6f0"; cx.lineWidth = 2; cx.beginPath(); cx.moveTo(bx, by); cx.lineTo(bx + bl, by); cx.stroke();
+  cx.font = "500 11px 'IBM Plex Mono', monospace"; cx.fillStyle = "#f4f6f0"; cx.strokeStyle = "rgba(0,0,0,0.85)"; cx.lineWidth = 3;
+  cx.strokeText(`${metres} m`, bx + bl + 6, by + 4); cx.fillText(`${metres} m`, bx + bl + 6, by + 4);
+}
+
+// ---------------------------------------------------------------- panels
+const whoEl = document.getElementById("who"), feedEl = document.getElementById("feed"), tallyEl = document.getElementById("tally");
+let lastPanelAt = -1;
+function teamSw(team) { return `<span class="sw" style="background:var(--${["alpha", "bravo", "charlie"][team]})"></span>`; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function panels() {
+  const [i] = frameAt(t);
+  // tally: standing, down now, dead so far
+  const up = [0, 0, 0], downNow = [0, 0, 0], dead = [0, 0, 0];
+  for (let j = 0; j < P; j++) {
+    if (pos[(i * P + j) * 2] === ABSENT) continue;
+    const s = st[i * P + j];
+    if ((s >> 6) & 1) downNow[people[j].team]++; else up[people[j].team]++;
+  }
+  for (const c of D.cas) { if (c[0] > t) break; if (c[1]) dead[c[2]]++; }
+  tallyEl.innerHTML = D.teams.map((n, k) => `<div class="side"><span class="name" style="color:var(--${["alpha", "bravo", "charlie"][k]})">${n}</span>` +
+    `<span class="k">up</span><span>${up[k]}</span><span class="k">down</span><span>${downNow[k]}</span><span class="k">killed</span><span>${dead[k]}</span></div>`).join("");
+
+  // the selected man
+  if (selected < 0) {
+    whoEl.innerHTML = `<p class="empty">Click someone on the map to follow him: what he was doing, why, his health and whether he could see his target.</p>`;
+  } else {
+    const p = people[selected], present = pos[(i * P + selected) * 2] !== ABSENT;
+    const s = st[i * P + selected], stance = (s >> 4) & 3, down = (s >> 6) & 1, riding = (s >> 7) & 1;
+    const ci = lastChange(selected, t);
+    const ch = ci != null && ci >= 0 ? changes[selected][ci] : null;
+    const state = ch ? D.states[ch[1]] : D.states[s & 15];
+    const why = ch ? D.notes[ch[2]] : "";
+    const g = tgt[i * P + selected], seen = fl[i * P + selected] & 1, supp = (fl[i * P + selected] >> 1) / 127;
+    const status = !present ? "Dead (or not yet in the fight)" : down ? "Down, bleeding" : riding ? "Aboard a vehicle" : STANCE[stance];
+    let hist = "";
+    if (changes[selected] && ci != null && ci >= 0) {
+      const list = changes[selected].slice(Math.max(0, ci - 5), ci + 1).reverse();
+      hist = `<ul class="hist">${list.map(c => `<li><time>${fmt(c[0] - T0)}</time><span><b>${D.states[c[1]]}</b>${D.notes[c[2]] ? " — " + esc(D.notes[c[2]]) : ""}</span></li>`).join("")}</ul>`;
+    }
+    whoEl.innerHTML = `<div class="who">
+      <div><div class="callsign">${esc(p.name)}</div><div class="meta">${teamSw(p.team)}${TEAM_NAME[p.team]} · ${esc(p.squad || "no squad")}${squadOf[p.squad] ? " (" + esc(squadOf[p.squad]) + ")" : ""} · ${esc(ROLE[p.role] || p.role)}</div></div>
+      <div><div class="state">${esc(state)} · ${esc(status)}</div>${why ? `<div class="why">${esc(why)}</div>` : ""}</div>
+      <div class="bars">
+        <span>Health</span><span class="bar"><i style="width:${present ? hp[i * P + selected] : 0}%"></i></span><span class="num">${present ? hp[i * P + selected] : 0}</span>
+        <span>Suppression</span><span class="bar"><i style="width:${Math.round(supp * 100)}%"></i></span><span class="num">${supp.toFixed(2)}</span>
+      </div>
+      <div class="meta">${g >= 0 ? `Target: <b>${esc(people[g].name)}</b> ${seen ? "(in sight)" : "(last seen, out of sight)"}` : "No target"}</div>
+      <div class="row"><button class="chip" id="followbtn" aria-pressed="${follow}">Follow on the map</button><button class="chip" id="clearbtn">Clear</button></div>
+      ${hist}
+    </div>`;
+    document.getElementById("followbtn").onclick = () => { follow = !follow; panels(); draw(); };
+    document.getElementById("clearbtn").onclick = () => { selected = -1; follow = false; panels(); draw(); };
+  }
+
+  // the last 30 seconds: casualties and drills
+  const items = [];
+  for (const c of D.cas) { if (c[0] > t) break; if (c[0] >= t - 30) items.push({ t: c[0], x: c[3], z: c[4], html: `${teamSw(c[2])}${esc(c[6])} ${c[1] ? "killed" : "downed"} <b>${esc(c[5])}</b>${c[7] ? " · " + esc(c[7].split(" ·")[0]) : ""}${c[8] ? " · " + c[8] + " m" : ""}` }); }
+  for (const d of D.drills) { if (d[0] > t) break; if (d[0] >= t - 30) items.push({ t: d[0], x: d[4], z: d[5], html: `${teamSw(d[2])}<b>${esc(d[1])}</b> drill: ${esc(d[3].replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase())}` }); }
+  items.sort((a, b) => b.t - a.t);
+  feedEl.innerHTML = items.length ? items.slice(0, 14).map((it, k) => `<li><button data-k="${k}"><time>${fmt(it.t - T0)}</time><span>${it.html}</span></button></li>`).join("")
+    : `<li class="empty">Nothing in the last 30 seconds.</li>`;
+  feedEl.querySelectorAll("button").forEach(b => b.onclick = () => {
+    const it = items[+b.dataset.k];
+    t = Math.max(T0, it.t - 4); view.x = it.x; view.z = it.z; view.k = Math.max(view.k, 1.4); playing = false; syncPlay(); panels(); draw(); drawTimeline();
+  });
+
+  document.getElementById("clock").innerHTML = `T+${fmt(t - T0)} <small>/ ${fmt(T1 - T0)}</small>`;
+  lastPanelAt = t;
+}
+
+// ---------------------------------------------------------------- timeline
+const tl = document.getElementById("timeline"), tx = tl.getContext("2d"), tlWrap = document.getElementById("tl");
+let TW = 0, TH = 0;
+function resizeTimeline() {
+  const r = tlWrap.getBoundingClientRect();
+  TW = Math.max(1, r.width); TH = Math.max(1, r.height);
+  tl.width = Math.round(TW * DPR); tl.height = Math.round(TH * DPR);
+}
+const fire = D.fire, bins = fire[0].length;
+let fireMax = 1;
+for (let b = 0; b < bins; b++) fireMax = Math.max(fireMax, fire[0][b] + (fire[1] ? fire[1][b] : 0) + (fire[2] ? fire[2][b] : 0));
+function drawTimeline() {
+  const css = getComputedStyle(document.documentElement);
+  tx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  tx.fillStyle = css.getPropertyValue("--panel"); tx.fillRect(0, 0, TW, TH);
+  const top = 6, base = TH - 14, span = T1 - T0, bw = TW / Math.max(1, span / 5);
+  const cols = ["--alpha", "--bravo", "--charlie"].map(v => css.getPropertyValue(v).trim());
+  tx.strokeStyle = css.getPropertyValue("--rule"); tx.lineWidth = 1;
+  tx.beginPath(); tx.moveTo(0, base + 0.5); tx.lineTo(TW, base + 0.5); tx.stroke();
+  for (let b = 0; b < bins; b++) {
+    let y = base;
+    for (let k = 0; k < D.teams.length; k++) {
+      const v = fire[k][b], h = v / fireMax * (base - top);
+      if (!h) continue;
+      tx.fillStyle = cols[k]; tx.globalAlpha = 0.85;
+      tx.fillRect(b * bw + 0.5, y - h, Math.max(1, bw - 1), h); y -= h;
+    }
+  }
+  tx.globalAlpha = 1;
+  for (const c of D.cas) {
+    const x = (c[0] - T0) / span * TW;
+    tx.fillStyle = cols[c[2]] || "#888";
+    if (c[1]) tx.fillRect(x - 1, base + 3, 2, 8); else tx.fillRect(x - 1, base + 6, 2, 5);
+  }
+  // minutes
+  tx.fillStyle = css.getPropertyValue("--faint"); tx.font = "500 10px 'IBM Plex Mono', monospace";
+  for (let m = 60; m < span; m += 60) { const x = m / span * TW; tx.fillRect(x, top, 1, 4); tx.fillText(`${m / 60}m`, x + 3, top + 8); }
+  const px = (t - T0) / span * TW;
+  tx.fillStyle = css.getPropertyValue("--ink"); tx.fillRect(px - 1, 0, 2, TH);
+}
+document.getElementById("tlcap").innerHTML =
+  `<span>Bars: rounds fired every 5 s, by side (${D.teams.map((n, k) => teamSw(k) + n).join(", ")})</span><span>Ticks below: casualties (tall = killed, short = downed)</span><span>Click or drag to jump</span>`;
+let scrubbing = false;
+function seekFromEvent(e) {
+  const r = tl.getBoundingClientRect();
+  t = T0 + Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * (T1 - T0);
+  panels(); draw(); drawTimeline();
+}
+tl.addEventListener("pointerdown", e => { scrubbing = true; tl.setPointerCapture(e.pointerId); seekFromEvent(e); });
+tl.addEventListener("pointermove", e => { if (scrubbing) seekFromEvent(e); });
+tl.addEventListener("pointerup", () => { scrubbing = false; });
+
+// ---------------------------------------------------------------- controls
+const playBtn = document.getElementById("play");
+function syncPlay() { playBtn.innerHTML = playing ? "&#10074;&#10074;" : "&#9654;"; playBtn.setAttribute("aria-label", playing ? "Pause" : "Play"); }
+playBtn.onclick = () => { if (t >= T1) t = T0; playing = !playing; syncPlay(); };
+document.getElementById("back").onclick = () => { t = Math.max(T0, t - 10); panels(); draw(); drawTimeline(); };
+document.getElementById("fwd").onclick = () => { t = Math.min(T1, t + 10); panels(); draw(); drawTimeline(); };
+const speedsEl = document.getElementById("speeds");
+[1, 2, 4, 8, 16].forEach(s => {
+  const b = document.createElement("button");
+  b.textContent = `${s}×`; b.setAttribute("aria-pressed", String(s === speed)); b.setAttribute("aria-label", `${s} times speed`);
+  b.onclick = () => { speed = s; speedsEl.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); };
+  speedsEl.appendChild(b);
+});
+function toggle(id, key) {
+  const b = document.getElementById(id);
+  b.onclick = () => { show[key] = !show[key]; b.setAttribute("aria-pressed", String(show[key])); draw(); };
+}
+toggle("t-tracers", "tracers"); toggle("t-trails", "trails"); toggle("t-names", "names"); toggle("t-targets", "targets");
+const squadSel = document.getElementById("squad");
+const inMatch = new Set(people.map(p => p.squad).filter(Boolean));
+D.squads.filter(([n]) => inMatch.has(n)).forEach(([n, k]) => { const o = document.createElement("option"); o.value = n; o.textContent = `${n} (${k})`; squadSel.appendChild(o); });
+squadSel.onchange = () => {
+  focusSquad = squadSel.value;
+  if (focusSquad) {
+    // centre on them
+    const [i, f] = frameAt(t); let n = 0, x = 0, z = 0;
+    for (let j = 0; j < P; j++) if (people[j].squad === focusSquad && personAt(i, f, j, tmp)) { x += tmp.x; z += tmp.z; n++; }
+    if (n) { view.x = x / n; view.z = z / n; view.k = Math.max(view.k, 1.2); }
+  }
+  draw();
+};
+function zoomAt(px, py, factor) {
+  const x = wx(px), z = wz(py);
+  view.k = Math.min(12, Math.max(Math.min(W, H) / SIZE * 0.5, view.k * factor));
+  view.x = x - (px - W / 2) / view.k; view.z = z - (py - H / 2) / view.k;
+  draw();
+}
+document.getElementById("zin").onclick = () => zoomAt(W / 2, H / 2, 1.6);
+document.getElementById("zout").onclick = () => zoomAt(W / 2, H / 2, 1 / 1.6);
+document.getElementById("zfit").onclick = () => { fit(); follow = false; draw(); };
+cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+
+// drag to pan, pinch to zoom, click to pick
+const pointers = new Map();
+let dragFrom = null, moved = 0, pinch0 = 0;
+cv.addEventListener("pointerdown", e => {
+  cv.setPointerCapture(e.pointerId); pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  dragFrom = { x: e.clientX, y: e.clientY, vx: view.x, vz: view.z }; moved = 0;
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); }
+  cv.classList.add("dragging");
+});
+cv.addEventListener("pointermove", e => {
+  const r = cv.getBoundingClientRect();
+  if (pointers.has(e.pointerId)) {
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pinch0 > 0) zoomAt((a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top, d / pinch0);
+      pinch0 = d; moved = 99; return;
+    }
+    if (dragFrom) {
+      const dx = e.clientX - dragFrom.x, dy = e.clientY - dragFrom.y;
+      moved = Math.max(moved, Math.hypot(dx, dy));
+      if (moved > 3) { view.x = dragFrom.vx - dx / view.k; view.z = dragFrom.vz - dy / view.k; follow = false; draw(); }
+    }
+  } else hover(e.clientX - r.left, e.clientY - r.top);
+  const gx = wx(e.clientX - r.left), gz = wz(e.clientY - r.top);
+  if (Math.abs(gx) <= HALF && Math.abs(gz) <= HALF) {
+    const e8 = Math.floor((gx + HALF) / 10), n8 = Math.floor((HALF - gz) / 10);
+    const g = document.getElementById("grid");
+    g.textContent = `Grid ${String(Math.floor(e8 / 10)).padStart(2, "0")}${e8 % 10} ${String(Math.floor(n8 / 10)).padStart(2, "0")}${n8 % 10}`;
+    g.hidden = false;
+  }
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch0 = 0;
+  if (pointers.size === 0) {
+    cv.classList.remove("dragging");
+    if (moved <= 3 && dragFrom) { const r = cv.getBoundingClientRect(); pick(e.clientX - r.left, e.clientY - r.top); }
+    dragFrom = null;
+  }
+}
+cv.addEventListener("pointerup", endPointer);
+cv.addEventListener("pointercancel", endPointer);
+cv.addEventListener("pointerleave", () => { document.getElementById("tip").hidden = true; document.getElementById("grid").hidden = true; });
+function nearest(px, py, within) {
+  const [i, f] = frameAt(t);
+  let best = -1, bd = within * within;
+  for (let j = 0; j < P; j++) {
+    if (st[i * P + j] & 128 || !personAt(i, f, j, tmp)) continue;
+    const dx = sx(tmp.x) - px, dy = sz(tmp.z) - py, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = j; }
+  }
+  return best;
+}
+function pick(px, py) { selected = nearest(px, py, 14); follow = selected >= 0 && follow; panels(); draw(); }
+function hover(px, py) {
+  const j = nearest(px, py, 12), tip = document.getElementById("tip");
+  if (j < 0) { tip.hidden = true; return; }
+  const [i] = frameAt(t), s = st[i * P + j], ci = lastChange(j, t);
+  const ch = ci != null && ci >= 0 ? changes[j][ci] : null;
+  tip.textContent = `${people[j].name} · ${people[j].squad || ""} ${people[j].role} · ${ch ? D.states[ch[1]] + (D.notes[ch[2]] ? ": " + D.notes[ch[2]] : "") : D.states[s & 15]}`;
+  tip.style.left = px + "px"; tip.style.top = py + "px"; tip.hidden = false;
+}
+document.addEventListener("keydown", e => {
+  if (e.target.closest("select")) return;
+  if (e.code === "Space") { e.preventDefault(); playBtn.click(); }
+  else if (e.code === "ArrowLeft") { e.preventDefault(); document.getElementById("back").click(); }
+  else if (e.code === "ArrowRight") { e.preventDefault(); document.getElementById("fwd").click(); }
+  else if (e.key === "+" || e.key === "=") zoomAt(W / 2, H / 2, 1.6);
+  else if (e.key === "-") zoomAt(W / 2, H / 2, 1 / 1.6);
+});
+
+// key
+const legend = document.getElementById("legend");
+function key(drawFn, text) {
+  const c = document.createElement("canvas"); c.width = 44; c.height = 32;
+  const g = c.getContext("2d"); g.scale(2, 2); drawFn(g);
+  const s = document.createElement("span"); s.innerHTML = text;
+  legend.append(c, s);
+}
+const K = TEAM_RGB[0];
+key(g => { g.fillStyle = rgba(K, 1); g.strokeStyle = "#000"; g.beginPath(); g.arc(11, 8, 4.5, 0, 7); g.fill(); g.stroke(); }, "Standing (colour = side)");
+key(g => { g.fillStyle = rgba(K, 1); g.strokeStyle = "#000"; g.beginPath(); g.arc(11, 8, 4.5, 0, 7); g.fill(); g.stroke(); g.fillStyle = "rgba(0,0,0,.6)"; g.beginPath(); g.arc(11, 8, 1.8, 0, 7); g.fill(); }, "Crouched");
+key(g => { g.fillStyle = rgba(K, 1); g.strokeStyle = "#000"; g.beginPath(); g.ellipse(11, 8, 6.5, 2.6, 0, 0, 7); g.fill(); g.stroke(); }, "Prone");
+key(g => { g.strokeStyle = rgba(K, 1); g.lineWidth = 1.6; g.beginPath(); g.arc(11, 8, 4.5, 0, 7); g.stroke(); g.beginPath(); g.moveTo(8, 8); g.lineTo(14, 8); g.stroke(); }, "Down, bleeding");
+key(g => { g.strokeStyle = rgba(TEAM_RGB[1], 1); g.lineWidth = 2; g.beginPath(); g.moveTo(7, 4); g.lineTo(15, 12); g.moveTo(7, 12); g.lineTo(15, 4); g.stroke(); }, "Killed (faded after 15 s)");
+key(g => { g.strokeStyle = rgba(K.map(c => Math.min(255, c + 60)), 1); g.lineWidth = 1.3; g.beginPath(); g.moveTo(1, 12); g.lineTo(21, 4); g.stroke(); }, "Aimed shot");
+key(g => { g.strokeStyle = rgba(K.map(c => Math.min(255, c + 60)), 0.8); g.setLineDash([4, 3]); g.lineWidth = 1.3; g.beginPath(); g.moveTo(1, 12); g.lineTo(21, 4); g.stroke(); }, "Suppressive fire");
+key(g => { g.strokeStyle = "rgb(255,236,190)"; g.lineWidth = 2.2; g.beginPath(); g.moveTo(1, 12); g.lineTo(21, 4); g.stroke(); }, "A vehicle's gun");
+key(g => { g.fillStyle = rgba(K, 1); g.strokeStyle = "#000"; g.fillRect(3, 4, 16, 9); g.strokeRect(3, 4, 16, 9); }, "Vehicle (hollow: no crew)");
+key(g => { g.fillStyle = rgba(K, 1); g.strokeStyle = "#000"; g.beginPath(); g.moveTo(19, 8); g.lineTo(11, 13); g.lineTo(3, 8); g.lineTo(11, 3); g.closePath(); g.fill(); g.stroke(); }, "Helicopter (ring: airborne)");
+key(g => { g.fillStyle = rgba(K, 1); g.strokeStyle = "#000"; g.beginPath(); g.moveTo(11, 3); g.lineTo(15.5, 12); g.lineTo(6.5, 12); g.closePath(); g.fill(); g.stroke(); }, "Drone");
+key(g => { g.strokeStyle = "rgba(255,190,90,.95)"; g.lineWidth = 2; g.beginPath(); g.arc(11, 8, 6, 0, 7); g.stroke(); }, "Explosion (ring: fragment reach)");
+
+// ---------------------------------------------------------------- run
+document.getElementById("mapname").textContent = D.map.name;
+document.getElementById("matchline").textContent =
+  `${fmt(T1 - T0)} of play · ${P} soldiers, ${V} vehicles · ${D.nshots.toLocaleString()} shots · ${D.cas.filter(c => c[1]).length} killed, ${D.cas.filter(c => !c[1]).length} downed · grid squares are 100 m`;
+// Open on the busiest stretch of the fighting.
+let busiest = 0, bestB = -1;
+for (let b = 0; b < bins; b++) { const v = fire[0][b] + (fire[1] ? fire[1][b] : 0) + (fire[2] ? fire[2][b] : 0); if (v > busiest) { busiest = v; bestB = b; } }
+function openOnBusiest() {
+  if (bestB < 0) { fit(); return; }
+  t = Math.min(T1, T0 + bestB * 5 + 4);
+  // centre on where most of that fire was
+  let n = 0, x = 0, z = 0;
+  for (let s = 0; s < sht.length; s++) if (sht[s] >= T0 + bestB * 5 && sht[s] < T0 + bestB * 5 + 5 && (shk[s] >> 2) !== 3) { x += shp[s * 4]; z += shp[s * 4 + 1]; n++; }
+  if (n) { view.x = x / n / 10; view.z = z / n / 10; view.k = Math.min(W, H) / 700; } else fit();
+}
+resize(); openOnBusiest(); panels(); draw(); drawTimeline(); syncPlay();
+if (!reduceMotion) { playing = true; speed = 2; speedsEl.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x.textContent === "2×"))); syncPlay(); }
+
+let last = performance.now();
+function tick(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (playing) {
+    t += dt * speed;
+    if (t >= T1) { t = T1; playing = false; syncPlay(); }
+    if (follow && selected >= 0) { const [i, f] = frameAt(t); if (personAt(i, f, selected, tmp)) { view.x = tmp.x; view.z = tmp.z; } }
+    draw(); drawTimeline();
+    if (Math.abs(t - lastPanelAt) > 0.25) panels();
+  }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+new ResizeObserver(() => { resize(); draw(); drawTimeline(); }).observe(wrap);
+new ResizeObserver(() => { resizeTimeline(); drawTimeline(); }).observe(tlWrap);
+const redrawTheme = () => { draw(); drawTimeline(); };
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawTheme);
+new MutationObserver(redrawTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>

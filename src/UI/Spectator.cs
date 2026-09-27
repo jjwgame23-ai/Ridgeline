@@ -66,24 +66,20 @@ public partial class Spectator : Node3D
     public override void _UnhandledInput(InputEvent e)
     {
         if (!Active) return;
-        if (e is InputEventMouseButton mb && mb.Pressed && Input.MouseMode == Input.MouseModeEnum.Captured)
+        // (The view toggle used to be C, which is also "down" in the free camera: going down left it.)
+        bool captured = Input.MouseMode == Input.MouseModeEnum.Captured;
+        if (captured && e.IsActionPressed("spectate_next")) Cycle(1);
+        else if (captured && e.IsActionPressed("spectate_prev")) Cycle(-1);
+        else if (e.IsActionPressed("spectate_view")) ViewMode = ViewMode == View.Chase ? View.Eyes : View.Chase;
+        else if (e.IsActionPressed("spectate_free"))
         {
-            if (mb.ButtonIndex == MouseButton.Left) Cycle(1);
-            else if (mb.ButtonIndex == MouseButton.Right) Cycle(-1);
-        }
-        else if (e is InputEventKey k && k.Pressed && !k.Echo)
-        {
-            if (k.PhysicalKeycode == Key.C) ViewMode = ViewMode == View.Chase ? View.Eyes : View.Chase;
-            else if (k.PhysicalKeycode == Key.F)
+            if (ViewMode == View.Free) ViewMode = View.Chase;
+            else
             {
-                if (ViewMode == View.Free) ViewMode = View.Chase;
-                else
-                {
-                    ViewMode = View.Free;
-                    var r = GlobalRotationDegrees;
-                    _pitch = r.X;
-                    _yaw = r.Y;
-                }
+                ViewMode = View.Free;
+                var r = GlobalRotationDegrees;
+                _pitch = r.X;
+                _yaw = r.Y;
             }
         }
         else if (e is InputEventMouseMotion mm && ViewMode == View.Free && Input.MouseMode == Input.MouseModeEnum.Captured)

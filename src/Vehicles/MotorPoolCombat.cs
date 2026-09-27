@@ -80,7 +80,7 @@ public sealed partial class MotorPool
         }
         // Back out, away from it, the front towards the threat.
         var back = v.GlobalPosition - dir * 35f;
-        var nav = NavigationServer3D.MapGetClosestPoint(Valley.VehicleMap, back);
+        var nav = Valley.ClosestForVehicles(back);
         s.ScootTo = ((nav - back) with { Y = 0f }).Length() < 8f ? nav : back;
         s.ScootUntil = now + 8.0;
         s.HasFiring = false;
@@ -120,12 +120,7 @@ public sealed partial class MotorPool
         if (best > 22f || MathF.Abs(v.Speed) > 1f) { s.RearmAt = -1; return true; }
         if (s.RearmAt < 0) s.RearmAt = now + 20.0; // loading rounds in by hand
         if (now < s.RearmAt) return true;
-        foreach (var t in v.Turrets)
-        {
-            for (int i = 0; i < t.Def.Ammo.Length; i++) t.Stock[i] = t.Def.Ammo[i].Mags;
-            if (t.Def.Coax != null) t.CoaxStock = t.Def.Coax.Mags;
-        }
-        v.SmokeSalvos = v.Def.Heavy ? 2 : 0;
+        v.Restock();
         s.Rearming = false;
         s.HasFiring = false;
         Rearms++;
@@ -279,7 +274,7 @@ public sealed partial class MotorPool
             var p = obj + new Vector3(MathF.Cos(ang), 0f, MathF.Sin(ang)) * r;
             if (MathF.Abs(p.X) > _m.Map.Half - 40f || MathF.Abs(p.Z) > _m.Map.Half - 40f) continue;
             p.Y = _m.Map.HeightAt(p.X, p.Z);
-            var nav = NavigationServer3D.MapGetClosestPoint(Valley.VehicleMap, p);
+            var nav = Valley.ClosestForVehicles(p);
             if (((nav - p) with { Y = 0f }).Length() > 6f) continue;
             p = nav;
             bool seen = space.IntersectRay(PhysicsRayQueryParameters3D.Create(obj + Vector3.Up * 2.5f, p + Vector3.Up * 2f, Layers.World | Layers.Trees)).Count == 0;
@@ -461,7 +456,7 @@ public sealed partial class MotorPool
 
     Vector3 SnapVehicle(Vector3 p)
     {
-        var nav = NavigationServer3D.MapGetClosestPoint(Valley.VehicleMap, p);
+        var nav = Valley.ClosestForVehicles(p);
         return ((nav - p) with { Y = 0f }).Length() < 15f ? nav : p;
     }
 
@@ -499,7 +494,7 @@ public sealed partial class MotorPool
             if (d < min || d > max) continue;
             if (notPast != null && d < leadD - 10f) continue; // not out in front of our infantry
             p.Y = _m.Map.HeightAt(p.X, p.Z);
-            var nav = NavigationServer3D.MapGetClosestPoint(Valley.VehicleMap, p);
+            var nav = Valley.ClosestForVehicles(p);
             if (((nav - p) with { Y = 0f }).Length() > 5f) continue;
             p = nav;
             var up = Vector3.Up;

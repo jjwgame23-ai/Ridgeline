@@ -35,7 +35,7 @@ public sealed partial class MotorPool
         public Vector3 Firing, FiringWatch, FiringAnchor;
         public bool HasFiring;
         public string FiringWhy = "";
-        public double FiringAt, LastHitSeen = -99, ScootUntil, RearmAt = -1, LastRequestAt = -99;
+        public double FiringAt, LastHitSeen = -99, ScootUntil, RearmAt = -1, LastRequestAt = -99, CrewWaitSince = -1;
         public Vector3 ScootTo;
         public bool Rearming;
         public int ShotsAtFiring;
@@ -309,31 +309,51 @@ public sealed partial class MotorPool
     /// A clear, flat landing zone near a point: level ground, and nothing solid (houses,
     /// trees, rocks) within reach of the rotor.
     /// </summary>
-    public Vector3 FindLZ(Vector3 near, float within = 80f)
+    /// <summary>
+    /// Somewhere near <paramref name="near"/> to put a helicopter down: flat, and open ground all round out past the
+    /// rotor's reach (<paramref name="rotor"/>, its radius), trees and walls included, since a blade that touches
+    /// anything is the end of the aircraft. Further out if there's nowhere close; failing everywhere, the least
+    /// obstructed spot found. (It used to check four points 9 m out, square to the map, and failing those land
+    /// on the point asked for, in the middle of a village if that's where it was.)
+    /// </summary>
+    public Vector3 FindLZ(Vector3 near, float within = 80f, float rotor = 9f)
     {
         var space = _m.Map.GetWorld3D().DirectSpaceState;
         var rng = new RandomNumberGenerator();
         rng.Randomize();
-        Vector3 best = _m.Map.Ground(near);
+        Vector3 best = _m.Map.Ground(near), fallback = best;
         float bestScore = float.MinValue;
-        for (int k = 0; k < 24; k++)
+        int fallbackClear = -1;
+        float reach = rotor + 4f;
+        for (int wide = 1; wide <= 3 && bestScore == float.MinValue; wide++)
         {
-            var p = near + new Vector3(rng.RandfRange(-within, within), 0f, rng.RandfRange(-within, within));
-            if (MathF.Abs(p.X) > _m.Map.Half - 120f || MathF.Abs(p.Z) > _m.Map.Half - 120f) continue;
-            if (_m.Map.NormalAt(p.X, p.Z).Y < 0.94f) continue;
-            p.Y = _m.Map.HeightAt(p.X, p.Z);
-            bool clear = true;
-            foreach (var o in new[] { Vector3.Zero, new Vector3(9f, 0f, 0f), new Vector3(-9f, 0f, 0f), new Vector3(0f, 0f, 9f), new Vector3(0f, 0f, -9f) })
+            float w = within * wide;
+            for (int k = 0; k < 24; k++)
             {
-                var top = p + o + Vector3.Up * 40f;
-                var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(top, p + o + Vector3.Down * 2f, Layers.World | Layers.Trees));
-                if (hit.Count == 0 || hit["collider"].AsGodotObject() is not Node n || !n.IsInGroup("ground") || n.IsInGroup("floor")) { clear = false; break; }
+                var p = near + new Vector3(rng.RandfRange(-w, w), 0f, rng.RandfRange(-w, w));
+                if (MathF.Abs(p.X) > _m.Map.Half - 120f || MathF.Abs(p.Z) > _m.Map.Half - 120f) continue;
+                if (_m.Map.NormalAt(p.X, p.Z).Y < 0.94f) continue;
+                p.Y = _m.Map.HeightAt(p.X, p.Z);
+                // The middle, then two rings (half the disc and past its edge), eight ways round.
+                int clear = 0;
+                for (int i = 0; i < 17; i++)
+                {
+                    var o = i == 0 ? Vector3.Zero : Vector3.Forward.Rotated(Vector3.Up, (i - 1) % 8 * MathF.PI / 4f) * (i <= 8 ? reach * 0.5f : reach);
+                    var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(p + o + Vector3.Up * 40f, p + o + Vector3.Down * 2f, Layers.World | Layers.Trees));
+                    if (hit.Count > 0 && hit["collider"].AsGodotObject() is Node n && n.IsInGroup("ground") && !n.IsInGroup("floor")) clear++;
+                }
+                if (clear < 17)
+                {
+                    if (clear > fallbackClear) { fallbackClear = clear; fallback = p; }
+                    continue;
+                }
+                float score = -p.DistanceTo(near) * 0.2f + rng.RandfRange(0f, 3f);
+                if (score > bestScore) { bestScore = score; best = p; }
             }
-            if (!clear) continue;
-            float score = -p.DistanceTo(near) * 0.2f + rng.RandfRange(0f, 3f);
-            if (score > bestScore) { bestScore = score; best = p; }
         }
-        return best;
+        if (bestScore > float.MinValue) return best;
+        Prof.Count("lz:none clear");
+        return fallbackClear >= 0 ? fallback : best;
     }
 
     /// <summary>
@@ -356,9 +376,9 @@ public sealed partial class MotorPool
                 v.Goal = s.Park;
                 v.Boarding = false;
                 if (v.Driver == null || !v.Landed) break;
-                if (Casualties(s.Team) is Vector3 cas)
+                if (Casualties(s.Team) is Vector3 cas && !AirDefenceOnRoute(s.Team, v.GlobalPosition, cas))
                 {
-                    s.Drop = FindLZ(cas, 50f);
+                    s.Drop = FindLZ(cas, 50f, v.Def.RotorRadius);
                     s.Job = 4;
                     s.JobSince = now;
                     Comms.Say(v.Driver, "Medevac inbound, hold on!");
@@ -374,12 +394,13 @@ public sealed partial class MotorPool
                     float d = (cand.Objective.Center - lead.FeetPos with { Y = cand.Objective.Center.Y }).Length() - fetch * 0.3f;
                     if (d > bestD) { bestD = d; best = cand; }
                 }
-                if (best == null) break;
+                // Not into the enemy's air defence (an LZ within reach of a known anti-aircraft gun): they'll walk.
+                if (best == null || AirDefenceOnRoute(s.Team, v.GlobalPosition, best.Objective!.Center)) break;
                 s.Cargo = best;
                 best.Transport = v;
                 s.Job = 1;
                 s.JobSince = now;
-                s.Drop = FindLZ(best.Leader!.FeetPos, 60f);
+                s.Drop = FindLZ(best.Leader!.FeetPos, 60f, v.Def.RotorRadius);
                 AirAssaults++;
                 Comms.Say(v.Driver, $"{best.Name}, bird's on the way to you. Mark an LZ!");
                 break;
@@ -399,7 +420,7 @@ public sealed partial class MotorPool
                     if (aboard == 0) { Release(s); s.Job = 3; break; }
                     var c = sq.Objective.Center;
                     var from = (v.GlobalPosition - c) with { Y = 0f };
-                    s.Drop = FindLZ(c + from.Normalized() * MathF.Max(250f, sq.Objective.Radius + 200f), 80f);
+                    s.Drop = FindLZ(c + from.Normalized() * MathF.Max(250f, sq.Objective.Radius + 200f), 80f, v.Def.RotorRadius);
                     s.Job = 2;
                     s.JobSince = now;
                     v.Boarding = false;
@@ -464,6 +485,13 @@ public sealed partial class MotorPool
 
     public int Evacuated, AirAssaults;
 
+    /// <summary>How far round a known anti-aircraft vehicle aircraft keep away: most of its guns' reach.</summary>
+    const float AirDefenceReach = 2500f;
+
+    /// <summary>Would a flight from here to there come within reach of the enemy's known air defence?</summary>
+    static bool AirDefenceOnRoute(int team, Vector3 from, Vector3 to) =>
+        Radio.AirDefenceNear(team, to, AirDefenceReach) != null || Radio.AirDefenceNear(team, (from + to) * 0.5f, AirDefenceReach) != null;
+
     /// <summary>Somewhere with at least two of our wounded down, and no enemy we know of close by.</summary>
     Vector3? Casualties(int team)
     {
@@ -486,6 +514,47 @@ public sealed partial class MotorPool
     {
         var obj = s.Crew?.Objective as PointObjective;
         if (obj == null || v.Driver == null) { v.AirMode = HeliMode.Land; v.Goal = s.Park; return; }
+        // Rockets gone and the gun low (or everything gone): home to rearm. The ground crew hang new pods
+        // and belts once it's down on its pad; before this, a gunship that had shot itself dry sat there for good.
+        int pods = Array.FindIndex(v.Def.Turrets.ToArray(), t => t.Fixed);
+        bool rocketsGone = pods < 0 || v.Turrets[pods].Loaded.Sum() + v.Turrets[pods].Stock.Sum() == 0;
+        static int Rounds(Vehicle.TurretState t) => Enumerable.Range(0, t.Def.Ammo.Length).Sum(i => t.Loaded[i] + t.Stock[i] * t.Def.Ammo[i].Mag);
+        bool gunLow = v.Turrets.Where(t => !t.Def.Fixed).All(t => Rounds(t) * 3 < t.Def.Ammo.Sum(a => a.Mag * (a.Mags + 1)));
+        if (!s.Rearming && rocketsGone && gunLow) { s.Rearming = true; s.RearmAt = -1; Comms.Say(v.Driver, "Winchester — heading home to rearm."); }
+        if (s.Rearming)
+        {
+            v.AirMode = HeliMode.Land;
+            v.Goal = s.Park;
+            if (!v.Landed || v.GlobalPosition.DistanceTo(s.Park) > 50f) return;
+            if (s.RearmAt < 0) s.RearmAt = Clock.Now + 45.0;
+            if (Clock.Now < s.RearmAt) return;
+            v.Restock();
+            s.Rearming = false;
+            Rearms++;
+            Comms.Say(v.Driver, "Rearmed and refuelled. Back on station.");
+        }
+        // Enemy air defence known near the target: the gunship works from battle positions out of its sight (see
+        // HeliPilot.BattlePosition). If there are none for half a minute, that airspace is theirs until something
+        // kills the gun: hold off. (Gunships used to fly straight in and be shot down within half a minute of
+        // every start.)
+        if (v.NoPositionSince > 0 && Clock.Now - v.NoPositionSince > 30.0 && Radio.AirDefenceNear(s.Team, obj.Watch, AirDefenceReach) is { } aaRep)
+        {
+            if (v.AirMode == HeliMode.Attack && v.Driver is Bot) Comms.Say(v.Driver, $"Enemy anti-air near the target ({aaRep.Vehicle!.Def.Name}) — nowhere to work from, holding off.");
+            v.AirMode = HeliMode.Land;
+            v.Goal = s.Park;
+            v.BattlePos = null;
+            v.NoPositionSince = -1;
+            return;
+        }
+        // The whole crew aboard before lifting off: without the front-seater there's no gun, and nobody to take
+        // the controls if the pilot's hit (one flew off alone, bleeding, passed out at 60 m and came down).
+        if (v.Landed && v.GunnerSeat >= 0 && v.Occupants[v.GunnerSeat] == null && s.Crew != null
+            && s.Crew.Members.Any(m => m.Alive && m.Ride == null && m.FeetPos.DistanceTo(v.GlobalPosition) < 400f))
+        {
+            if (s.CrewWaitSince < 0) s.CrewWaitSince = Clock.Now;
+            if (Clock.Now - s.CrewWaitSince < 40.0) { v.AirMode = HeliMode.Land; v.Goal = v.GlobalPosition; return; }
+        }
+        else s.CrewWaitSince = -1;
         v.AirMode = HeliMode.Attack;
         v.Goal = obj.Watch;
         Vector3? aim = null;
@@ -493,8 +562,6 @@ public sealed partial class MotorPool
         if (armor != null && armor.Pos.DistanceTo(obj.Watch) < 450f && armor.Vehicle is { Destroyed: false } ev) aim = ev.Center;
         aim ??= Intel.Cluster(s.Team, obj.Watch, 0f, 450f, 40f, 2);
         v.AttackPoint = aim;
-        // Out of rockets and bullets: home to rearm.
-        if (v.Turrets.All(t => t.Loaded.Sum() + t.Stock.Sum() == 0)) { v.AirMode = HeliMode.Land; v.Goal = s.Park; }
     }
 
     /// <summary>
@@ -503,6 +570,13 @@ public sealed partial class MotorPool
     /// </summary>
     void MortarPit(Slot s, Vehicle v, double now)
     {
+        // Out of bombs: more are carried up from the FOB's cache or from base (the pit is always by one).
+        var tube = v.Turrets[0];
+        if (tube.Loaded.Sum() + tube.Stock.Sum() == 0)
+        {
+            if (s.RearmAt < 0) s.RearmAt = now + 90.0;
+            else if (now >= s.RearmAt) { v.Restock(); s.RearmAt = -1; Rearms++; }
+        }
         var newest = Fob.All.LastOrDefault(f => f.Team == s.Team);
         if (newest == null || v.GlobalPosition.DistanceTo(newest.GlobalPosition) < 250f) return;
         if (v.Crewed) foreach (var o in v.Occupants.ToArray()) if (o != null) v.Leave(o);
@@ -522,9 +596,13 @@ public sealed partial class MotorPool
     /// </summary>
     bool Abandon(Slot s, Vehicle v, double now)
     {
-        bool useless = v.Immobile || (v.EngineHit && v.Hp < v.Def.Hp * 0.3f);
-        if (!useless) { _deadSince.Remove(v); return false; }
-        if (v.Crewed && (v.Turrets.Length == 0 || v.TurretDown.All(x => x) || now - v.LastHit < 1.0))
+        if (!v.Useless) { _deadSince.Remove(v); return false; }
+        // A crippled aircraft: nobody gets out in the air (the pilot puts it down: see HeliPilot); on the ground,
+        // everyone gets out: it can't do its job and it's a big target. (Before, a tail rotor shot out in flight had
+        // the crew stepping out at 80 m, and the empty helicopter flew on into a hillside.) A ground vehicle
+        // that can still fight is fought from until it's hit again.
+        bool bail = v.Def.Air ? v.Landed : v.Turrets.Length == 0 || v.TurretDown.All(x => x) || now - v.LastHit < 1.0;
+        if (v.Crewed && bail)
         {
             foreach (var o in v.Occupants.ToArray())
                 if (o is Bot b) v.Leave(b);

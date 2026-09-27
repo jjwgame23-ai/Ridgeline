@@ -42,7 +42,7 @@ public partial class Player
         _pitch = 0f;
         _yaw = Mathf.RadToDeg(v.GlobalRotation.Y);
         string role = s.Role switch { global::Ridgeline.SeatRole.Driver => "driving", global::Ridgeline.SeatRole.Gunner => "on the gun", _ => "passenger" };
-        Hud.Toast($"{v.Def.Name} — {role} · [F] get out · [1-{v.Def.Seats.Count}] change seat", 3f);
+        Hud.Toast($"{v.Def.Name} — {role} · [{Controls.Keys("use")}] get out · [1-{v.Def.Seats.Count}] change seat", 3f);
     }
 
     public void Dismount(Vector3 at)
@@ -119,7 +119,7 @@ public partial class Player
         if (seat.Turret >= 0 && captured && Input.IsActionPressed("fire")) v.Fire(seat.Turret, false);
 
         // Chase camera: behind and above, turning with the aircraft; Alt to look around.
-        bool look = captured && Input.IsPhysicalKeyPressed(Key.Alt);
+        bool look = captured && Input.IsActionPressed("free_look");
         if (look) { _lookYaw = _yaw - Mathf.RadToDeg(v.GlobalRotation.Y); _lookPitch = _pitch; }
         else { _lookYaw = Mathf.MoveToward(_lookYaw, 0f, dt * 120f); _lookPitch = Mathf.MoveToward(_lookPitch, -8f, dt * 60f); _yaw = Mathf.RadToDeg(v.GlobalRotation.Y) + _lookYaw; _pitch = _lookPitch; }
         var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(_lookPitch), v.GlobalRotation.Y + Mathf.DegToRad(_lookYaw), 0f));

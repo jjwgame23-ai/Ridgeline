@@ -17,8 +17,16 @@ public partial class Main : Node3D
     public override void _Ready()
     {
         Controls.Register();
+        foreach (var a in OS.GetCmdlineUserArgs())
+            if (a.StartsWith("bindsdoc="))
+            {
+                // KEYBINDS.md, from the list in Controls (a relative path is from the project folder).
+                string p = a["bindsdoc=".Length..];
+                Controls.WriteDoc(System.IO.Path.IsPathRooted(p) ? p : ProjectSettings.GlobalizePath("res://" + p));
+                GD.Print($"bindsdoc: wrote {p}");
+            }
         Settings.Load();
-        Combatants.All.Clear();
+        Combatants.Clear();
         AddChild(new Clock());
 
         var setup = _pending;
@@ -54,8 +62,8 @@ public partial class Main : Node3D
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F10 }) Launch(this, null);
-        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F11 }) Settings.ToggleFullscreen();
+        if (e.IsActionPressed("main_menu")) Launch(this, null);
+        if (e.IsActionPressed("fullscreen")) Settings.ToggleFullscreen();
     }
 
     void BuildRange()

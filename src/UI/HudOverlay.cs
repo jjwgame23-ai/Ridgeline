@@ -157,17 +157,17 @@ public partial class HudOverlay : Control
                 : $"{t.Weapon.Name} {t.Loaded[t.AmmoIdx]}{(t.Weapon.Mag > 1 ? $"/{t.Weapon.Mag}" : "")} +{t.Stock[t.AmmoIdx]}{(t.Reloading ? $"  LOADING {t.ReloadT:0.0}s" : "")}";
             if (t.Def.Indirect && t.AimAt is Vector3 lay)
                 lines.Add($"laying on {lay.DistanceTo(t.YawNode.GlobalPosition):0} m, bearing {Mathf.PosMod(-Mathf.RadToDeg(MathF.Atan2(lay.X - t.YawNode.GlobalPosition.X, -(lay.Z - t.YawNode.GlobalPosition.Z))), 360f):000} · {(t.Laid ? "ON TARGET — fire" : "laying...")} · look at the spot to aim");
-            lines.Add($"{ammo} · [V] ammo · [R] reload · [RMB] zoom{(v.TurretDown[seat.Turret] ? " · TURRET JAMMED" : "")}");
+            lines.Add($"{ammo} · " + Controls.Fill("[{firemode}] ammo · [{reload}] reload · [{aim}] zoom") + (v.TurretDown[seat.Turret] ? " · TURRET JAMMED" : ""));
         }
         else if (seat.Role == SeatRole.Driver && v.Def.Air)
         {
             lines.Add($"alt {v.Agl:0} m · {v.AirSpeed * 3.6f:0} km/h · climb {v.Velocity3.Y:+0.0;-0.0} m/s · collective {v.Collective * 100:0}% · flares {v.FlaresLeft}" +
                       (seat.Turret >= 0 ? $" · rockets {v.Turrets[seat.Turret].Loaded[0]}" : "") + (v.Landed ? " · ON THE GROUND" : ""));
-            lines.Add("[mouse] cyclic · [W/S] collective · [A/D] pedals · [Space] hover assist · [X] flares · [Alt] look" + (seat.Turret >= 0 ? " · [LMB] rockets" : ""));
+            lines.Add(Controls.Fill("[mouse] cyclic · [{move_forward}/{move_back}] collective · [{move_left}/{move_right}] pedals · [{jump}] hover assist · [{selfaid}] flares · [{free_look}] look" + (seat.Turret >= 0 ? " · [{fire}] rockets" : "")));
             if (Clock.Now - v.MissileWarning < 4.0)
             {
                 bool blink = (int)(Clock.Now * 4) % 2 == 0;
-                DrawString(font, new Vector2(size.X / 2f - 120f, size.Y * 0.3f), "MISSILE LAUNCH — [X] FLARES", HorizontalAlignment.Left, -1, 22, blink ? Colors.Red : Colors.Orange);
+                DrawString(font, new Vector2(size.X / 2f - 120f, size.Y * 0.3f), $"MISSILE LAUNCH — [{Controls.Keys("selfaid")}] FLARES", HorizontalAlignment.Left, -1, 22, blink ? Colors.Red : Colors.Orange);
             }
             // Where the rockets will go: along the pods.
             if (seat.Turret >= 0 && cam != null)
@@ -182,7 +182,7 @@ public partial class HudOverlay : Control
                 }
             }
         }
-        else if (seat.Role == SeatRole.Driver) lines.Add("[W/S] drive · [A/D] steer · [Space] brake · [F] get out");
+        else if (seat.Role == SeatRole.Driver) lines.Add(Controls.Fill("[{move_forward}/{move_back}] drive · [{move_left}/{move_right}] steer · [{jump}] brake · [{use}] get out"));
         float y = size.Y - 30f - lines.Count * 20f;
         foreach (var l in lines)
         {
@@ -286,7 +286,7 @@ public partial class HudOverlay : Control
             $"{kind}   ALT {agl:0} m   SPD {d.Vel.Length() * 3.6f:0} km/h   DIST {range:0} m",
             d.Kind == DroneKind.Quad ? $"BATT {d.Battery * 100f:0}%   GRENADES {d.Bombs}   CAM {d.CamPitch:0}°" : $"THROTTLE {d.Throttle * 100f:0}%   PITCH {d.CamPitch:0}°",
             $"stock: {p.DroneQuads} quad · {p.DroneBombs} grenades · {p.DroneFpvs} FPV · {p.DroneAtFpvs} AT FPV",
-            d.Kind == DroneKind.Quad ? "WASD fly (Shift fast) · Space/C up/down · LMB drop · H send it home" : "mouse steer · W/S throttle · LMB detonate · H ditch",
+            Controls.Fill(d.Kind == DroneKind.Quad ? "{move_forward} {move_left} {move_back} {move_right} fly ({sprint} fast) · {jump}/{crouch} up/down · {fire} drop · {gadget} send it home" : "mouse steer · {move_forward}/{move_back} throttle · {fire} detonate · {gadget} ditch"),
         };
         for (int i = 0; i < lines.Count; i++)
             DrawString(font, new Vector2(24, size.Y - 100 + i * 20), lines[i], HorizontalAlignment.Left, -1, 15, i == 3 ? new Color(1, 1, 1, 0.55f) : ink);

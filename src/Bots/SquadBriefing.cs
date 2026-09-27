@@ -49,12 +49,8 @@ public sealed partial class Squad
         {
             case Drill.Contact:
             {
-                string side = "";
-                if (Leader is { } l)
-                {
-                    var toThem = (ContactAt - l.FeetPos) with { Y = 0f };
-                    side = toThem.Cross(Vector3.Up).Dot(Vector3.Right) > 0f ? "right" : "left";
-                }
+                // The side the team actually goes (it was worked out from which way the map faces, and could be the other one).
+                string side = FlankSide;
                 string task = lead ? $"Direct the fight: {TeamName(AssaultTeam ^ 1)} suppresses, {TeamName(AssaultTeam)} flanks {side}."
                     : t == AssaultTeam ? $"{you}: FLANK {side.ToUpperInvariant()} while {TeamName(AssaultTeam ^ 1)} suppresses. Contact {B(ContactAt)}."
                     : $"{you}: GET DOWN AND SUPPRESS toward {B(ContactAt)}. Keep their heads down for the flank.";

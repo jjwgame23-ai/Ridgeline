@@ -45,6 +45,36 @@ public static class Radio
         Heard?.Invoke(rep);
     }
 
+    /// <summary>
+    /// Enemy air defence (an anti-aircraft vehicle) this side has seen or been fired on by lately, still in
+    /// action and within <paramref name="within"/> of a point: somewhere aircraft shouldn't go.
+    /// </summary>
+    public static RadioReport? AirDefenceNear(int team, Vector3 p, float within, double maxAge = 180.0)
+    {
+        double now = Clock.Now;
+        for (int i = Log.Count - 1; i >= 0; i--)
+        {
+            var r = Log[i];
+            if (now - r.At > maxAge) break;
+            if (r.Team == team && r.Kind == RadioKind.Armor && r.Vehicle is { Destroyed: false, Def.Kind: VKind.SPAA }
+                && ((r.Pos - p) with { Y = 0f }).Length() < within) return r;
+        }
+        return null;
+    }
+
+    /// <summary>Every enemy anti-aircraft vehicle a side has heard of lately (the freshest report of each).</summary>
+    public static IEnumerable<RadioReport> AirDefences(int team, double maxAge = 180.0)
+    {
+        double now = Clock.Now;
+        var seen = new HashSet<Vehicle>();
+        for (int i = Log.Count - 1; i >= 0; i--)
+        {
+            var r = Log[i];
+            if (now - r.At > maxAge) break;
+            if (r.Team == team && r.Kind == RadioKind.Armor && r.Vehicle is { Destroyed: false, Def.Kind: VKind.SPAA } av && seen.Add(av)) yield return r;
+        }
+    }
+
     /// <summary>The freshest report of a kind for a side, optionally near a point.</summary>
     public static RadioReport? Latest(int team, RadioKind kind, double maxAge)
     {

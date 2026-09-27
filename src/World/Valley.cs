@@ -306,13 +306,21 @@ public partial class Valley : Node3D, IGround
         if (Current == this) Current = null;
     }
 
+    /// <summary>The nearest point on the people's navmesh (see NavBaker.ClosestPoint), on any map.</summary>
+    public static Vector3 ClosestOnFoot(World3D world, Vector3 p) =>
+        Current is { } v && v.Nav.Finished ? v.Nav.ClosestPoint(p) : NavBaker.MapClosest(world.NavigationMap, p);
+
+    /// <summary>The nearest point on the vehicles' navmesh.</summary>
+    public static Vector3 ClosestForVehicles(Vector3 p) =>
+        Current is { } v && v.VehicleNav.Finished ? v.VehicleNav.ClosestPoint(p) : NavBaker.MapClosest(VehicleMap, p);
+
     /// <summary>Snap a point to walkable ground if the navmesh is ready, else to the terrain surface.</summary>
     public Vector3 Ground(Vector3 p)
     {
         var map = GetWorld3D().NavigationMap;
         if (Nav.Finished && NavigationServer3D.MapGetIterationId(map) > 0)
         {
-            var q = NavigationServer3D.MapGetClosestPoint(map, p with { Y = HeightAt(p.X, p.Z) });
+            var q = Nav.ClosestPoint(p with { Y = HeightAt(p.X, p.Z) });
             // The navmesh follows the ground only to within a metre: never hand back a point under it.
             if (q.DistanceTo(p with { Y = q.Y }) < 6f) return q with { Y = MathF.Max(q.Y, HeightAt(q.X, q.Z)) };
         }

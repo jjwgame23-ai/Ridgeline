@@ -243,7 +243,7 @@ It's the same bot with the same state either way; only the fidelity changes.
 - **Senses** (`BotSenses`)
   - Sight builds up awareness over time. Distance, being in central vs peripheral vision, stance, movement, and whether the target just fired all change the rate. It's checked against a target's head, chest and hips.
   - Hearing uses sound events whose wavefront has actually reached the bot, and gives only a rough position.
-  - Bots also learn about enemies from teammate callouts (after a short delay), from being shot at, and from being hit.
+  - Bots also learn about enemies from teammate callouts within earshot or on their squad's radio (after a short delay), from being shot at, and from being hit by aimed fire (see Quality pass).
 - **Aim** (`BotAim`)
   - A human-like flick that over- or undershoots, then settles.
   - Turn speed is capped, so big swings take time.
@@ -259,7 +259,8 @@ It's the same bot with the same state either way; only the fidelity changes.
   - Standoffs don't last. After a short hold someone commits: a frag followed by a push, a "cover me" flank while a teammate suppresses, or a straight push.
   - Suppressive fire and pre-fire go at the enemy's last known position.
   - Panic bursts: longer full-auto strings when suppressed or hit.
-  - Bots lean around corners (and the hitbox leans with them), throw frags along solved arcs, and run from grenades that land nearby.
+  - Bots lean around corners (and the hitbox leans with them), throw frags along solved arcs, and get behind something (or flat, or away) when a grenade lands nearby.
+  - They go prone in the open at range, when pinned, at observation posts and for incoming mortar bombs (see Quality pass).
   - They sprint between positions.
 - **Craters** (`CraterField`): one shared field of dig depth, spoil and scorch on a 0.25 m grid, so blasts on top of each other merge into one bigger, deeper pit and blow earlier rims away. On terrain, the ground is cut away (a hole mask the terrain shader discards) so the bowl has real depth. Characters don't sink into craters yet.
 - **Cover** (`CoverFinder`): fully dynamic.
@@ -359,6 +360,172 @@ At 33 a side each faction has one tank, one IFV/APC and one SPAA, so the working
   - You watch a video feed (snow grows with range past ~900 m) while hearing with your own ears.
   - Getting hit takes you off the sticks.
   - The map shows friendly drones and each quad's camera footprint.
+
+## Quality pass (built)
+
+An audit of the bots, the combat model and the frame cost, measured on 6-minute 33-a-side Valley runs (`mode=tspec33 level=valley verbose`).
+
+- **What bots know**
+  - A blast is heard where it went off. It no longer tells the listener where whoever fired it is. (Before, every explosion "placed" its shooter at the crater, about 150 000 false fixes in 6 minutes.)
+  - Callouts reach whoever is within shouting distance (60 m) and the caller's own squad on its radio (600 m), with a few metres of error per hundred. The rest of the side learns from the map, recon reports and fire support. (Before, every sighting went to every bot on the side, 40% of them over 300 m away.)
+  - Being hit by aimed fire gives a rough idea where it came from. A fragment, a shell or a drone's bomb doesn't. Friendly fire never makes a teammate a threat.
+  - Sight isn't cut off at 400 m anymore (it's 1 km). How fast someone is picked out depends on the observer's eyes and optics (naked eye, binoculars at a recon post, a marksman's scope, a set-up weapons team, a gunner's thermal sight or a crew's vision blocks) and on the target: stance, movement, firing, and concealment (woods, or inside a building seen from outside). The long-range fire discipline of marksmen, recon, weapons teams and vehicle guns now actually comes into play.
+- **Stance.** Bots go prone:
+  - fighting in the open beyond 40 m with no cover (if they can still see the enemy from the ground);
+  - when pinned in the open;
+  - at observation posts;
+  - when a mortar bomb whistles in within ~45 m (heard in its last 3 s);
+  - for a grenade with nothing to hide behind.
+  Getting down takes 0.8 s and getting up 1 s. They crawl at 0.6 m/s. Aim is steadier (a bipod for machine gunners and marksmen), but the rifle only comes up or down so far, and they kneel instead if the ground in front blocks the barrel. They don't go prone in streets or indoors.
+- **Hits.**
+  - At head height a round has to pass within a head's width (0.13 m) of the head to hit it. Beside the head and below the chin it's the shoulder; beside it and higher up it's a near miss that flies on. (The capsule is shoulder-wide to the crown, and 59% of "head" hits were really beside the head.) Head hits went from 28% to about 5% of hits.
+  - Downed soldiers can be hit (stray rounds and fragments used to stop dead on them). Nobody shoots or throws where a downed teammate is.
+- **Explosions** (`Grenade.Detonate`)
+  - Each explosive has a fragment reach: the distance at which a standing man in the open has an even chance of at least one fragment hit (hand grenade 10 m, 40 mm 7 m, 81 mm 25 m, 120/125 mm HE 30 m, 70 mm rocket 18 m, FPV 9 m).
+  - Each explosive has a charge relative to a hand grenade: 40 mm 0.25, 81 mm 4, 105 mm 9, 120/125 mm 12, 70 mm rocket 4.5. The charge scales the blast, flash, noise and reach against light vehicles and FOBs. (Tank HE used to go off like a hand grenade.)
+  - The fragments are real projectiles, but only those that matter are flown. Each person nearby gets their share of the spray: a number drawn for the density at their distance, their stance and exposure. Each is a real fragment aimed across their silhouette, so walls, sandbags and people in between still stop them. A few more fly off for the dust.
+  - The result is realistic lethality (a grenade at 5 m used to have about a 25% chance of hitting a standing man) with 80% fewer projectiles.
+  - Vehicle gunners keep HE past its fragment reach from our own people. The mortar checks fire before every round, not only when the mission is called.
+- **Squads**
+  - Soldiers who are down stay in the squad, and in their fire team when revived. (Anyone joining used to purge the wounded, so the revived were orphaned and a revived player leader stopped leading.)
+  - Fire teams and buddy pairs stay together through casualties: newcomers go to the smaller team, and a team two short takes a man across. (They used to be dealt again from scratch, reshuffling about every 5 s in a fight.)
+  - The flanking team of a react-to-contact drill keeps going when it's seen. It only fights where it is if hit, pinned or within 30 m, and it has 45 s to get round. A squad in a contact drill counts as engaged for the whole drill.
+  - Bots take cover from a grenade behind anything within a few strides, and otherwise run or get flat. Their blast effects are shielded by walls, as the player's already were.
+- **Vehicles.**
+  - The gunship rearms at its pad once its rockets are gone and its gun is low, and the mortar gets bombs carried up once it's dry. (Both used to be permanently out of action.)
+  - A gunner killed at an exposed mount falls off the vehicle instead of hanging in the air.
+  - Blast kills are credited to whoever fired.
+- **Rates of fire** carry the remainder of each cycle into the next, so they're exact whatever the step: bots far from the camera, which think every 2nd or 3rd tick, the player at any frame rate, and vehicle guns.
+- **Frame cost** (the same simulation, done with less waste).
+  - Navmesh closest-point queries (people's and vehicles') and people's path queries look only at the tiles around the ends. Godot's own queries go through every polygon on the map. Results are identical, and a path falls back to the whole map if it can't get through the nearby tiles.
+    - Vehicle routes still ask the whole map. On the vehicles' navmesh, broken up by woods and streets, a route that can't be finished in the nearby tiles mostly can't be finished at all, and searching the tiles first cost more than it saved: Kessel 20 → 26 ms a route, Novigrad 10 → 11–13 ms.
+    - Closest point: 6 → 0.06 ms (Novigrad), 15 → 0.08 ms (Al Hamra).
+    - Path: 8 → 0.6 ms (Novigrad), 22 → 1.2 ms (Al Hamra).
+    - Choosing a vehicle firing position: 45–70 ms → ~2 ms.
+  - Other savings:
+    - The bullet loop reads everyone's position once a tick.
+    - The crowding grid no longer grows for the whole match.
+    - Bots standing still on firm ground skip the physics move.
+    - Bots in cover no longer re-ask for their spot every tick.
+    - Sight lines check the height grid for an intervening hill before casting a ray.
+    - The hot paths make no garbage.
+  - Valley 33×3 went from 367 s to 255 s of wall time for 360 s of game (headless). Movement is −48%, ballistics −60%, the brain −53%. People's routes are 0.7 ms each there. The whole run logs no engine errors (it used to log one at every start, from a navmesh query before the first sync).
+- **Diagnostics.** `Prof.Count` counters (hit zones, flank outcomes, prone, cover searches that failed, projectiles, path fallbacks, suppression, close-ups, LZs) are printed by DevShot. `navbench` times the navmesh queries on a map and checks that the tile-local ones agree with Godot's.
+
+### Match telemetry
+
+`telemetry=<file.jsonl>` records a match. The first line is the map: heightmap, buildings, trees, sites, bases, squads. Then:
+
+- every half-second, everyone's position, state and why, stance, target, suppression, health and ammo;
+- every vehicle's position, crew, health and damage (engine, tail rotor, doomed), and a helicopter's collective;
+- every drone;
+- events: every shot (who, from, toward, weapon, aimed/suppressive/prefire), hit, down, kill, explosion, state change, squad drill.
+
+Two tools read it (Python 3 with numpy and Pillow):
+
+- `python tools/telemetry.py file.jsonl`
+  - Splits the match into fights: one squad's contact, until 30 s of quiet.
+  - For each fight it draws a storyboard, six map frames with trails, fire, casualties and drills, plus a timeline (fire by side, casualties, share moving, how far apart the sides are).
+  - `summary.txt` gives each fight's length, rounds, casualties, lulls, standoffs, how far the sides closed, who fired, and the longest anyone sat still. It also has 30 s phase logs of the longest fights and the most common state changes.
+- `python tools/replay.py file.jsonl` writes a self-contained HTML replay:
+  - the whole map, with everyone moving (stance, down, aboard), every shot as a tracer (aimed, suppressive, a vehicle's gun), explosions out to their fragment reach, casualties and squad drills;
+  - a fire timeline by side to scrub along;
+  - click a soldier to follow him and see his state and why, his health, suppression and target.
+- `python tools/behavior.py a.jsonl b.jsonl …` puts runs side by side:
+  - dithering: cover re-seeks that went nowhere, flip-flops, state and stance changes per minute;
+  - cohesion;
+  - fire volume and mix;
+  - bounds and rushes;
+  - fight length and closing.
+
+### What the telemetry turned up (fixed)
+
+- **Dithering.**
+  - Cover was re-judged against whoever the target was that instant, so men shuffled between spots 640 times in 6 minutes. It is now judged against whoever it was taken from, after 3 s.
+  - The covering team of a withdrawal was released by the rest of the brain a moment after being told to hold.
+  - Men flipped between "push on" and "take the fight". Two tests of whether an enemy mattered disagreed, depending on whether he was in sight. There is now one.
+  - A crewman heading for his vehicle, with an enemy in sight 150 m off, went "to the vehicle" and "take the fight" twice a second. He now keeps going unless they're close or he's hit.
+  - Result: cover re-seeks that went nowhere 107 → 3 a minute; flip-flops 127 → about 7.
+- **Rushes.** In the open, with no cover to bound to, a man dashes 12–22 m (6–10 m in a buddy rush), drops, and fires. Before, an attack across open ground had no way forward.
+- **Cohesion.**
+  - A contact drill's flanking team goes to one objective worked out from the team, each man a few metres apart in a line. Each man used to work out his own from where he stood.
+  - On the move, the leader waits ("close it up") while anyone in a fight, or half the squad, is 60 m or more away (40 s at most). Not in an assault, a crossing or at the objective.
+  - While the squad is in a fight, nobody walks off to the objective.
+  - The flank call and briefing now name the side the team actually goes, not one worked out from the map's orientation.
+  - Result: men 60 m and more from every squadmate, 14–18% → 6–11% of the time.
+- **Fire.**
+  - Aimed fire has a target location error: how sure the shooter is where exactly the man is. About 1 mrad in full view once watched a while. It is larger:
+    - the less of him shows;
+    - three times as large at first sight;
+    - among trees or in a dark room;
+    - when the shooter is being shot at.
+    It is smaller through magnification. Up close it's nothing; at 250 m it's decimetres to metres.
+  - Suppression lasts as long as the position is fresh: 15 s after he was last seen (25 s for the machine gunner), not 5.
+  - Suppressive fire is at sustained rates: a rifleman's single shots every second or two, the machine gun's 4–8 round bursts every few seconds. The M249 carries 600 rounds.
+  - A man in cover who opens up comes up for the whole string.
+  - How long a man watches where the enemy went to ground before going after him himself scales with range: a few seconds close in, about 5 times that at 200 m. At range it's the fire team that moves.
+- **Aircraft and vehicles.**
+  - Nobody leaves a helicopter in flight. A tail rotor shot out used to have the crew stepping out at 80 m, and a man downed aboard tumbled out, unhurt by the fall, while the empty aircraft flew on into a hillside. A casualty stays in the seat until it lands. If the pilot is hit, the front-seater takes the controls.
+  - With the tail rotor gone the pilot puts it down at once, briskly. On the ground the crew gets out of a crippled aircraft.
+  - A doomed aircraft that settles on the ground is wrecked. One sat intact for a whole match at −11 079% health, crewed and firing.
+  - Crews don't climb back into a vehicle the motor pool has written off. A truck with its wheels shot out had its driver bailing out and climbing back in every second, and it was never replaced because it was never empty.
+  - LZs are clear all round past the rotor disc (trees and walls included), further out if need be. It used to be four points 9 m out, then the spot asked for.
+  - A crash after being shot up is credited to whoever shot it up.
+- **Navmesh.**
+  - Nothing asks the navigation map before its first sync. Godot logs an error and answers (0, 0, 0).
+  - The tile-local path search runs uncapped (the tiles are the cap). Godot 4.7 doesn't reset its polygon count when it retries toward the nearest reachable point, so a capped search of a few tiles could run out on the retry and return nothing. That happened 20 times in 3 minutes on Novigrad.
+  - Most whole-map fallbacks were for places that can't be reached at all: 85% on Novigrad came back with the nearby tiles' answer. The nearest reachable point is remembered per 2 m cell. A later route there heads straight for that point, and the tiles' path is taken when it's shorter than twice the margin, since no route that leaves the box can be shorter. Otherwise the whole map is asked for the way to that same point, which is quick because it can be reached. The answer is the same, without the exhaustive search.
+  - People's routes on Novigrad: 7.7 ms → 3.1 ms.
+
+### Second round (built)
+
+- **Recording.** `record.cmd` builds the game and runs it with every Territory match recorded to `recordings\` (one file per match, named for the map and the time; spectated matches too). When the game closes it makes a replay page and storyboards for each new recording and opens the newest. Extra arguments pass through: `record.cmd mode=tspec33 level=valley`. The replay marks you, if you played.
+- **Bullets through things** (`Penetration`).
+  - A round's penetration (its `Pen`, the same mm-of-steel scale as armour, falling with its speed) is spent getting through what it hits. A solid material costs in proportion to how much of it is in the round's path, measured exactly from the box or trunk struck. A hollow thing (a car, a shipping container, sheet metal) costs a fixed amount to cross.
+  - Calibrated on 5.56 mm at the muzzle:
+    - through an inside wall (15–20 cm), a door, a car, a shed or a thin tree;
+    - not through an outside wall (25 cm of masonry or mud brick) or sandbags.
+  - A heavy machine gun or an autocannon goes through outside walls.
+  - Grenade and shell fragments get through a door or a sheet of tin close to the burst.
+  - What comes out is slower, so it hits for less, and a little off line.
+  - Inside walls are told from outside walls by thickness, as the buildings are built.
+  - Cover-finding knows the difference too: an inside wall, a door, a car or a shed hides a man but isn't cover, and the line of fire is followed on through them.
+- **Magazines** (`Magazines`).
+  - Everyone carries real magazines, each with what's left in it. A reload takes the fullest, and the part-used one goes back in a pouch (0.6 s slower) unless it's dropped for speed.
+  - The player taps Reload to keep it, or double-taps it (or binds "Quick reload") to drop it.
+  - Bots keep it unless they're under fire. A resupply hands out full magazines.
+  - Part-used magazines used to be thrown away at every reload, with every round in them.
+- **Keeping heads down.** When the man a bot is firing at ducks out of sight, it keeps putting rounds on the spot for 2–4 s (a machine gunner 3–6 s), staying up from cover to do it. That's the point of the fire: he can't come back up, or move, while it lands. It used to happen only some of the time, and only from the open.
+  - Result: 76% of suppressive rounds land within 4 m of the man they're meant for (was 53%).
+  - The target's suppression a second later is typically 0.64, above half 64% of the time (was 0.19 and 27%).
+- **Vehicles in the way** (`VehicleDetour`). The navmesh doesn't know about vehicles, so routes ran straight through parked trucks and wrecks. A route now bends round any stopped, landed or wrecked vehicle: the shorter way round its footprint, with room for a man, by corners on standable ground. That happens when the route is planned, and every half-second on the move for vehicles that stop across it later. Stuck-by-a-vehicle events fell to about a tenth.
+- **Gunships** (`HeliPilot.AttackRun`).
+  - Near the fighting they fly nap of the earth: about 11 m over the tops of whatever is under and ahead (buildings by ray, woods as a 15 m canopy), looking ahead as far as they need to climb in time. It used to be 25 m over the highest ground in the next 450 m, with no idea of trees or buildings.
+  - They attack by pop-up from battle positions 1.2–1.8 km out:
+    - low to a position the ground hides from the target;
+    - up just high enough to see it (known from the position check);
+    - a rocket salvo, with the gunner's cannon joining in;
+    - back down; then on to another position, never the same twice running.
+  - Shot at while up, they drop at once and move. Positions are chosen out of sight of every enemy anti-aircraft gun the side knows about. Only if there's nowhere safe for half a minute do they hold off.
+  - A gunship waits on the pad for its front-seater before lifting off: without him there's no gun, and nobody to take the controls if the pilot is hit.
+  - Transports approach landing zones low too.
+  - Result on Valley: gunships airborne 80–136 s (was 18–58), typically 24–28 m over the ground (was 54–70), firing several salvos each.
+- **Key bindings** (`Controls`).
+  - Every action the game listens for, with its default key and where it's used, in one list.
+  - The F-keys, the map and squad keys, the spectator keys and free look used to be hard-wired. Spectating's C both switched the view and was "down" in the free camera, so going down left it. The view toggle is V now.
+  - Two actions share a key only if they're never wanted in the same place (on foot, in a vehicle, flying a drone, spectating).
+  - The main menu has a **Controls** section: click a key and press the new one, conflicts are flagged, reset one or all. Bindings are kept in `user://keybinds.cfg`.
+  - Help text and on-screen hints show the current keys.
+  - `KEYBINDS.md` is written from the list (`-- bindsdoc=KEYBINDS.md`).
+- **Relevance, again.** A man at the objective who has just decided a far-off enemy isn't his business doesn't turn to fight him every time he shows: for 8 s he carries on, shooting at him if he's in sight, unless that enemy comes close or starts hitting him.
+
+### Not done
+
+- Guided missiles for gunships (true standoff: Hellfire-type, 5–8 km). With only rockets and the chin gun, a pop-up at 1.2–1.8 km is still inside a SPAAG's reach. What saves them now is terrain masking and short exposure.
+- Hit rates at 100–300 m are still high: about 15% of aimed rounds hit, mostly men standing or crouched in cover or running to it. Real combat runs far lower, and much of the gap is how much bots expose themselves.
+- Suppressive fire is still a modest share, about 15% of rifle and machine-gun rounds. When a bot means to suppress it is often moving, has its own cover in the way, or isn't yet aimed at the spot. The `supp:*` counters count the windows and why none opened.
+- Transport helicopters have one pilot seat. When he's hit, nobody can take over and the aircraft comes down (a real UH-60 has two pilots). Gunships' front-seaters do take over.
+- A downed man in a ground vehicle is still pulled out on the spot.
 
 ## Big-map notes (3a)
 

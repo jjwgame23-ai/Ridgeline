@@ -4,6 +4,9 @@ namespace Ridgeline;
 
 public enum MoveMode { Walk, Run, Sprint }
 
+/// <summary>How a soldier holds himself: on his feet, on a knee, or flat on the ground.</summary>
+public enum Posture { Stand, Crouch, Prone }
+
 /// <summary>
 /// A bot soldier's body: movement along navmesh paths, stance, the same weapons
 /// and ballistics the player uses, health and death. Perception, aiming and
@@ -25,7 +28,9 @@ public partial class Bot : CharacterBody3D, ICombatant
     public float Stamina = 1f;
     bool _winded;
     float _sinceSprint = 10f;
-    public int Ammo, Mags;
+    public int Ammo;
+    /// <summary>Spare magazines, each with what's left in it (see Magazines).</summary>
+    public Magazines Mags = null!;
     public int ShotsFired, HitsLanded, Kills, ShotsBlocked, ShotsBlockedNear, ShotsWide;
     public Vector3? StrafeDir; // set by the brain to move directly instead of along a path
     public int Grenades = 2;
@@ -48,7 +53,11 @@ public partial class Bot : CharacterBody3D, ICombatant
     public Vehicle? Ride { get; private set; }
     public int SeatIdx { get; private set; } = -1;
 
-    public bool Crouched { get; private set; }
+    public Posture Stance { get; private set; } = Posture.Stand;
+    public bool Crouched => Stance == Posture.Crouch;
+    public bool Prone => Stance == Posture.Prone;
+    /// <summary>Getting down onto the ground or up off it: a moment in which he can't shoot and barely moves.</summary>
+    public bool ChangingStance => _stanceT > 0f;
     public bool Reloading => _reloadT > 0f;
     public MoveMode Mode { get; private set; } = MoveMode.Run;
     public bool Moving => new Vector2(Velocity.X, Velocity.Z).Length() > 0.5f;
@@ -67,8 +76,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     public bool Dead => Body.Dead;
     Body ICombatant.Body => Body;
     public Vector3 FeetPos => GlobalPosition;
-    public Vector3 EyePos => GlobalPosition + Vector3.Up * ((Crouched ? 1.17f : 1.62f) - MathF.Abs(_lean) * 0.06f) + Right * (_lean * 0.38f);
-    public Vector3 ChestPos => GlobalPosition + Vector3.Up * (Crouched ? 0.85f : 1.25f) + Right * (_lean * 0.2f);
+    public Vector3 EyePos => GlobalPosition + Vector3.Up * (Stance switch { Posture.Prone => 0.38f, Posture.Crouch => 1.17f, _ => 1.62f } - MathF.Abs(_lean) * 0.06f) + Right * (_lean * 0.38f);
+    public Vector3 ChestPos => GlobalPosition + Vector3.Up * Stance switch { Posture.Prone => 0.3f, Posture.Crouch => 0.85f, _ => 1.25f } + Right * (_lean * 0.2f);
     Vector3 Right => BotAim.DirFrom(Aim.Yaw, 0f).Cross(Vector3.Up);
     public Vector3 Vel => Velocity;
     public float BodyHeight => _capsule.Height;
@@ -85,7 +94,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     Vector3 _goal, _rawGoal, _lastProgressPos;
     bool _hasGoal, _reloadEmpty, _partial;
     float _routeCheckT, _doorT;
-    float _lean, _cool, _reloadT, _reloadDur, _senseT, _thinkT, _stuckT, _repathT, _walkPhase, _crouchT, _rangeErr;
+    float _detourT;
+    float _lean, _cool, _reloadT, _reloadDur, _senseT, _thinkT, _stuckT, _repathT, _walkPhase, _crouchT, _proneT, _stanceT, _rangeErr;
     int _reloadStage, _stuckCount;
     double _stepAt, _unstickUntil, _lastRepath = -99;
     Vector3 _unstickDir;
@@ -107,7 +117,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         AddChild(_col);
 
         Ammo = Def.MagSize + 1;
-        Mags = Def.Mags;
+        Mags = new Magazines(Def.MagSize, Def.Mags);
         Stock();
         Aim = new BotAim(this, _rng.Randf() * 10f);
         Senses = new BotSenses(this);
@@ -129,6 +139,10 @@ public partial class Bot : CharacterBody3D, ICombatant
     // ---- a per-tick spatial hash of everyone alive, so "who's near me" isn't a scan of every body on the map
     static ulong _gridFrame = ulong.MaxValue;
     static readonly Dictionary<(int, int), List<ICombatant>> _grid = new();
+    /// <summary>The cell lists in use this tick, and spare ones: only occupied cells are kept (keeping every
+    /// cell anyone had ever walked through, and clearing them all every tick, cost more the longer a match went).</summary>
+    static readonly List<List<ICombatant>> _gridUsed = new();
+    static readonly Stack<List<ICombatant>> _gridSpare = new();
     const float GridCell = 2f;
 
     static (int, int) CellOf(Vector3 p) => ((int)MathF.Floor(p.X / GridCell), (int)MathF.Floor(p.Z / GridCell));
@@ -138,15 +152,26 @@ public partial class Bot : CharacterBody3D, ICombatant
         ulong frame = Engine.GetPhysicsFrames();
         if (frame == _gridFrame) return;
         _gridFrame = frame;
-        foreach (var l in _grid.Values) l.Clear();
+        foreach (var l in _gridUsed) { l.Clear(); _gridSpare.Push(l); }
+        _gridUsed.Clear();
+        _grid.Clear();
         foreach (var c in Combatants.All)
         {
             if (!c.Alive) continue;
             var k = CellOf(c.FeetPos);
-            if (!_grid.TryGetValue(k, out var l)) _grid[k] = l = new List<ICombatant>();
+            if (!_grid.TryGetValue(k, out var l))
+            {
+                l = _gridSpare.Count > 0 ? _gridSpare.Pop() : new List<ICombatant>();
+                _grid[k] = l;
+                _gridUsed.Add(l);
+            }
             l.Add(c);
         }
     }
+
+    /// <summary>Just us, for queries that shouldn't hit our own body (made once, not per query).</summary>
+    Godot.Collections.Array<Rid> SelfOnly => _selfOnly ??= new Godot.Collections.Array<Rid> { GetRid() };
+    Godot.Collections.Array<Rid>? _selfOnly;
 
     public override void _PhysicsProcess(double delta)
     {
@@ -174,7 +199,8 @@ public partial class Bot : CharacterBody3D, ICombatant
             return;
         }
         Suppression = Mathf.MoveToward(Suppression, 0f, dt * 0.25f);
-        _lean = Mathf.MoveToward(_lean, LeanTarget, dt * 4f);
+        _lean = Mathf.MoveToward(_lean, Prone ? 0f : LeanTarget, dt * 4f);
+        _stanceT = MathF.Max(0f, _stanceT - dt);
         // Leaning moves the body, so it moves what can be hit too.
         _col.Position = new Vector3(_lean * 0.22f, _capsule.Height / 2f, 0f);
         _cool -= dt;
@@ -287,15 +313,11 @@ public partial class Bot : CharacterBody3D, ICombatant
     {
         var space = GetWorld3D().DirectSpaceState;
         // One sweep at hip-to-chest height (0.7-1.3 m) catches corners, window sills and low walls.
-        foreach (float h in new[] { 1.0f })
-        {
-            _probeQ.Transform = new Transform3D(Basis.Identity, a + Vector3.Up * h);
-            _probeQ.Motion = b - a;
-            _probeQ.Exclude = new Godot.Collections.Array<Rid> { GetRid() };
-            var r = space.CastMotion(_probeQ);
-            if (r.Length > 0 && r[0] < 0.999f) return false;
-        }
-        return true;
+        _probeQ.Transform = new Transform3D(Basis.Identity, a + Vector3.Up * 1.0f);
+        _probeQ.Motion = b - a;
+        _probeQ.Exclude = SelfOnly;
+        var r = space.CastMotion(_probeQ);
+        return !(r.Length > 0 && r[0] < 0.999f);
     }
 
     void Repath()
@@ -314,6 +336,8 @@ public partial class Bot : CharacterBody3D, ICombatant
         _partial = false;
         var target = _rawGoal;
         using (Prof.Time("path")) using (Prof.Time("path:" + Brain.State + (Brain.Following ? "/follow" : ""))) _path = NavBaker.Path(GetWorld3D().NavigationMap, GlobalPosition, target);
+        // Round any parked vehicle or wreck the navmesh doesn't know is there (see VehicleDetour).
+        using (Prof.Time("detour")) _path = VehicleDetour.Apply(_path, GlobalPosition, 0, 40f, GetWorld3D());
         // The path ends at the nearest walkable point, so that's the real goal — a goal just
         // inside a crate would otherwise be "almost reached" forever.
         if (_path.Length > 0) _goal = _partial ? _rawGoal : _path[^1];
@@ -330,7 +354,12 @@ public partial class Bot : CharacterBody3D, ICombatant
     void Stuck()
     {
         StuckEvents++;
-        if (Vehicle.All.Any(v => !v.Destroyed && v.GlobalPosition.DistanceTo(FeetPos) < 9f)) StuckNearVehicle++;
+        if (Vehicle.All.FirstOrDefault(v => !v.Destroyed && v.GlobalPosition.DistanceTo(FeetPos) < 9f) is { } nv)
+        {
+            StuckNearVehicle++;
+            if (DuelMode.Verbose && StuckNearVehicle % 20 == 1)
+                GD.Print($"[{Clock.Now:0}s] stuck by a vehicle: {Callsign} ({Squad?.Name} {Squad?.Kind}, {Brain.State}: {Brain.Note}) by {nv.Def.Name} ({(nv.Team == Team ? "ours" : "theirs")}, {(nv.Crewed ? "crewed" : "empty")}, {nv.Speed:0.0} m/s, {nv.GlobalPosition.DistanceTo(FeetPos):0.0} m), goal {GoalPos.DistanceTo(FeetPos):0} m, path {_pathIdx}/{_path.Length}, stuck x{_stuckCount}");
+        }
         if (Brain.Note is "to the transport" or "to the vehicle")
         {
             StuckBoarding++;
@@ -368,11 +397,16 @@ public partial class Bot : CharacterBody3D, ICombatant
 
     public void SetBodyVisible(bool v) => _visual.Visible = v;
 
-    public void SetCrouch(bool c)
+    public void SetCrouch(bool c) => SetStance(c ? Posture.Crouch : Posture.Stand);
+
+    public void SetStance(Posture s)
     {
-        if (c == Crouched) return;
-        Crouched = c;
-        float h = c ? 1.25f : 1.8f;
+        if (s == Stance) return;
+        // Down onto the ground and up off it take a moment; dropping to a knee hardly any.
+        if (s == Posture.Prone || Stance == Posture.Prone) _stanceT = s == Posture.Prone ? 0.8f : 1.0f;
+        if (s == Posture.Prone) Prof.Count($"prone:{Brain.State}");
+        Stance = s;
+        float h = s switch { Posture.Prone => 0.62f, Posture.Crouch => 1.25f, _ => 1.8f };
         _capsule.Height = h;
         _col.Position = new Vector3(_lean * 0.22f, h / 2f, 0);
     }
@@ -398,6 +432,13 @@ public partial class Bot : CharacterBody3D, ICombatant
             {
                 if (_partial) Repath(); // end of this leg: plan the next
                 else _hasGoal = false;  // walked the whole path
+            }
+            // A vehicle has stopped across the way since it was planned: round it.
+            _detourT -= dt;
+            if (_detourT <= 0f && _pathIdx < _path.Length)
+            {
+                _detourT = 0.5f;
+                using (Prof.Time("detour")) _path = VehicleDetour.Apply(_path, pos, _pathIdx, 20f, GetWorld3D());
             }
             // Shoved off the route (by squadmates, a blast, a corner): if the next waypoint is
             // round a corner from here now, plan again rather than grind into the wall.
@@ -433,8 +474,10 @@ public partial class Bot : CharacterBody3D, ICombatant
         float speed = (mode switch { MoveMode.Sprint => 5.6f, MoveMode.Run => 3.4f, _ => 2.0f }) * Body.SpeedMult;
         if (StrafeDir != null) speed = 2.2f;
         if (Crouched) speed = Mathf.Min(speed, 1.7f);
+        if (Prone) speed = Mathf.Min(speed, 0.6f); // crawling
+        if (ChangingStance) speed = Mathf.Min(speed, 0.3f);
         if (Brain.WantsAds) speed = Mathf.Min(speed, 2.2f);
-        if (Mode == MoveMode.Sprint && wish.Dot(BotAim.DirFrom(Aim.Yaw, 0f)) < 0.5f) speed = 3.4f; // can't sprint sideways
+        if (Mode == MoveMode.Sprint && wish.Dot(BotAim.DirFrom(Aim.Yaw, 0f)) < 0.5f) speed = MathF.Min(speed, 3.4f * Body.SpeedMult); // can't sprint sideways
         if (wish.Dot(BotAim.DirFrom(Aim.Yaw, 0f)) < -0.3f) speed *= 0.7f;
 
         // Don't walk through each other.
@@ -455,7 +498,16 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (wish.LengthSquared() > 1f) wish = wish.Normalized();
 
         var hv = new Vector2(Velocity.X, Velocity.Z).MoveToward(new Vector2(wish.X, wish.Z) * speed, 10f * dt);
-        float vy = IsOnFloor() ? 0f : Velocity.Y - 9.81f * dt;
+        bool floor = IsOnFloor();
+        // Standing still on firm ground with nothing pushing: there's nothing for the physics to move (someone
+        // walking into us shows up in the wish above, and gets the full treatment).
+        if (floor && hv.LengthSquared() < 1e-6f && Velocity.LengthSquared() < 1e-6f)
+        {
+            Velocity = Vector3.Zero;
+            UpdateStamina(dt, 0f, mode);
+            return;
+        }
+        float vy = floor ? 0f : Velocity.Y - 9.81f * dt;
         Velocity = new Vector3(hv.X, vy, hv.Y);
         // MoveAndSlide integrates over one physics tick; stretch it when this step covers two.
         float stretch = dt / (float)GetPhysicsProcessDeltaTime();
@@ -468,6 +520,18 @@ public partial class Bot : CharacterBody3D, ICombatant
         else MoveAndSlide();
 
         float spd = hv.Length();
+        UpdateStamina(dt, spd, mode);
+        if (spd > 0.6f && Clock.Now > _stepAt)
+        {
+            float stride = Mode == MoveMode.Sprint && spd > 4f ? 1.05f : Crouched ? 0.6f : 0.78f;
+            _stepAt = Clock.Now + stride / spd;
+            float gain = spd > 4f ? 3f : Crouched ? -8f : spd < 2.5f ? -5f : 0f;
+            SoundWorld.I.Emit(Snd.Footstep, GlobalPosition + Vector3.Up * 0.05f, gain, this);
+        }
+    }
+
+    void UpdateStamina(float dt, float spd, MoveMode mode)
+    {
         if (mode == MoveMode.Sprint && spd > 4f)
         {
             Stamina = MathF.Max(0f, Stamina - dt / (Body.Lung ? 7f : 14f));
@@ -478,23 +542,18 @@ public partial class Bot : CharacterBody3D, ICombatant
             _sinceSprint += dt;
             if (_sinceSprint > 0.8f) Stamina = MathF.Min(1f, Stamina + dt * (spd > 0.4f ? 0.07f : 0.14f));
         }
-        if (spd > 0.6f && Clock.Now > _stepAt)
-        {
-            float stride = Mode == MoveMode.Sprint && spd > 4f ? 1.05f : Crouched ? 0.6f : 0.78f;
-            _stepAt = Clock.Now + stride / spd;
-            float gain = spd > 4f ? 3f : Crouched ? -8f : spd < 2.5f ? -5f : 0f;
-            SoundWorld.I.Emit(Snd.Footstep, GlobalPosition + Vector3.Up * 0.05f, gain, this);
-        }
     }
 
     // ================================================================ weapon
 
     public bool TryFire(float targetDist)
     {
-        if (Reloading || Ammo <= 0 || _cool > 0f) return false;
+        if (Reloading || Ammo <= 0 || _cool > 0f || ChangingStance) return false;
         Ammo--;
         ShotsFired++;
-        _cool = 60f / Def.Rpm;
+        // The next round is due one cycle after this one was, not after this step: with the step a tick or
+        // three long, restarting the cycle each shot would slow the gun down (an M249 far off to ~600 rpm).
+        _cool = (_cool > -0.026f ? _cool : 0f) + 60f / Def.Rpm;
         LastShotTime = Clock.Now;
 
         var eye = EyePos;
@@ -507,8 +566,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         }
 
         var origin = _muzzle.GlobalPosition;
-        var excl = new Godot.Collections.Array<Rid> { GetRid() };
-        if (GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, origin, 1, excl)).Count > 0) origin = eye;
+        if (GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, origin, 1, SelfOnly)).Count > 0) origin = eye;
         // Rounds leave the muzzle and cross the line of sight at the target; holdover
         // comes from the bot's own (imperfect) read of the range.
         var bdir = (eye + dir * targetDist - origin).Normalized();
@@ -520,6 +578,7 @@ public partial class Bot : CharacterBody3D, ICombatant
             tag: $"{Brain.State}/{Brain.FireMode}{(MathF.Abs(_lean) > 0.1f ? "/lean" : "")}{(Crouched ? "/crouch" : "")}{(origin == eye ? "/eyeorigin" : "")}");
         SoundWorld.I.Emit(Def.Sound, origin, 0f, this, facing: bdir);
         Effects.I.MuzzleFlash(origin, dir);
+        Telemetry.Shot(this, origin, eye + dir * targetDist, Def.Name, Brain.FireMode, Brain.Target?.Who);
         Aim.Kick(Def.VertKickDeg * _rng.RandfRange(0.85f, 1.15f), _rng.RandfRange(-1f, 1f) * Def.HorizKickDeg, Crouched ? 0.8f : 1f);
         return true;
     }
@@ -595,10 +654,9 @@ public partial class Bot : CharacterBody3D, ICombatant
         float d = eye.DistanceTo(pt);
         var space = GetWorld3D().DirectSpaceState;
         var origin = _muzzle.GlobalPosition;
-        var excl = new Godot.Collections.Array<Rid> { GetRid() };
-        if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, origin, 1, excl)).Count > 0) origin = eye;
+        if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, origin, 1, SelfOnly)).Count > 0) origin = eye;
         var end = eye + Aim.Dir * d;
-        var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(origin, end, 1, excl));
+        var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(origin, end, 1, SelfOnly));
         return hit.Count == 0 || hit["position"].AsVector3().DistanceTo(pt) < slack;
     }
 
@@ -607,7 +665,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     public Role RoleOf => Role;
     Role ICombatant.Role => Role;
     public float Hp => Health;
-    public float AmmoLevel => MathF.Min(Def.Mags == 0 ? 1f : Mags / (float)Def.Mags, Ops?.StockLevel ?? 1f);
+    public float AmmoLevel => MathF.Min(Def.Mags == 0 ? 1f : Mags.Rounds / (float)(Def.MagSize * Def.Mags), Ops?.StockLevel ?? 1f);
 
     void Stock()
     {
@@ -639,10 +697,10 @@ public partial class Bot : CharacterBody3D, ICombatant
             Comms.Say(this, "Drones restocked.");
             return true;
         }
-        bool need = Mags < Def.Mags || Grenades < Roles.Frags(Role) || (Role == Role.Grenadier && LauncherRounds < 8)
+        bool need = Mags.Rounds < Def.MagSize * Def.Mags || Grenades < Roles.Frags(Role) || (Role == Role.Grenadier && LauncherRounds < 8)
                     || (Rockets < (RocketDef?.Mags ?? -1) + 1) || (Role == Role.Medic && Medkits < 10) || (Role == Role.Engineer && Sandbags < 3);
         if (!need || !Alive) return false;
-        Mags = Def.Mags;
+        Mags.Refill(Def.Mags);
         Stock();
         if (Ammo == 0 && !Reloading) StartReload();
         SoundWorld.I.Emit(Snd.Bag, EyePos, 0f, this);
@@ -672,9 +730,10 @@ public partial class Bot : CharacterBody3D, ICombatant
             var vel = dir * (v * MathF.Cos(th)) + Vector3.Up * (v * MathF.Sin(th));
             if (!ArcClear(space, from, vel, d)) continue;
             LauncherRounds--;
-            Ballistics.I.Fire(from, vel.Normalized(), v, 0f, this, 0f, "40mm", explosive: true, armM: WeaponDef.Launcher.ArmM);
+            Ballistics.I.Fire(from, vel.Normalized(), v, 0f, this, 0f, "40mm", explosive: true, armM: WeaponDef.Launcher.ArmM, fragR: WeaponDef.Launcher.FragR, power: WeaponDef.Launcher.Power);
             SoundWorld.I.Emit(Snd.Launcher, from, 0f, this);
             Effects.I.MuzzleFlash(from, vel.Normalized());
+            Telemetry.Shot(this, from, target, "40mm", "launcher", Brain.Target?.Who);
             _cool = 1.5f;
             return true;
         }
@@ -699,20 +758,25 @@ public partial class Bot : CharacterBody3D, ICombatant
         float spread = Mathf.DegToRad(rd.SpreadAdsDeg + (1f - P.Skill) * 0.4f);
         dir = dir.Rotated(perp.Rotated(dir, _rng.Randf() * Mathf.Tau), MathF.Sqrt(_rng.Randf()) * spread).Normalized();
         Ballistics.I.Fire(from, dir, rd.MuzzleVel, rd.Drag, this, rd.Damage, rd.Name, explosive: true, armM: rd.ArmM,
-            pen: rd.Pen, vehDamage: rd.VehDamage, crater: rd.Crater, frags: rd.Frags, rocket: true, homing: homing, heavyCrack: true);
+            pen: rd.Pen, vehDamage: rd.VehDamage, crater: rd.Crater, fragR: rd.FragR, power: rd.Power, rocket: true, homing: homing, heavyCrack: true);
         SoundWorld.I.Emit(Snd.Rocket, from, 0f, this);
         Effects.I.MuzzleDust(from - dir * 2f, -dir);
+        Telemetry.Shot(this, from, aimPoint, rd.Name, "rocket", null);
         return true;
     }
 
-    public void StartReload()
+    /// <param name="keep">Put the magazine coming off back in a pouch (slower) rather than drop it (see Magazines).</param>
+    public void StartReload(bool keep = true)
     {
-        if (Reloading || Mags <= 0 || Ammo > Def.MagSize) return;
+        if (Reloading || !Mags.Worth(Ammo, Def.MagSize)) return;
         _reloadEmpty = Ammo == 0;
-        _reloadDur = (_reloadEmpty ? Def.ReloadEmpty : Def.Reload) * _rng.RandfRange(0.95f, 1.2f);
+        _reloadKeep = keep;
+        bool stow = keep && Magazines.InMag(Ammo, Def.MagSize) > 0;
+        _reloadDur = ((_reloadEmpty ? Def.ReloadEmpty : Def.Reload) + (stow ? Magazines.RetainTime : 0f)) * _rng.RandfRange(0.95f, 1.2f);
         _reloadT = _reloadDur;
         _reloadStage = 0;
     }
+    bool _reloadKeep;
 
     void UpdateReload(float dt)
     {
@@ -725,8 +789,9 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (_reloadStage == 2 && _reloadEmpty && prog > 0.85f) { SoundWorld.I.Emit(Snd.Bolt, at, 0f, this); _reloadStage = 3; }
         if (_reloadT <= 0f)
         {
-            Ammo = _reloadEmpty ? Def.MagSize : Def.MagSize + 1;
-            Mags--;
+            // A round stays chambered through a reload that isn't from empty.
+            int got = Mags.Swap(Magazines.InMag(Ammo, Def.MagSize), _reloadKeep);
+            Ammo = _reloadEmpty || Def.MagSize == 1 ? got : got + 1;
         }
     }
 
@@ -754,12 +819,16 @@ public partial class Bot : CharacterBody3D, ICombatant
     /// <summary>Hit badly enough to collapse: on the ground, out of the fight, bleeding.</summary>
     void GoDown(HitInfo hit)
     {
-        Ride?.Leave(this); // dragged out, or tumbles out
+        // Dragged out, or tumbles out; but not from a helicopter in flight (see Vehicle.CasualtyAboard).
+        if (Ride is { Def.Air: true, Landed: false } air) air.CasualtyAboard(this);
+        else Ride?.Leave(this);
         _downHit = hit;
         Velocity = Vector3.Zero;
         Stop();
         LeanTarget = 0f;
         SetCrouch(true);
+        _proneT = 0f;
+        _stanceT = 0f;
         _capsule.Height = 0.7f;
         _col.Position = new Vector3(0f, 0.35f, 0f);
         Combatants.ReportDowned(this, hit);
@@ -775,8 +844,12 @@ public partial class Bot : CharacterBody3D, ICombatant
     /// <summary>Lying there: bleeding, calling for a medic, maybe patching themselves up.</summary>
     void DownedTick(float dt)
     {
-        Velocity = new Vector3(0f, IsOnFloor() ? 0f : Velocity.Y - 9.81f * dt, 0f);
-        MoveAndSlide();
+        // Aboard (hit in flight), the seat holds him; otherwise he settles on the ground.
+        if (Ride == null)
+        {
+            Velocity = new Vector3(0f, IsOnFloor() ? 0f : Velocity.Y - 9.81f * dt, 0f);
+            MoveAndSlide();
+        }
         switch (Body.Tick(dt, Clock.Now))
         {
             case HitResult.Dead: Die(_downHit ?? BleedHit()); return;
@@ -803,13 +876,18 @@ public partial class Bot : CharacterBody3D, ICombatant
         SetCrouch(false);
     }
 
+    /// <summary>Moved to another seat of the same vehicle as a casualty (see Vehicle.TakeControls).</summary>
+    public void MovedTo(int seat) => SeatIdx = seat;
+
     public void Dismount(Vector3 at)
     {
         var v = Ride;
         Ride = null;
         SeatIdx = -1;
         if (v != null) Senses.IgnoreBody(v.GetRid(), false);
-        var q = PhysicsRayQueryParameters3D.Create(at + Vector3.Up * 3f, at + Vector3.Down * 6f, Layers.World);
+        // Onto the ground under the door (a long way down, for a door gunner killed in the air: his body lands
+        // there, rather than hanging in the sky where the seat was).
+        var q = PhysicsRayQueryParameters3D.Create(at + Vector3.Up * 3f, at + Vector3.Down * (v is { Def.Air: true, Landed: false } ? 1500f : 6f), Layers.World);
         var hit = GetWorld3D().DirectSpaceState.IntersectRay(q);
         GlobalPosition = (hit.Count > 0 ? hit["position"].AsVector3() : at) + Vector3.Up * 0.1f;
         CollisionLayer = Body.Dead ? 0u : 2u;
@@ -845,7 +923,12 @@ public partial class Bot : CharacterBody3D, ICombatant
     public void OnBlast(Vector3 pos, float power = 1f)
     {
         if (!Alive) return;
-        float d = pos.DistanceTo(ChestPos) / MathF.Cbrt(power); // as far from a grenade as this is from the real thing
+        var chest = ChestPos;
+        float d = pos.DistanceTo(chest) / MathF.Cbrt(power); // as far from a grenade as this is from the real thing
+        if (d > 30f) return;
+        // A wall or a hill between us and it takes most of the overpressure: it hits as if much further off.
+        if (GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos + Vector3.Up * 0.3f, chest, Layers.World)).Count > 0)
+            d = d * 2.2f + 2f;
         if (d > 30f) return;
         Suppression = Mathf.Min(1f, Suppression + (1f - d / 30f) * 1.2f);
         if (d < 12f) Body.Blast(1f - d / 12f);
@@ -853,6 +936,9 @@ public partial class Bot : CharacterBody3D, ICombatant
 
     void Die(HitInfo hit)
     {
+        // Killed at an open hatch or a door gun: he falls out, rather than hanging where the seat was once
+        // the vehicle drives off. (One killed inside stays inside, out of sight: the vehicle frees the seat.)
+        if (Ride is { } v && SeatIdx >= 0 && v.Def.Seats[SeatIdx].Exposed) v.Leave(this);
         bool wasDown = _downHit != null && !Alive;
         CollisionLayer = 0;
         Velocity = Vector3.Zero;
@@ -952,6 +1038,14 @@ public partial class Bot : CharacterBody3D, ICombatant
     {
         float spd = new Vector2(Velocity.X, Velocity.Z).Length();
         _crouchT = Mathf.MoveToward(_crouchT, Crouched ? 1f : 0f, dt * 5f);
+        // Prone: the whole body lies along the ground, head forward, rifle out in front of him. (Left
+        // alone when upright, so the tweens of going down and being helped up play out.)
+        if (Prone || _proneT > 0f)
+        {
+            _proneT = Mathf.MoveToward(_proneT, Prone ? 1f : 0f, dt * 1.2f);
+            _visual.Rotation = new Vector3(-_proneT * Mathf.Pi * 0.5f, 0f, 0f);
+            _visual.Position = new Vector3(0f, 0.12f * _proneT, 0.85f * _proneT);
+        }
         _walkPhase += spd * dt * 2.4f;
         float swing = MathF.Sin(_walkPhase) * Mathf.Clamp(spd / 3.4f, 0f, 1f) * 0.55f;
         float hipY = Mathf.Lerp(0.9f, 0.45f, _crouchT);
@@ -965,10 +1059,10 @@ public partial class Bot : CharacterBody3D, ICombatant
         _hipR.Position = new Vector3(0.11f, hipY, 0f);
         _hipL.Rotation = new Vector3(kneel * 0.5f + swing, 0f, 0f);
         _hipR.Rotation = new Vector3(kneel - swing, 0f, 0f);
-        _arms.Rotation = new Vector3(Mathf.DegToRad(Aim.Pitch) + (Reloading ? -0.5f : 0f), 0f, 0f);
+        _arms.Rotation = new Vector3(Mathf.DegToRad(Aim.Pitch) + (Reloading ? -0.5f : 0f) + _proneT * Mathf.Pi * 0.5f, 0f, 0f);
         // Leaning: the rifle comes out past the corner with the head, not just the eyes.
         _arms.Position = new Vector3(_lean * 0.2f, 0.56f, 0f);
         _arms.RotationDegrees = new Vector3(_arms.RotationDegrees.X, 0f, _lean * 20f);
-        _head.Rotation = new Vector3(Mathf.DegToRad(Aim.Pitch) * 0.6f, 0f, 0f);
+        _head.Rotation = new Vector3(Mathf.DegToRad(Aim.Pitch) * 0.6f + _proneT * Mathf.Pi * 0.45f, 0f, 0f);
     }
 }

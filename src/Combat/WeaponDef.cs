@@ -13,7 +13,11 @@ public sealed class WeaponDef
     public float ArmM;       // an explosive round travels this far before it's armed
     public float Pen = -1f, VehDamage = -1f; // armour penetration / hull damage (-1: small-arms defaults)
     public float Crater = 0.65f;
-    public int Frags = 45;
+    /// <summary>
+    /// Explosive rounds: how far out a standing man in the open has an even chance of being hit by at
+    /// least one fragment (m), and the charge relative to a hand grenade (blast, flash and noise).
+    /// </summary>
+    public float FragR = 7f, Power = 1f;
     public bool Rocket;      // visible, smoking, with a backblast
     public bool Guided;      // an infrared missile: lock an aircraft first
     public int MagSize, Mags;
@@ -48,7 +52,7 @@ public sealed class WeaponDef
     public static readonly WeaponDef Lmg = new()
     {
         Name = "M249 LMG · iron sights", Sound = Snd.Rifle556,
-        MuzzleVel = 915f, Drag = 0.00085f, Rpm = 780f, Damage = 50f, AutoCapable = true, MagSize = 100, Mags = 3,
+        MuzzleVel = 915f, Drag = 0.00085f, Rpm = 780f, Damage = 50f, AutoCapable = true, MagSize = 100, Mags = 6, // 600 rounds: a gunner's load
         VertKickDeg = 0.42f, HorizKickDeg = 0.3f, PunchDeg = 1.3f, RecoverFrac = 0.5f,
         AdsFov = 62f, AdsTime = 0.42f, SpreadAdsDeg = 0.09f, SpreadHipDeg = 3.4f, SwayDeg = 0.42f,
         Reload = 5.8f, ReloadEmpty = 6.6f, ZeroM = 100f,
@@ -64,7 +68,7 @@ public sealed class WeaponDef
     {
         Name = "M320 40mm launcher", Sound = Snd.Launcher,
         MuzzleVel = 76f, Drag = 0f, Rpm = 30f, Damage = 0f, AutoCapable = false, MagSize = 1, Mags = 7,
-        Explosive = true, ArmM = 14f,
+        Explosive = true, ArmM = 14f, FragR = 7f, Power = 0.25f,
         VertKickDeg = 2.4f, HorizKickDeg = 0.5f, PunchDeg = 3.5f, RecoverFrac = 0.7f,
         AdsFov = 64f, AdsTime = 0.3f, SpreadAdsDeg = 0.25f, SpreadHipDeg = 1.5f, SwayDeg = 0.35f,
         Reload = 2.6f, ReloadEmpty = 2.6f, ZeroM = 100f,
@@ -77,7 +81,7 @@ public sealed class WeaponDef
     {
         Name = "M72-style LAW 66mm", Sound = Snd.Rocket,
         MuzzleVel = 200f, Drag = 0.0002f, Rpm = 20f, Damage = 300f, AutoCapable = false, MagSize = 1, Mags = 1,
-        Explosive = true, ArmM = 10f, Pen = 320f, VehDamage = 280f, Crater = 0.5f, Frags = 20, Rocket = true,
+        Explosive = true, ArmM = 10f, Pen = 320f, VehDamage = 280f, Crater = 0.5f, FragR = 4f, Power = 1.5f, Rocket = true,
         VertKickDeg = 3f, HorizKickDeg = 0.6f, PunchDeg = 4f, RecoverFrac = 0.8f,
         AdsFov = 55f, AdsTime = 0.45f, SpreadAdsDeg = 0.2f, SpreadHipDeg = 2f, SwayDeg = 0.4f,
         Reload = 4f, ReloadEmpty = 4f, ZeroM = 150f,
@@ -90,7 +94,7 @@ public sealed class WeaponDef
     {
         Name = "RPG-29-style HAT 105mm", Sound = Snd.Rocket,
         MuzzleVel = 280f, Drag = 0.00012f, Rpm = 12f, Damage = 400f, AutoCapable = false, MagSize = 1, Mags = 3,
-        Explosive = true, ArmM = 15f, Pen = 650f, VehDamage = 520f, Crater = 0.7f, Frags = 25, Rocket = true,
+        Explosive = true, ArmM = 15f, Pen = 650f, VehDamage = 520f, Crater = 0.7f, FragR = 6f, Power = 3f, Rocket = true,
         VertKickDeg = 3.5f, HorizKickDeg = 0.8f, PunchDeg = 5f, RecoverFrac = 0.8f,
         AdsFov = 40f, AdsTime = 0.6f, SpreadAdsDeg = 0.15f, SpreadHipDeg = 2.5f, SwayDeg = 0.5f,
         Reload = 6f, ReloadEmpty = 6f, ZeroM = 200f,
@@ -103,7 +107,7 @@ public sealed class WeaponDef
     {
         Name = "Stinger-style MANPADS", Sound = Snd.Rocket,
         MuzzleVel = 550f, Drag = 0f, Rpm = 10f, Damage = 300f, AutoCapable = false, MagSize = 1, Mags = 1,
-        Explosive = true, ArmM = 30f, Pen = 30f, VehDamage = 520f, Crater = 0.3f, Frags = 20, Rocket = true, Guided = true,
+        Explosive = true, ArmM = 30f, Pen = 30f, VehDamage = 520f, Crater = 0.3f, FragR = 5f, Power = 3f, Rocket = true, Guided = true,
         VertKickDeg = 2f, HorizKickDeg = 0.5f, PunchDeg = 3f, RecoverFrac = 0.8f,
         AdsFov = 45f, AdsTime = 0.6f, SpreadAdsDeg = 0.1f, SpreadHipDeg = 2f, SwayDeg = 0.4f,
         Reload = 7f, ReloadEmpty = 7f, ZeroM = 300f,

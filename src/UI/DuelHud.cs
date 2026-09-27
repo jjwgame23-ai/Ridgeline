@@ -102,6 +102,6 @@ public partial class DuelHud : CanvasLayer
             $"{b.Callsign} ({DuelMode.TeamNames[b.Team]}) · {(b.Alive ? $"{b.Health:0} hp" : "dead")} · {b.Def.Name} {b.Ammo}/{b.Def.MagSize}\n" +
             $"{b.Brain.State}{(b.Brain.Target != null ? $" → {b.Brain.Target.Who.Callsign}" : "")} · {b.Brain.Note}\n" +
             $"skill {b.P.Skill:0.00} · aggression {b.P.Aggression:0.00} · courage {b.P.Courage:0.00} · reaction {b.P.ReactionS * 1000:0} ms";
-        _spec.Text = $"SPECTATING [{s.ViewMode}]  {who}\n[LMB/RMB] switch bot · [C] chase/eyes · [F] free cam · [F6] bot debug";
+        _spec.Text = $"SPECTATING [{s.ViewMode}]  {who}\n" + Controls.Fill("[{spectate_next}/{spectate_prev}] switch bot · [{spectate_view}] chase/eyes · [{spectate_free}] free cam · [{bot_debug}] bot debug");
     }
 }

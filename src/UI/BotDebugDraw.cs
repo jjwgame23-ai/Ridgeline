@@ -38,7 +38,7 @@ public partial class BotDebugDraw : Node3D
 
     public override void _UnhandledInput(InputEvent e)
     {
-        if (e is InputEventKey { Pressed: true, Echo: false, PhysicalKeycode: Key.F6 })
+        if (e.IsActionPressed("bot_debug"))
         {
             _on = !_on;
             if (!_on) Clear();
