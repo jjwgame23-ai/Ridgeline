@@ -92,6 +92,7 @@ It's the same bot with the same state either way; only the fidelity changes.
   - Limited stocks of FPVs and bomblets, resupplied by a logistics truck.
   - FPVs working with recon sources and Mavic spotting.
   - Counter-drone: spotting them, shooting them down, taking cover.
+- **Trench map** (its own run): a front of trench lines with dugouts and trench rooms to fight through, where FPVs and drone-dropped grenades would come into their own.
 - **Campaign war mode** (a big one; to scope separately): a whole war instead of one skirmish.
   - A large theatre (about 100 × 100 km, e.g. an island) split into 5 × 5 km battle maps, like X4's sectors or PlanetSide 2's continents.
   - A realistic military chain of command above the squad (platoon, company, battalion and up), so moves across the campaign map make narrative sense and taking a sector serves a real war aim beyond one round.
@@ -338,11 +339,14 @@ At 33 a side each faction has one tank, one IFV/APC and one SPAA, so the working
   - Its camera sees down and out to ~130 m, but not through roofs or canopy. Everything it sees goes to the side's intel picture and to nearby squads' spotting (it feeds the mortars, the map and the FPVs), and vehicles get called in on the radio.
   - Anyone who has gone to ground (stopped, and no friendlies within 30 m) gets a bomb run: it comes down to ~55 m, settles over the target, and drops.
   - It waits 10 s between drops to see where the last one landed, and comes home to swap batteries and re-arm: the battery lasts 8 minutes, and re-arming takes 25 s.
-- **FPV**: a strike drone with a shaped charge. It waits for a target worth one:
-  - armour called in on the radio (by anyone, the quads included) comes first;
-  - otherwise a group of enemies the side has eyes on.
-  - It climbs straight up clear of cover, and its fuse arms 2 s out. It flies out low (35 m), then in the last ~260 m dives in, leading its target. A shaped charge against vehicles hits wherever it comes in (the top, the rear).
-- **Stocks** (per operator: 2 quads, 8 grenades, 4 FPVs). Only a logistics truck or a FOB refills them; an ammo bearer can't.
+- **FPVs**, two kinds:
+  - **Frag FPV:** for people. Against a hull it only hurts thin armour.
+  - **AT FPV:** a bigger, slower airframe carrying an RPG warhead. Against armour it climbs over the target and dives steeply onto the roof.
+  - **Targets:** an FPV waits for one worth it. Armour called in on the radio (by anyone, the quads included) comes first; tanks and IFVs get the AT drone, while trucks and light vehicles can take a frag one. Otherwise it goes for a group of enemies the side has eyes on.
+  - **Flight:** it climbs straight up clear of cover, and its fuse arms 2 s out. It flies out low (35 m), then dives in over the last ~260 m, leading its target.
+  - **Shot down or crashed** after arming, 85% go off where they land; some are duds. Shot in the air, 40% go off there and then.
+  - **Sound:** FPVs are loud and carry, so you hear one coming and hear it pass.
+- **Stocks** (per operator: 2 quads, 8 grenades, 3 FPVs, 2 AT FPVs). Only a logistics truck or a FOB refills them; an ammo bearer can't.
   - Drone shortage counts as low ammo, so logistics runs go to the drone team.
   - An operator short of drones walks to a parked logistics truck within 150 m.
 - **Counter-drone**

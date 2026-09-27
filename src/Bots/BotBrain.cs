@@ -952,7 +952,7 @@ public sealed class BotBrain
         {
             if (d.Dead || d.Team == _b.Team || !GodotObject.IsInstanceValid(d)) continue;
             float dist = d.GlobalPosition.DistanceTo(eye);
-            if (dist > (d.Kind == DroneKind.Fpv ? 150f : 140f) || dist >= bestD) continue;
+            if (dist > (d.IsFpv ? 150f : 140f) || dist >= bestD) continue;
             if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, d.GlobalPosition, Layers.World | Layers.Trees)).Count > 0) continue;
             best = d;
             bestD = dist;
@@ -968,10 +968,10 @@ public sealed class BotBrain
         }
         _droneTarget = best;
         _droneAt = Now + 3.0;
-        if (Now > _droneCallAt) { _droneCallAt = Now + 8.0; Say(best.Kind == DroneKind.Fpv ? "FPV! FPV incoming!" : "Drone overhead!"); }
+        if (Now > _droneCallAt) { _droneCallAt = Now + 8.0; Say(best.IsFpv ? "FPV! FPV incoming!" : "Drone overhead!"); }
         // An FPV coming at us: dive out of its line.
         var rel = eye - best.GlobalPosition;
-        if (best.Kind == DroneKind.Fpv && bestD < 45f && best.Vel.Dot(rel.Normalized()) > best.Vel.Length() * 0.8f && State != BotState.Evade)
+        if (best.IsFpv && bestD < 45f && best.Vel.Dot(rel.Normalized()) > best.Vel.Length() * 0.8f && State != BotState.Evade)
         {
             var side = rel.Cross(Vector3.Up).Normalized() * (_rng.Randf() < 0.5f ? -1f : 1f);
             SetState(BotState.Evade, "FPV! get down");

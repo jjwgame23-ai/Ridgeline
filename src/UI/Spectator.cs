@@ -36,6 +36,16 @@ public partial class Spectator : Node3D
         if (target != null) GlobalPosition = target.EyePos - target.Aim.Dir * 3f;
     }
 
+    /// <summary>Free camera, above and south of a point, looking down at it (a click on the map).</summary>
+    public void FlyTo(Vector3 p)
+    {
+        ViewMode = View.Free;
+        GlobalPosition = p + new Vector3(0f, 55f, 45f);
+        _pitch = -48f;
+        _yaw = 0f;
+        RotationDegrees = new Vector3(_pitch, _yaw, 0f);
+    }
+
     public void Deactivate()
     {
         if (_hidden != null && IsInstanceValid(_hidden)) _hidden.SetBodyVisible(true);

@@ -11,6 +11,7 @@ public partial class BotDebugDraw : Node3D
     public IMatch Mode = null!;
 
     readonly Dictionary<Bot, Label3D> _labels = new();
+    readonly Dictionary<Drone, Label3D> _droneLabels = new();
     ImmediateMesh _mesh = null!;
     MeshInstance3D _lines = null!;
     bool _on;
@@ -48,6 +49,8 @@ public partial class BotDebugDraw : Node3D
     {
         foreach (var l in _labels.Values) if (IsInstanceValid(l)) l.QueueFree();
         _labels.Clear();
+        foreach (var l in _droneLabels.Values) if (IsInstanceValid(l)) l.QueueFree();
+        _droneLabels.Clear();
         _mesh.ClearSurfaces();
     }
 
@@ -117,6 +120,46 @@ public partial class BotDebugDraw : Node3D
                 _mesh.SurfaceSetColor(new Color(0.3f, 1f, 0.4f));
                 _mesh.SurfaceAddVertex(cover + Vector3.Up * 0.05f);
                 _mesh.SurfaceAddVertex(cover + Vector3.Up * 1.2f);
+            }
+        }
+        // Drones: a box round each (they're hard to see), a label, and a line to what an FPV is going for.
+        foreach (var dead in _droneLabels.Keys.Where(d => !IsInstanceValid(d) || d.Dead).ToList())
+        {
+            if (IsInstanceValid(_droneLabels[dead])) _droneLabels[dead].QueueFree();
+            _droneLabels.Remove(dead);
+        }
+        foreach (var d in Drone.All)
+        {
+            if (!IsInstanceValid(d) || d.Dead) continue;
+            if (!_droneLabels.TryGetValue(d, out var dl))
+            {
+                dl = new Label3D { FontSize = 34, PixelSize = 0.0008f, OutlineSize = 8, FixedSize = true, Billboard = BaseMaterial3D.BillboardModeEnum.Enabled, NoDepthTest = true, Modulate = TeamCol[d.Team] };
+                AddChild(dl);
+                _droneLabels[d] = dl;
+            }
+            var p = d.GlobalPosition;
+            dl.GlobalPosition = p + Vector3.Up * 1.2f;
+            var tp = d.TargetPoint();
+            string kind = d.Kind switch { DroneKind.Quad => "QUAD", DroneKind.FpvAt => "AT FPV", _ => "FPV" };
+            dl.Text = d.IsFpv
+                ? $"{kind} {d.Operator?.Callsign} {d.Vel.Length() * 3.6f:0} km/h{(d.Terminal ? " DIVING" : "")}\n→ {(d.TargetV != null ? d.TargetV.Def.Name : d.TargetC?.Callsign ?? "point")} {p.DistanceTo(tp):0} m"
+                : $"{kind} {d.Operator?.Callsign} {d.Bombs} bombs batt {d.Battery * 100f:0}%\nsees {d.Seen.Count(kv => Clock.Now - kv.Value < 3)}";
+            if (!any) { _mesh.SurfaceBegin(Mesh.PrimitiveType.Lines); any = true; }
+            _mesh.SurfaceSetColor(TeamCol[d.Team]);
+            const float r = 0.6f;
+            var corners = new[] { new Vector3(-r, -r, -r), new Vector3(r, -r, -r), new Vector3(r, -r, r), new Vector3(-r, -r, r) };
+            for (int i = 0; i < 4; i++)
+            {
+                var a0 = p + corners[i]; var b0 = p + corners[(i + 1) % 4];
+                _mesh.SurfaceAddVertex(a0); _mesh.SurfaceAddVertex(b0);
+                _mesh.SurfaceAddVertex(a0 + Vector3.Up * 2 * r); _mesh.SurfaceAddVertex(b0 + Vector3.Up * 2 * r);
+                _mesh.SurfaceAddVertex(a0); _mesh.SurfaceAddVertex(a0 + Vector3.Up * 2 * r);
+            }
+            if (d.IsFpv)
+            {
+                _mesh.SurfaceSetColor(new Color(1f, 0.3f, 0.2f, 0.9f));
+                _mesh.SurfaceAddVertex(p);
+                _mesh.SurfaceAddVertex(tp);
             }
         }
         if (any) _mesh.SurfaceEnd();

@@ -14,8 +14,20 @@ public sealed class PointObjective : IObjective
         // A post up in a building (a window, a rooftop): that exact spot, not the ground under it.
         if (Effects.Ground is IGround g0 && Center.Y - g0.HeightAt(Center.X, Center.Z) > 1.5f)
         {
-            b.LookOut = (Watch - Center) with { Y = 0f };
-            return Center;
+            var look = (Watch - Center) with { Y = 0f };
+            b.LookOut = look;
+            // One man to a window: the first gets the post, the others a window along from it.
+            if (PerchClaims.Free(Center, b)) { PerchClaims.Claim(Center, b); return Center; }
+            if (PerchClaims.Near(Center, look, b) is Perch other)
+            {
+                PerchClaims.Claim(other.Pos, b);
+                b.LookOut = other.Out;
+                return other.Pos;
+            }
+            // None free: the ground below, by the building.
+            float a0 = rng.Randf() * Mathf.Tau;
+            var q = Center + new Vector3(MathF.Cos(a0), 0f, MathF.Sin(a0)) * rng.RandfRange(3f, 8f);
+            return q with { Y = g0.HeightAt(q.X, q.Z) };
         }
         float a = rng.Randf() * Mathf.Tau, r = rng.RandfRange(0f, 6f);
         var p = Center + new Vector3(MathF.Cos(a) * r, 0f, MathF.Sin(a) * r);

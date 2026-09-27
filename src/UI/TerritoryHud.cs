@@ -291,6 +291,11 @@ public partial class TerritoryMap : Control
         if (Visible) QueueRedraw();
     }
 
+    /// <summary>Spectating with no player in the match: every side is shown, not just yours.</summary>
+    bool Omni => !Mode.Setup.PlayerJoins;
+    /// <summary>Whether to show this side's things (troops, vehicles, orders, intel).</summary>
+    bool Shows(int team) => team == 0 || Omni;
+
     Vector2 P(Vector3 w) => _o + new Vector2((w.X / World + 0.5f) * _px, (w.Z / World + 0.5f) * _px);
 
     static string VehLetter(VKind k) => k switch
@@ -304,6 +309,15 @@ public partial class TerritoryMap : Control
         if (e is not InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.Left } mb) return;
         AcceptEvent();
         var m = Mode;
+        // Spectating (nobody to play): a click flies the camera there.
+        if (Omni)
+        {
+            var w = new Vector3((mb.Position.X - _o.X) / _px - 0.5f, 0f, (mb.Position.Y - _o.Y) / _px - 0.5f) * World;
+            m.Spec.FlyTo(m.Map.Ground(w));
+            Visible = false;
+            Input.MouseMode = Input.MouseModeEnum.Captured;
+            return;
+        }
         bool dead = m.PlayerBody is not { Alive: true };
         // Nearest point (or base) to the click.
         int best = -2;
@@ -378,7 +392,7 @@ public partial class TerritoryMap : Control
             DrawRect(new Rect2(c - new Vector2(5, 5), new Vector2(10, 10)), col);
             string label = pt.Site.Name + (m.Inside[i, 0] + m.Inside[i, 1] + m.Inside[i, 2] > 0 && Enumerable.Range(0, 3).Count(t => m.Inside[i, t] > 0) > 1 ? "  ⚔" : "");
             // What your side can do here: take it, hold it on the front, or nothing yet (behind their lines).
-            if (m.Front)
+            if (m.Front && !Omni)
             {
                 string tag = m.CanTake(0, i) ? "ATTACK" : m.OnFront(0, i) ? "DEFEND" : o != 0 ? "locked" : "";
                 if (tag != "")
@@ -401,11 +415,11 @@ public partial class TerritoryMap : Control
         if (dead) DrawString(font, P(m.Map.Bases[0]) + new Vector2(12, 22), m.PlayerSpawn == 0 ? "▶ SPAWN" : "spawn", HorizontalAlignment.Left, -1, 13, m.PlayerSpawn == 0 ? Colors.White : Team[0]);
 
         // Your side: squads' orders as lines from the leader to the objective, and every soldier.
-        foreach (var sq in m.Squads[0])
+        foreach (var sq in m.Squads.SelectMany(l => l))
         {
-            if (sq.Position is not Vector3 at || sq.Objective == null) continue;
+            if (!Shows(sq.Team) || sq.Position is not Vector3 at || sq.Objective == null) continue;
             bool mine = sq == m.PlayerSquad;
-            var col = mine ? Colors.White : Team[0] with { A = 0.6f };
+            var col = mine ? Colors.White : Team[sq.Team] with { A = 0.6f };
             DrawDashedLine(P(at), P(sq.Objective.Center), col, mine ? 2f : 1.2f, 8f);
             if (sq.Objective is PointObjective po)
             {
@@ -414,7 +428,7 @@ public partial class TerritoryMap : Control
                 DrawLine(P(po.Center), P(po.Watch), col with { A = 0.3f }, 1f);
             }
             string kind = sq.Kind switch { SquadKind.Weapons => " MG", SquadKind.Recon => " recon", SquadKind.Engineer => " eng", SquadKind.Logistics => " log", SquadKind.Drone => " UAV", _ => "" };
-            DrawString(font, P(at) + new Vector2(6, -6), sq.Name + kind, HorizontalAlignment.Left, -1, 12, mine ? Colors.White : Team[0]);
+            DrawString(font, P(at) + new Vector2(6, -6), sq.Name + kind, HorizontalAlignment.Left, -1, 12, mine ? Colors.White : Team[sq.Team]);
         }
         // Your squad's plan: the ORP, support-by-fire position and line of departure of an attack;
         // a danger-area crossing; where the leader wants suppressing fire.
@@ -453,24 +467,29 @@ public partial class TerritoryMap : Control
         // Vehicles: ours as boxes with a class letter; theirs only as reported on the radio.
         foreach (var v in Vehicle.All)
         {
-            if (v.Destroyed || v.Team != 0) continue;
+            if (v.Destroyed || !Shows(v.Team)) continue;
             var q = P(v.GlobalPosition);
-            DrawRect(new Rect2(q - new Vector2(5, 4), new Vector2(10, 8)), Team[0]);
-            DrawString(font, q + new Vector2(7, 4), VehLetter(v.Def.Kind), HorizontalAlignment.Left, -1, 11, Team[0]);
+            DrawRect(new Rect2(q - new Vector2(5, 4), new Vector2(10, 8)), Team[v.Team]);
+            DrawString(font, q + new Vector2(7, 4), VehLetter(v.Def.Kind), HorizontalAlignment.Left, -1, 11, Team[v.Team]);
         }
         // Our drones in the air: a small cross, and what the quads' cameras cover.
         foreach (var d in Drone.All)
         {
-            if (d.Dead || d.Team != 0 || !IsInstanceValid(d)) continue;
+            if (d.Dead || !Shows(d.Team) || !IsInstanceValid(d)) continue;
             var q = P(d.GlobalPosition);
-            DrawLine(q + new Vector2(-4, -4), q + new Vector2(4, 4), Team[0], 1.5f);
-            DrawLine(q + new Vector2(-4, 4), q + new Vector2(4, -4), Team[0], 1.5f);
-            if (d.Kind == DroneKind.Quad) DrawArc(q, (P(d.GlobalPosition + new Vector3(130f, 0f, 0f)) - q).Length(), 0f, Mathf.Tau, 32, Team[0] with { A = 0.25f }, 1f);
-            else DrawString(font, q + new Vector2(6, 4), "FPV", HorizontalAlignment.Left, -1, 10, Team[0]);
+            var dc = Team[d.Team];
+            DrawLine(q + new Vector2(-4, -4), q + new Vector2(4, 4), dc, 1.5f);
+            DrawLine(q + new Vector2(-4, 4), q + new Vector2(4, -4), dc, 1.5f);
+            if (d.Kind == DroneKind.Quad) DrawArc(q, (P(d.GlobalPosition + new Vector3(130f, 0f, 0f)) - q).Length(), 0f, Mathf.Tau, 32, dc with { A = 0.25f }, 1f);
+            else
+            {
+                DrawString(font, q + new Vector2(6, 4), d.Kind == DroneKind.FpvAt ? "AT FPV" : "FPV", HorizontalAlignment.Left, -1, 10, dc);
+                DrawLine(q, P(d.TargetPoint()), new Color(1f, 0.35f, 0.3f, 0.5f), 1f);
+            }
         }
         foreach (var r in Radio.Log)
         {
-            if (r.Team != 0 || r.Kind != RadioKind.Armor || Clock.Now - r.At > 60.0 || r.Vehicle is { Destroyed: true }) continue;
+            if (r.Team != 0 || Omni || r.Kind != RadioKind.Armor || Clock.Now - r.At > 60.0 || r.Vehicle is { Destroyed: true }) continue;
             var q = P(r.Pos);
             var red = new Color(1f, 0.3f, 0.25f, 1f - (float)((Clock.Now - r.At) / 60.0) * 0.6f);
             DrawRect(new Rect2(q - new Vector2(6, 5), new Vector2(12, 10)), red, false, 2f);
@@ -478,7 +497,7 @@ public partial class TerritoryMap : Control
         }
         foreach (var f in Fob.All)
         {
-            if (f.Team != 0) continue;
+            if (!Shows(f.Team)) continue;
             var q = P(f.GlobalPosition);
             DrawColoredPolygon(new[] { q + new Vector2(0, -7), q + new Vector2(7, 5), q + new Vector2(-7, 5) }, Team[0]);
             bool chosen = dead && m.PlayerSpawn >= 101 && m.SpawnOptions(0).Any(o => o.Point == m.PlayerSpawn - 1 && o.Pos == f.GlobalPosition);
@@ -488,7 +507,7 @@ public partial class TerritoryMap : Control
         double now = Clock.Now;
         foreach (var (team, pos, at) in m.Intel)
         {
-            if (team != 0 || now - at > 30.0) continue;
+            if (!Shows(team) || now - at > 30.0) continue;
             float fade = 1f - (float)((now - at) / 30.0);
             var q = P(pos);
             var red = new Color(1f, 0.25f, 0.2f, 0.4f + 0.6f * fade);
@@ -496,8 +515,14 @@ public partial class TerritoryMap : Control
             DrawLine(q + new Vector2(-4, 4), q + new Vector2(4, -4), red, 2f);
         }
         foreach (var b in m.Bots)
-            if (IsInstanceValid(b) && b.Alive && b.Team == 0)
-                DrawCircle(P(b.FeetPos), b.Squad == m.PlayerSquad ? 3.5f : 2.5f, b.Squad == m.PlayerSquad ? new Color(0.75f, 1f, 0.7f) : Team[0]);
+            if (IsInstanceValid(b) && b.Alive && Shows(b.Team))
+                DrawCircle(P(b.FeetPos), b.Squad == m.PlayerSquad ? 3.5f : 2.5f, b.Squad == m.PlayerSquad ? new Color(0.75f, 1f, 0.7f) : Team[b.Team]);
+        // Spectating: where the camera is.
+        if (Omni && m.Spec.Active)
+        {
+            var sc = P(m.Spec.GlobalPosition);
+            DrawArc(sc, 6f, 0f, Mathf.Tau, 16, Colors.White, 2f);
+        }
         if (m.PlayerBody is { Alive: true } p)
         {
             var at = P(p.FeetPos);
@@ -506,7 +531,8 @@ public partial class TerritoryMap : Control
             var right = new Vector2(-fwd.Y, fwd.X);
             DrawColoredPolygon(new[] { at + fwd * 10f, at - fwd * 6f + right * 6f, at - fwd * 6f - right * 6f }, Colors.White);
         }
-        string help = dead
+        string help = Omni ? "[M] close · click anywhere to fly the camera there (free cam: WASD, Space/C, Shift) · every side shown"
+            : dead
             ? "[M] close · click your base or an owned point to respawn there"
             : m.PlayerLeads ? "[M] close · click a point to send your squad there · [B] squad on you / work the objective"
             : "[M] close · your squad leader decides where the squad goes";

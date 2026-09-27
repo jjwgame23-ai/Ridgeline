@@ -165,7 +165,7 @@ public sealed class CrewBrain
                 float dd = dr.GlobalPosition.DistanceTo(v.Center);
                 if (dd > (aaGun2 ? 2000f : 350f)) continue;
                 if (v.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(t.Muzzle.GlobalPosition, dr.GlobalPosition, Layers.World | Layers.Trees)).Count > 0) continue;
-                float score = (aaGun2 ? 320f : 60f) - dd * 0.1f + (dr.Kind == DroneKind.Fpv && dd < 300f ? 200f : 0f);
+                float score = (aaGun2 ? 320f : 60f) - dd * 0.1f + (dr.IsFpv && dd < 300f ? 200f : 0f);
                 if (score > bestScore) { bestScore = score; best = dr; }
             }
             foreach (var th in _b.Senses.Threats)

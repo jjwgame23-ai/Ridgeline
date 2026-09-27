@@ -6,7 +6,7 @@ public static class Controls
 {
     public static void Register()
     {
-        if (InputMap.HasAction("drone_fpv")) return; // already set up (scene reloads keep the InputMap)
+        if (InputMap.HasAction("drone_fpv_at")) return; // already set up (scene reloads keep the InputMap)
         AddKey("move_forward", Key.W);
         AddKey("move_back", Key.S);
         AddKey("move_left", Key.A);
@@ -25,6 +25,7 @@ public static class Controls
         AddKey("weapon2", Key.Key2);
         AddKey("gadget", Key.H);
         AddKey("drone_fpv", Key.J);
+        AddKey("drone_fpv_at", Key.K);
         AddKey("selfaid", Key.X);
         AddKey("use", Key.F);
         AddMouse("fire", MouseButton.Left);

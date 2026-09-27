@@ -83,7 +83,7 @@ public static class Roles
         Role.AntiTank or Role.HeavyAT => "2: anti-tank launcher — go for the sides and rear",
         Role.AntiAir => "2: guided anti-air missile — aim at a helicopter until the tone locks, then fire",
         Role.Leader => "M map: click a point to order your squad · B: squad on you / work the objective",
-        Role.DroneOperator => "H: fly the quad (LMB drops a grenade, H again sends it home) · J: fly an FPV strike drone (mouse steers, W/S throttle, LMB detonates)",
+        Role.DroneOperator => "H: fly the quad (LMB drops a grenade, H again sends it home) · J: FPV strike drone (frag, for people) · K: AT FPV (shaped charge: climb and dive onto a vehicle's roof) — mouse steers, W/S throttle, LMB detonates",
         _ => "",
     };
 
