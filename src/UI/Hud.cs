@@ -55,7 +55,9 @@ public partial class Hud : CanvasLayer
         "M map (pick a spawn there when dead). As squad leader: click a point to\n" +
         "send your squad there, B to call them onto you. Otherwise follow your SL.\n" +
         "Roles: pick yours in the menu, or with 1-8 while waiting to respawn.\n" +
-        "H: your role's tool (medic: patch up · engineer: sandbags).\n\n" +
+        "H: your role's tool (medic: patch up · engineer: sandbags · drone operator: quad; J / K: FPV / AT FPV).\n" +
+        "Green triangles: your squad. The lines under the order tell you what the squad is doing and your part in it;\n" +
+        "the green diamond is your spot. Squad leader: N for squad commands.\n\n" +
         "WASD move · Shift sprint · C crouch · Z prone · Q / E lean\n" +
         "LMB fire · RMB aim · R reload · V fire mode · G frag · 1 / 2 weapons\n" +
         "F1 this help · F3 debug · F6 bot debug · F7/F8 volume · F10 main menu · F11 fullscreen";

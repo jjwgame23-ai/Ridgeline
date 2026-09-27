@@ -26,7 +26,8 @@ public sealed class SiteObjective : IObjective
                 var outward = (p.Pos - Site.Center) with { Y = 0f };
                 if (outward.LengthSquared() > 1f && outward.Normalized().Dot(p.Out) < 0.2f) continue; // faces into the point
                 if (threatDir != Vector3.Zero && p.Out.Dot(threatDir) < 0.3f) continue;            // faces away from the attack
-                if (Combatants.All.Any(c => c != b && c.Team == b.Team && c.Alive && c.FeetPos.DistanceTo(p.Pos) < 1.5f)) continue;
+                if (!PerchClaims.Free(p.Pos, b)) continue; // someone's there, or on his way
+                PerchClaims.Claim(p.Pos, b);
                 b.LookOut = p.Out;
                 return p.Pos;
             }
@@ -219,6 +220,7 @@ public partial class TerritoryMode : Node, IMatch
         Squad.Orps = Squad.Deploys = Squad.BuddySwaps = Squad.Crossings = Squad.CrossingsDone = Squad.CrossingsAborted = Squad.SmokeCrossings = 0;
         Drone.Clear();
         SmokeScreen.Clear();
+        PerchClaims.Clear();
         MotorPool.ResetCounters();
         CrewBrain.AreaRounds = CrewBrain.HeldForFriendlies = 0;
         Drone.Log = Log;

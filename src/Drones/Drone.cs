@@ -2,7 +2,12 @@ using Godot;
 
 namespace Ridgeline;
 
-public enum DroneKind { Quad, Fpv }
+/// <summary>
+/// Quad: a camera drone that can drop grenades. Fpv: a racing-quad strike drone with a
+/// fragmentation charge, for people. FpvAt: a bigger one carrying an RPG warhead (a
+/// shaped charge), for armour: it climbs and dives onto the thin roof.
+/// </summary>
+public enum DroneKind { Quad, Fpv, FpvAt }
 
 /// <summary>
 /// A small drone, the two kinds modern infantry actually use:
@@ -45,8 +50,11 @@ public partial class Drone : Node3D
     /// <summary>Who the camera has picked out lately.</summary>
     public readonly Dictionary<ICombatant, double> Seen = new();
 
-    float MaxSpeed => Kind == DroneKind.Fpv ? 38f : 15f;
-    float Accel => Kind == DroneKind.Fpv ? 26f : 6f;
+    public bool IsFpv => Kind != DroneKind.Quad;
+    float MaxSpeed => Kind switch { DroneKind.Fpv => 38f, DroneKind.FpvAt => 30f, _ => 15f };
+    float Accel => Kind switch { DroneKind.Fpv => 26f, DroneKind.FpvAt => 17f, _ => 6f };
+    /// <summary>Shot or out of control with its charge armed: it goes off where it comes down (mostly: some are duds).</summary>
+    bool _fallFuse;
     StaticBody3D _hit = null!;
     AudioStreamPlayer3D _snd = null!;
     SoundWorld.LoopShape _shape = null!;
@@ -71,10 +79,17 @@ public partial class Drone : Node3D
         var prop = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.3f, 0.3f, 0.35f), Transparency = BaseMaterial3D.TransparencyEnum.Alpha };
         _visual = new Node3D();
         AddChild(_visual);
-        float arm = Kind == DroneKind.Fpv ? 0.14f : 0.18f;
-        _visual.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = Kind == DroneKind.Fpv ? new Vector3(0.1f, 0.05f, 0.22f) : new Vector3(0.1f, 0.07f, 0.2f) }, MaterialOverride = dark });
+        float arm = Kind switch { DroneKind.Fpv => 0.14f, DroneKind.FpvAt => 0.2f, _ => 0.18f };
+        _visual.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = IsFpv ? new Vector3(0.1f, 0.05f, 0.22f) : new Vector3(0.1f, 0.07f, 0.2f) }, MaterialOverride = dark });
         if (Kind == DroneKind.Fpv) // the charge strapped under it
             _visual.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.04f, Height = 0.3f }, MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.3f, 0.34f, 0.24f) }, Position = new Vector3(0f, -0.05f, 0.05f), RotationDegrees = new Vector3(90f, 0f, 0f) });
+        else if (Kind == DroneKind.FpvAt)
+        {
+            // An RPG warhead lashed on, pointing forward: the cone out in front, the body under the frame.
+            var olive = new StandardMaterial3D { AlbedoColor = new Color(0.28f, 0.32f, 0.2f) };
+            _visual.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.045f, BottomRadius = 0.045f, Height = 0.35f }, MaterialOverride = olive, Position = new Vector3(0f, -0.07f, -0.05f), RotationDegrees = new Vector3(90f, 0f, 0f) });
+            _visual.AddChild(new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.0f, BottomRadius = 0.05f, Height = 0.2f }, MaterialOverride = olive, Position = new Vector3(0f, -0.07f, -0.32f), RotationDegrees = new Vector3(-90f, 0f, 0f) });
+        }
         var props = new List<MeshInstance3D>();
         foreach (var (x, z) in new[] { (-1, -1), (1, -1), (-1, 1), (1, 1) })
         {
@@ -88,16 +103,16 @@ public partial class Drone : Node3D
         // Something for bullets to hit (and nothing else: characters and the navmesh ignore it).
         _hit = new StaticBody3D { CollisionLayer = Layers.Drones, CollisionMask = 0 };
         AddChild(_hit);
-        _hit.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = Kind == DroneKind.Fpv ? 0.16f : 0.2f } });
+        _hit.AddChild(new CollisionShape3D { Shape = new SphereShape3D { Radius = IsFpv ? 0.16f : 0.2f } });
 
         _quadLoop ??= SoundSynth.DroneLoop(false);
         _fpvLoop ??= SoundSynth.DroneLoop(true);
-        _snd = new AudioStreamPlayer3D { Stream = Kind == DroneKind.Fpv ? _fpvLoop : _quadLoop, Bus = "World", Autoplay = true };
+        _snd = new AudioStreamPlayer3D { Stream = IsFpv ? _fpvLoop : _quadLoop, Bus = "World", Autoplay = true };
         AddChild(_snd);
         var tail = new AudioStreamPlayer3D { Stream = _snd.Stream, Bus = "Tail", PanningStrength = 0.35f, AttenuationModel = AudioStreamPlayer3D.AttenuationModelEnum.Disabled, MaxDistance = 0f };
         AddChild(tail);
         // A small thing: loud up close, gone past a few hundred metres (the FPV carries further, it screams).
-        _shape = new SoundWorld.LoopShape { Tail = tail, RefDist = 2f, Falloff = 24f };
+        _shape = new SoundWorld.LoopShape { Tail = tail, RefDist = IsFpv ? 6f : 3f, Falloff = IsFpv ? 17f : 21f };
     }
 
     public override void _ExitTree() => All.Remove(this);
@@ -118,8 +133,14 @@ public partial class Drone : Node3D
             // Down: it falls, and lies there a while.
             Vel += Vector3.Down * 9.81f * dt;
             var n = pos + Vel * dt;
-            var h = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, n, Layers.World | Layers.Trees));
-            if (h.Count > 0) { Vel = Vector3.Zero; GlobalPosition = h["position"].AsVector3(); }
+            var h = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, n, Layers.World | Layers.Trees | Layers.Vehicles));
+            if (h.Count > 0)
+            {
+                var at = h["position"].AsVector3();
+                if (_fallFuse) { _fallFuse = false; Dead = false; Detonate(at, h["normal"].AsVector3(), h["collider"].AsGodotObject()); return; }
+                Vel = Vector3.Zero;
+                GlobalPosition = at;
+            }
             else GlobalPosition = n;
             if (Clock.Now - _deadAt > 30.0) QueueFree();
             return;
@@ -129,15 +150,15 @@ public partial class Drone : Node3D
         if (TargetC is GodotObject tco && !IsInstanceValid(tco)) TargetC = null;
         if (Kind == DroneKind.Quad) Battery -= dt / 480f;
         if (Battery <= 0f) { Crash(); return; }
-        if (Operator is { Dead: true } && !Manual && Kind == DroneKind.Fpv) { Crash(); return; }
+        if (Operator is { Dead: true } && !Manual && IsFpv) { Crash(); return; }
 
         // Where we want to be going.
         Vector3 want;
         if (Manual && Kind == DroneKind.Quad)
             want = StickMove * MaxSpeed + Vector3.Up * StickClimb * 5f;
-        else if (Manual && Kind == DroneKind.Fpv)
+        else if (Manual && IsFpv)
             want = Basis.FromEuler(new Vector3(Mathf.DegToRad(CamPitch), Mathf.DegToRad(Yaw), 0f)) * Vector3.Forward * (MaxSpeed * Mathf.Clamp(Throttle, 0.25f, 1f));
-        else if (Kind == DroneKind.Fpv && (Terminal || TargetPoint().DistanceTo(pos) < 260f))
+        else if (IsFpv && (Terminal || TargetPoint().DistanceTo(pos) < 260f))
         {
             // Terminal dive: straight at the target, leading it.
             Terminal = true;
@@ -145,7 +166,12 @@ public partial class Drone : Node3D
             float tof = tp.DistanceTo(pos) / MaxSpeed;
             if (TargetV != null) tp += TargetV.Velocity3 * tof;
             else if (TargetC != null) tp += TargetC.Vel * tof;
-            want = (tp - pos).Normalized() * MaxSpeed;
+            // The AT drone goes for the roof: up over the target first, then steeply down onto it.
+            float flatD = ((tp - pos) with { Y = 0f }).Length();
+            if (Kind == DroneKind.FpvAt && TargetV != null && flatD > 45f && pos.Y - tp.Y < flatD * 0.9f)
+                want = ((tp + Vector3.Up * MathF.Min(60f, flatD * 0.9f)) - pos).Normalized() * MaxSpeed;
+            else
+                want = (tp - pos).Normalized() * MaxSpeed;
         }
         else if (Goal is Vector3 g)
         {
@@ -156,7 +182,7 @@ public partial class Drone : Node3D
             if (Clock.Now - LaunchedAt < 6.0 && pos.Y - GroundAt(pos) < MathF.Min(15f, GoalAgl * 0.5f)) h = Vector3.Zero;
             // Hold height over whatever's below, and look a little ahead for rising ground.
             float ground = MathF.Max(GroundAt(pos), GroundAt(pos + h * 2f));
-            float climb = Mathf.Clamp((ground + GoalAgl - pos.Y) * 0.8f, Kind == DroneKind.Fpv ? -12f : -4f, Kind == DroneKind.Fpv ? 12f : 5f);
+            float climb = Mathf.Clamp((ground + GoalAgl - pos.Y) * 0.8f, IsFpv ? -12f : -4f, IsFpv ? 12f : 5f);
             want = h + Vector3.Up * climb;
         }
         else want = Vector3.Zero;
@@ -164,14 +190,14 @@ public partial class Drone : Node3D
         Vel = Vel.MoveToward(want, Accel * dt);
         var next = pos + Vel * dt;
         // The FPV's fuse arms a couple of seconds out, clear of the man who launched it.
-        bool armed = Kind == DroneKind.Fpv && Clock.Now - LaunchedAt > 2.0;
+        bool armed = IsFpv && Clock.Now - LaunchedAt > 2.0;
         uint mask = Layers.World | Layers.Trees | Layers.Vehicles | Layers.Doors | (armed ? Layers.Characters : 0u);
         var excl = new Godot.Collections.Array<Rid> { _hit.GetRid() };
         var hit = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, next, mask, excl));
         if (hit.Count > 0)
         {
-            if (Kind == DroneKind.Fpv && !armed) { Crash(); return; }
-            if (Kind == DroneKind.Fpv) Detonate(hit["position"].AsVector3(), hit["normal"].AsVector3(), hit["collider"].AsGodotObject());
+            if (IsFpv && !armed) { Crash(); return; }
+            if (IsFpv) Detonate(hit["position"].AsVector3(), hit["normal"].AsVector3(), hit["collider"].AsGodotObject());
             else Crash();
             return;
         }
@@ -182,14 +208,20 @@ public partial class Drone : Node3D
         // Attitude: tilt into the direction of travel; props spin.
         var hv = Vel with { Y = 0f };
         if (!Manual && hv.LengthSquared() > 0.5f) Yaw = Mathf.RadToDeg(MathF.Atan2(-hv.X, -hv.Z));
-        float tilt = MathF.Min(25f, hv.Length() * (Kind == DroneKind.Fpv ? 1.2f : 1.6f));
+        float tilt = MathF.Min(25f, hv.Length() * (IsFpv ? 1.2f : 1.6f));
         _visual.Rotation = new Vector3(-Mathf.DegToRad(tilt), Mathf.DegToRad(Yaw), 0f);
         foreach (var p in _props) p.RotateY(dt * 90f);
 
         if (Kind == DroneKind.Quad && Clock.Now > _scanAt) { _scanAt = Clock.Now + 0.4; Scan(); }
 
-        _snd.VolumeDb = Kind == DroneKind.Fpv ? -2f : -8f;
-        _snd.PitchScale = Kind == DroneKind.Fpv ? 0.85f + Vel.Length() / MaxSpeed * 0.35f : 0.95f + Vel.Length() / MaxSpeed * 0.1f;
+        // An FPV screams: you hear it coming a long way off, and hear it change note as it turns towards you.
+        _snd.VolumeDb = Kind switch { DroneKind.Fpv => 4f, DroneKind.FpvAt => 5f, _ => -5f };
+        _snd.PitchScale = Kind switch
+        {
+            DroneKind.Fpv => 0.85f + Vel.Length() / MaxSpeed * 0.35f,
+            DroneKind.FpvAt => 0.72f + Vel.Length() / MaxSpeed * 0.3f,
+            _ => 0.95f + Vel.Length() / MaxSpeed * 0.1f,
+        };
         SoundWorld.I?.ShapeLoop(_snd, GlobalPosition, _shape);
     }
 
@@ -254,11 +286,19 @@ public partial class Drone : Node3D
     {
         if (Dead) return;
         FpvStrikes++;
-        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s FPV hit {(what is Vehicle hv ? hv.Def.Name : what is ICombatant hc ? hc.Callsign : "the ground")}{(TargetV != null ? $" (going for a {TargetV.Def.Name})" : TargetC != null ? $" (going for {TargetC.Callsign})" : "")}, {(Operator != null ? Operator.FeetPos.DistanceTo(at) : 0f):0} m from its pilot");
+        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s {(Kind == DroneKind.FpvAt ? "AT FPV" : "FPV")} hit {(what is Vehicle hv ? hv.Def.Name : what is ICombatant hc ? hc.Callsign : "the ground")}{(TargetV != null ? $" (going for a {TargetV.Def.Name})" : TargetC != null ? $" (going for {TargetC.Callsign})" : "")}, {(Operator != null ? Operator.FeetPos.DistanceTo(at) : 0f):0} m from its pilot");
         var dir = Vel.LengthSquared() > 1f ? Vel.Normalized() : Vector3.Down;
-        if (what is Vehicle)
-            // A shaped charge on the hull: the same armour model as an RPG, but from wherever the pilot came in (the top, the rear).
-            Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 400f, vehDamage: 420f, crater: 0.4f, frags: 25);
+        if (Kind == DroneKind.FpvAt)
+        {
+            // An RPG warhead: a shaped charge into whatever it hit, from wherever the pilot brought it in (the roof, the rear).
+            if (what is Vehicle)
+                Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "AT FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 500f, vehDamage: 480f, crater: 0.4f, frags: 20);
+            else
+                Grenade.Detonate(at + normal * 0.2f, normal, Operator, 25, 0.6f, 4f, "AT FPV drone", power: 1.8f);
+        }
+        else if (what is Vehicle)
+            // A frag charge against a hull: shreds optics and anything soft, gets through thin armour.
+            Ballistics.I.Fire(at - dir * 0.6f, dir, 300f, 0f, Operator, 150f, "FPV drone", ignore: _hit.GetRid(), explosive: true, armM: 0f, pen: 30f, vehDamage: 90f, crater: 0.4f, frags: 40);
         else
             Grenade.Detonate(at + normal * 0.2f, normal, Operator, 55, 0.7f, 3f, "FPV drone", power: 1.5f);
         Dead = true;
@@ -281,6 +321,8 @@ public partial class Drone : Node3D
     public void Crash()
     {
         if (Dead) return;
+        // An armed FPV coming down still has its impact fuse: most go off where they land.
+        _fallFuse = IsFpv && Clock.Now - LaunchedAt > 2.0 && GD.Randf() < 0.85f;
         Dead = true;
         _deadAt = Clock.Now;
         _snd.Stop();
@@ -294,8 +336,8 @@ public partial class Drone : Node3D
     {
         if (Dead) return;
         ShotDown++;
-        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s {(Kind == DroneKind.Fpv ? "FPV" : "quad")} shot down by {by?.Callsign ?? "?"}{(by?.Ride != null ? $" ({by.Ride.Def.Name})" : "")}, {(by != null ? by.EyePos.DistanceTo(GlobalPosition) : 0f):0} m, {GlobalPosition.Y - GroundAt(GlobalPosition):0} m up");
-        if (Kind == DroneKind.Fpv && GD.Randf() < 0.5f) { Detonate(GlobalPosition, Vector3.Up, null); return; }
+        Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s {(Kind switch { DroneKind.FpvAt => "AT FPV", DroneKind.Fpv => "FPV", _ => "quad" })} shot down by {by?.Callsign ?? "?"}{(by?.Ride != null ? $" ({by.Ride.Def.Name})" : "")}, {(by != null ? by.EyePos.DistanceTo(GlobalPosition) : 0f):0} m, {GlobalPosition.Y - GroundAt(GlobalPosition):0} m up");
+        if (IsFpv && GD.Randf() < 0.4f) { Detonate(GlobalPosition, Vector3.Up, null); return; }
         Crash();
     }
 }

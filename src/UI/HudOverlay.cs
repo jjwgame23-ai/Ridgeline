@@ -55,6 +55,27 @@ public partial class HudOverlay : Control
         DrawCompass(size, p.Heading);
         if (Marker is Vector3 m) DrawMarker(size, p, m);
         DrawSquadSpot(size, p);
+        DrawSquadmates(p.Cam);
+    }
+
+    /// <summary>Your squad: a small green triangle over each of them, so you can tell them from the rest of the side.</summary>
+    void DrawSquadmates(Camera3D cam)
+    {
+        var sq = TerritoryMode.I?.PlayerSquad;
+        if (sq == null) return;
+        foreach (var c in sq.Members)
+        {
+            if (c is Player || !c.Alive || !GodotObject.IsInstanceValid((GodotObject)c) || c.Ride != null) continue;
+            var head = c.FeetPos + Vector3.Up * 2.15f;
+            if (cam.IsPositionBehind(head)) continue;
+            float d = head.DistanceTo(cam.GlobalPosition);
+            if (d > 600f) continue;
+            var q = cam.UnprojectPosition(head);
+            float s = Mathf.Clamp(9f - d * 0.02f, 4f, 9f);
+            var col = c.Downed ? new Color(1f, 0.4f, 0.3f, 0.9f) : c == sq.Leader ? new Color(0.6f, 1f, 0.5f, 0.95f) : new Color(0.35f, 0.95f, 0.35f, 0.85f);
+            DrawColoredPolygon(new[] { q + new Vector2(-s, -s * 1.3f), q + new Vector2(s, -s * 1.3f), q }, col);
+            if (d < 60f) DrawString(ThemeDB.FallbackFont, q + new Vector2(-30, -s * 1.3f - 4f), c.Callsign, HorizontalAlignment.Center, 60, 11, col);
+        }
     }
 
     /// <summary>Your place in the squad's plan: a green diamond where you should be, and your sector on the compass.</summary>
@@ -223,7 +244,7 @@ public partial class HudOverlay : Control
         float agl = hit.Count > 0 ? pos.Y - hit["position"].AsVector3().Y : 0f;
         float range = ((pos - p.FeetPos) with { Y = 0f }).Length();
         // The link gets worse with range: snow.
-        float snow = Mathf.Clamp((range - 900f) / 1500f, 0f, 0.8f) + (d.Kind == DroneKind.Fpv ? 0.08f : 0.02f);
+        float snow = Mathf.Clamp((range - 900f) / 1500f, 0f, 0.8f) + (d.IsFpv ? 0.08f : 0.02f);
         var rng = new RandomNumberGenerator();
         rng.Seed = (ulong)Time.GetTicksMsec();
         int n = (int)(snow * 900);
@@ -259,12 +280,12 @@ public partial class HudOverlay : Control
             DrawLine(c + new Vector2(-60, 0), c + new Vector2(-20, 0), ink, 1.2f);
             DrawLine(c + new Vector2(60, 0), c + new Vector2(20, 0), ink, 1.2f);
         }
-        string kind = d.Kind == DroneKind.Quad ? "QUAD" : "FPV";
+        string kind = d.Kind switch { DroneKind.Quad => "QUAD", DroneKind.FpvAt => "AT FPV", _ => "FPV" };
         var lines = new List<string>
         {
             $"{kind}   ALT {agl:0} m   SPD {d.Vel.Length() * 3.6f:0} km/h   DIST {range:0} m",
             d.Kind == DroneKind.Quad ? $"BATT {d.Battery * 100f:0}%   GRENADES {d.Bombs}   CAM {d.CamPitch:0}°" : $"THROTTLE {d.Throttle * 100f:0}%   PITCH {d.CamPitch:0}°",
-            $"stock: {p.DroneQuads} quad · {p.DroneBombs} grenades · {p.DroneFpvs} FPV",
+            $"stock: {p.DroneQuads} quad · {p.DroneBombs} grenades · {p.DroneFpvs} FPV · {p.DroneAtFpvs} AT FPV",
             d.Kind == DroneKind.Quad ? "WASD fly (Shift fast) · Space/C up/down · LMB drop · H send it home" : "mouse steer · W/S throttle · LMB detonate · H ditch",
         };
         for (int i = 0; i < lines.Count; i++)

@@ -17,8 +17,8 @@ namespace Ridgeline;
 /// </summary>
 public sealed class DroneOps
 {
-    public const int MaxQuads = 2, MaxBombs = 8, MaxFpvs = 4;
-    public int Quads = MaxQuads, Bombs = MaxBombs, Fpvs = MaxFpvs;
+    public const int MaxQuads = 2, MaxBombs = 8, MaxFpvs = 3, MaxAtFpvs = 2;
+    public int Quads = MaxQuads, Bombs = MaxBombs, Fpvs = MaxFpvs, AtFpvs = MaxAtFpvs;
     public Drone? Quad, Fpv;
     readonly Bot _b;
     double _rechargeUntil, _nextFpvAt, _orbitT;
@@ -30,12 +30,12 @@ public sealed class DroneOps
     public bool Flying => Quad is { Dead: false } || Fpv is { Dead: false };
 
     /// <summary>How stocked up (0-1), for logistics deciding who needs a run.</summary>
-    public float StockLevel => MathF.Min(MathF.Min(Bombs / (float)MaxBombs, Fpvs / (float)MaxFpvs), Quads / (float)MaxQuads);
+    public float StockLevel => MathF.Min(MathF.Min(Bombs / (float)MaxBombs, (Fpvs + AtFpvs) / (float)(MaxFpvs + MaxAtFpvs)), Quads / (float)MaxQuads);
 
     public bool Restock()
     {
         if (StockLevel >= 0.999f) return false;
-        Quads = MaxQuads; Bombs = MaxBombs; Fpvs = MaxFpvs;
+        Quads = MaxQuads; Bombs = MaxBombs; Fpvs = MaxFpvs; AtFpvs = MaxAtFpvs;
         return true;
     }
 
@@ -47,7 +47,7 @@ public sealed class DroneOps
     {
         var ops = _b.Squad?.Members.Where(m => m.Alive && m.Role == Role.DroneOperator).ToList();
         if (ops == null || ops.Count < 2) return (true, true);
-        return ops.IndexOf(_b) == 0 ? (true, Quads == 0 && Quad == null) : (Fpvs == 0 && Fpv == null, true);
+        return ops.IndexOf(_b) == 0 ? (true, Quads == 0 && Quad == null) : (Fpvs + AtFpvs == 0 && Fpv == null, true);
     }
 
     Drone Launch(DroneKind kind)
@@ -169,7 +169,7 @@ public sealed class DroneOps
             }
             return;
         }
-        if (Fpvs <= 0 || now < _nextFpvAt || !_launch) return;
+        if (Fpvs + AtFpvs <= 0 || now < _nextFpvAt || !_launch) return;
         _nextFpvAt = now + 4.0;
         var me = _b.FeetPos;
         const float Reach = 2800f;
@@ -178,7 +178,9 @@ public sealed class DroneOps
         ICombatant? tc = null;
         // Armour first: called in on the radio, still about.
         var armor = Radio.Latest(_b.Team, RadioKind.Armor, 60.0);
-        if (armor?.Vehicle is { Destroyed: false } av && GodotObject.IsInstanceValid(av) && av.Center.DistanceTo(me) < Reach && !av.Def.Air)
+        // (Tanks and IFVs need the AT drone; a frag FPV will do for trucks and light vehicles.)
+        if (armor?.Vehicle is { Destroyed: false } av && GodotObject.IsInstanceValid(av) && av.Center.DistanceTo(me) < Reach && !av.Def.Air
+            && (AtFpvs > 0 || Fpvs > 0 && !av.Def.Heavy))
         {
             tv = av;
             point = av.Center;
@@ -194,14 +196,16 @@ public sealed class DroneOps
             }
         }
         if (point is not Vector3 p) return;
-        var d = Launch(DroneKind.Fpv);
+        // The warhead for the job: the shaped charge for armour, frag for people (the AT one only if that's all that's left).
+        var kind = tv != null ? (AtFpvs > 0 ? DroneKind.FpvAt : DroneKind.Fpv) : (Fpvs > 0 ? DroneKind.Fpv : DroneKind.FpvAt);
+        var d = Launch(kind);
         d.TargetV = tv;
         d.TargetC = tc;
         d.AimAt = p;
         d.Goal = p;
         d.GoalAgl = 35f;
-        Fpvs--;
+        if (kind == DroneKind.FpvAt) AtFpvs--; else Fpvs--;
         _nextFpvAt = now + 35.0;
-        Comms.Say(_b, $"FPV away — {(tv != null ? tv.Def.ClassName : "infantry")}, {Comms.Bearing(me, p)}, {me.DistanceTo(p):0} m.");
+        Comms.Say(_b, $"{(kind == DroneKind.FpvAt ? "AT FPV" : "FPV")} away — {(tv != null ? tv.Def.ClassName : "infantry")}, {Comms.Bearing(me, p)}, {me.DistanceTo(p):0} m.");
     }
 }

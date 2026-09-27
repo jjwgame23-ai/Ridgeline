@@ -15,9 +15,9 @@ namespace Ridgeline;
 /// </summary>
 public partial class Player
 {
-    public const int PQuads = 2, PBombs = 6, PFpvs = 3;
+    public const int PQuads = 2, PBombs = 6, PFpvs = 3, PAtFpvs = 2;
     public Drone? Piloting { get; private set; }
-    public int DroneQuads = PQuads, DroneBombs = PBombs, DroneFpvs = PFpvs;
+    public int DroneQuads = PQuads, DroneBombs = PBombs, DroneFpvs = PFpvs, DroneAtFpvs = PAtFpvs;
     Drone? _myQuad;
     Camera3D? _droneCam;
     AudioListener3D? _ears;
@@ -38,17 +38,17 @@ public partial class Player
         Hud.Toast($"Quad up — {load} grenade{(load == 1 ? "" : "s")} on it", 2f);
     }
 
-    void FlyFpv()
+    void FlyFpv(bool at = false)
     {
         if (Piloting != null) return;
-        if (DroneFpvs <= 0) { Hud.Toast("No FPVs left — a logistics truck or a FOB has more", 2.5f); return; }
-        DroneFpvs--;
-        var d = Launch(DroneKind.Fpv);
+        if ((at ? DroneAtFpvs : DroneFpvs) <= 0) { Hud.Toast($"No {(at ? "AT " : "")}FPVs left — a logistics truck or a FOB has more", 2.5f); return; }
+        if (at) DroneAtFpvs--; else DroneFpvs--;
+        var d = Launch(at ? DroneKind.FpvAt : DroneKind.Fpv);
         d.AimAt = FeetPos + new Vector3(0f, 0f, 0f);
         d.CamPitch = 15f;
         d.Throttle = 0.5f;
         TakeControl(d);
-        Hud.Toast("FPV armed and away", 2f);
+        Hud.Toast(at ? "AT FPV armed and away — dive onto the roof" : "FPV armed and away", 2f);
     }
 
     Drone Launch(DroneKind kind)
@@ -67,7 +67,7 @@ public partial class Player
         d.Goal = null;
         _pilotHp = Hp;
         _fpvRoll = 0f;
-        _droneCam = new Camera3D { Fov = d.Kind == DroneKind.Fpv ? 95f : 70f, Near = 0.05f, Far = 5000f };
+        _droneCam = new Camera3D { Fov = d.IsFpv ? 95f : 70f, Near = 0.05f, Far = 5000f };
         d.AddChild(_droneCam);
         d.OwnCamera(_droneCam);
         _droneCam.MakeCurrent();
@@ -122,6 +122,7 @@ public partial class Player
     {
         if (Kit != Role.DroneOperator) return;
         if (captured && Input.IsActionJustPressed("drone_fpv")) FlyFpv();
+        if (captured && Input.IsActionJustPressed("drone_fpv_at")) FlyFpv(at: true);
         if (_myQuad != null && (!IsInstanceValid(_myQuad) || _myQuad.Dead))
         {
             _myQuad = null;
@@ -145,13 +146,14 @@ public partial class Player
         if (Clock.Now > _restockCheckAt)
         {
             _restockCheckAt = Clock.Now + 1.0;
-            bool full = DroneQuads >= PQuads && DroneBombs >= PBombs && DroneFpvs >= PFpvs;
+            bool full = DroneQuads >= PQuads && DroneBombs >= PBombs && DroneFpvs >= PFpvs && DroneAtFpvs >= PAtFpvs;
             if (!full && (Vehicle.All.Any(v => !v.Destroyed && v.Def.Kind == VKind.Logistics && v.Team == Team && v.GlobalPosition.DistanceTo(FeetPos) < 12f)
                           || Fob.All.Any(f => f.Team == Team && f.GlobalPosition.DistanceTo(FeetPos) < 15f)))
             {
                 DroneQuads = Math.Max(DroneQuads, PQuads);
                 DroneBombs = Math.Max(DroneBombs, PBombs);
                 DroneFpvs = Math.Max(DroneFpvs, PFpvs);
+                DroneAtFpvs = Math.Max(DroneAtFpvs, PAtFpvs);
                 SoundWorld.I.Emit(Snd.Bag, EyePos, 0f, this);
                 Hud.Toast("Drones restocked", 2f);
             }
@@ -164,7 +166,7 @@ public partial class Player
         var d = Piloting!;
         if (!IsInstanceValid(d) || d.Dead)
         {
-            Hud.Toast(d is { Kind: DroneKind.Fpv } ? "Signal lost — impact" : "Signal lost", 2f);
+            Hud.Toast(d is { IsFpv: true } ? "Signal lost — impact" : "Signal lost", 2f);
             StopPiloting();
             return;
         }
