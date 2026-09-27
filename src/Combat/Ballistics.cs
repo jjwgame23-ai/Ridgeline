@@ -12,6 +12,7 @@ public sealed class Projectile
     public bool FromListener; // fired from where the listener is: don't crack past our own ears
     public bool Silent;       // fragments: no impact sounds or near-miss spam, or it's a wall of noise
     public bool Cracked;
+    public bool HeavyCrack;   // .50 cal and up (HMG, autocannon, tank gun, a supersonic rocket): a heavier crack, heard further
     public bool Explosive;    // HE: bursts on impact once armed
     public float ArmM;
     public float Pen;         // armour penetration, mm RHA-equivalent
@@ -59,7 +60,7 @@ public partial class Ballistics : Node3D
     public void Fire(Vector3 origin, Vector3 dir, float speed, float drag, ICombatant? shooter, float damage, string weapon,
                      Rid ignore = default, bool silent = false, float intendedDist = 0f, string tag = "", bool explosive = false, float armM = 0f,
                      float pen = -1f, float vehDamage = -1f, float crater = 0.65f, int frags = 45, bool rocket = false,
-                     bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null)
+                     bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false)
     {
         var p = new Projectile
         {
@@ -80,6 +81,7 @@ public partial class Ballistics : Node3D
             Whistle = whistle,
             FromVehicle = shooterVehicle,
             Homing = homing,
+            HeavyCrack = heavyCrack,
             // Mortar bombs are up for half a minute; missiles and rockets fly a few seconds more than bullets.
             MaxLife = whistle ? 60f : homing != null ? 12f : rocket ? 10f : 6f,
         };
@@ -113,7 +115,7 @@ public partial class Ballistics : Node3D
             var v = p.Vel + (Gravity - p.Vel * (speed * p.Drag)) * dt;
             var next = p.Pos + (p.Vel + v) * (0.5f * dt);
 
-            if (!p.FromListener && !p.Cracked) CheckCrack(p, next, speed, listener);
+            if (!p.FromListener && !p.Cracked) CheckCrack(p, next, speed, listener, dt);
             if ((p.Prox || p.Homing != null) && ProxBurst(p, next)) { RemoveAt(i); continue; }
             if (p.Whistle && p.Vel.Y < 0f) Whistling(p, listener, dt);
             if (!p.Silent) CheckCombatants(p, next);
@@ -248,20 +250,42 @@ public partial class Ballistics : Node3D
         p.Voice.VolumeDb = -14f + Mathf.Clamp(p.VoiceT / 0.8f, 0f, 1f) * 12f + Mathf.Clamp((p.Vel.Length() - 120f) / 80f, 0f, 1f) * 3f;
     }
 
-    /// <summary>The sound of the bullet going past the listener's ears.</summary>
-    static void CheckCrack(Projectile p, Vector3 next, float speed, Vector3 listener)
+    /// <summary>
+    /// The crack of a supersonic bullet going past the listener. Its shock leaves it all along its
+    /// path as a Mach cone, and the part that reaches the listener left from a point upstream of
+    /// the closest approach, b/sqrt(M²-1) back toward the shooter (b the miss distance), when
+    /// the bullet was there. So it arrives b·sqrt(M²-1)/(M·c) after the bullet passes, from a
+    /// direction tilted toward the shooter by the Mach angle (more so as the bullet slows); and a
+    /// listener beside or behind the gun, outside the cone, hears no crack at all. Louder and
+    /// longer for a bigger bullet, a little louder for a faster one (Whitham). Heard out to
+    /// ~150 m for rifle rounds, where it's still a sharp snap over a distant report.
+    /// </summary>
+    static void CheckCrack(Projectile p, Vector3 next, float speed, Vector3 listener, float dt)
     {
-        if (speed < SoundWorld.SpeedOfSound * 1.05f) return;
+        float c = SoundWorld.SpeedOfSound;
+        if (speed < c * 1.05f) return;
         var seg = next - p.Pos;
         float len2 = seg.LengthSquared();
         if (len2 < 1e-6f) return;
         float t = (listener - p.Pos).Dot(seg) / len2;
         if (t < 0f || t > 1f) return; // closest approach isn't inside this step
         p.Cracked = true;
+        var dir = seg / MathF.Sqrt(len2);
         var closest = p.Pos + seg * t;
-        float d = closest.DistanceTo(listener);
-        if (d > (p.Silent ? 4f : 40f)) return;
-        SoundWorld.I.Emit(Snd.Crack, closest, p.Silent ? -6f : 0f);
+        float b = MathF.Max(closest.DistanceTo(listener), 0.3f);
+        bool heavy = p.HeavyCrack;
+        if (b > (p.Silent ? 4f : heavy ? 250f : 150f)) return;
+        float m = speed / c;
+        float back = b / MathF.Sqrt(m * m - 1f);
+        // From behind the muzzle there's no cone to hear: the listener is beside or behind the gun.
+        if ((closest - p.Origin).Dot(dir) - back < 0.5f) return;
+        // When the bullet was there: it reaches the closest point t of this step from now.
+        float ago = back / speed - t * dt;
+        // Whitham's peak goes as (M²-1)^(1/8) / b^(3/4): re Mach 2.5, and undoing the extra spreading
+        // Play applies over the longer path from the emission point (b·M/sqrt(M²-1), 1.09 b at Mach 2.5).
+        float gain = 2.5f * MathF.Log10((m * m - 1f) / 5.25f) + 15f * MathF.Log10(m / MathF.Sqrt(m * m - 1f) / 1.091f);
+        // Grenade fragments: a dozen pass at once, so keep them low and dry, or they're a wall of noise.
+        SoundWorld.I.Emit(heavy ? Snd.CrackHeavy : Snd.Crack, closest - dir * back, p.Silent ? gain - 15f : gain, ago: ago, dry: p.Silent);
     }
 
     /// <summary>Suppression: anyone the bullet passes close to knows they're being shot at.</summary>
@@ -310,7 +334,7 @@ public partial class Ballistics : Node3D
             else
             {
                 // Not armed yet: a dud that thumps into whatever it hit.
-                Effects.I.Impact(pos, normal, false);
+                Effects.I.Impact(pos, normal, false, Surfaces.Of(collider, hit["shape"].AsInt32(), pos, normal));
                 SoundWorld.I.Emit(Snd.Impact, pos, 2f);
                 if (collider is ICombatant v && v.Alive)
                     v.TakeHit(new HitInfo { Shooter = p.Shooter, Point = pos, Dir = p.Vel.Normalized(), Damage = 60f, Zone = Combatants.ZoneFor(v, pos), Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon });
@@ -329,12 +353,14 @@ public partial class Ballistics : Node3D
                 Zone = zone, Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon,
             });
             Effects.I.Blood(pos, -p.Vel.Normalized());
-            if (!p.Silent) SoundWorld.I.Emit(Snd.Impact, pos, -6f);
+            if (!p.Silent) SoundWorld.I.Emit(Snd.HitFlesh, pos, -6f);
         }
         else if (collider is SteelTarget steel) steel.Hit(pos, p.Vel);
         else
         {
-            Effects.I.Impact(pos, normal, p.Silent);
+            var surface = Surfaces.Of(collider, hit["shape"].AsInt32(), pos, normal);
+            Effects.I.Impact(pos, normal, p.Silent, surface);
+            if (!p.Silent) Ricochet(p, pos, normal, surface is Surface.Rock or Surface.Stone or Surface.Metal);
             if (p.Shooter is Bot bot && p.IntendedDist > 0f)
             {
                 float at = pos.DistanceTo(p.Origin);
@@ -355,6 +381,20 @@ public partial class Ballistics : Node3D
             float d = pos.DistanceTo(c.ChestPos);
             if (d < 4f) c.OnNearMiss(d + 1f, p.Origin);
         }
+    }
+
+    /// <summary>
+    /// A round striking something hard at a shallow angle often glances off and tumbles away,
+    /// whirring: heard from a little along the way it went.
+    /// </summary>
+    public static void Ricochet(Projectile p, Vector3 pos, Vector3 normal, bool hard)
+    {
+        if (!hard || p.Explosive) return;
+        var d = p.Vel.Normalized();
+        float graze = MathF.Abs(d.Dot(normal)); // sine of the angle to the surface
+        if (graze > 0.34f || Random.Shared.NextDouble() > 0.6 * (1f - graze / 0.34f) + 0.2) return;
+        var away = (d - 2f * d.Dot(normal) * normal).Normalized();
+        SoundWorld.I.Emit(Snd.Ricochet, pos + away * 1.5f, Mathf.Clamp((p.Vel.Length() - 300f) / 100f, -6f, 2f));
     }
 
     /// <summary>Launch angle (radians, above the sight line) that puts the bullet back on the line at <paramref name="range"/>.</summary>

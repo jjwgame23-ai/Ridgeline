@@ -58,7 +58,9 @@ public sealed class Batcher
         var body = floor ? ch.Floor ??= MakeBody(true) : ch.Solid ??= MakeBody(false);
         var sk = new Vector3I((int)MathF.Round(size.X * 100f), (int)MathF.Round(size.Y * 100f), (int)MathF.Round(size.Z * 100f));
         if (!_shapes.TryGetValue(sk, out var shape)) _shapes[sk] = shape = new BoxShape3D { Size = size };
-        body.AddChild(new CollisionShape3D { Shape = shape, Transform = xf });
+        var cs = new CollisionShape3D { Shape = shape, Transform = xf };
+        Surfaces.Tag(cs, mat); // what a round or a boot finds here: timber, sheet metal, earth, else masonry
+        body.AddChild(cs);
         Shapes++;
 
         if (size.Y < 0.6f) return;
@@ -191,7 +193,9 @@ public sealed class Builder
         body.Transform = xf;
         if (floor) { body.AddToGroup("ground"); body.AddToGroup("floor"); }
         body.AddChild(new MeshInstance3D { Mesh = new BoxMesh { Size = size }, MaterialOverride = mat });
-        body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size } });
+        var cs = new CollisionShape3D { Shape = new BoxShape3D { Size = size } };
+        Surfaces.Tag(cs, mat);
+        body.AddChild(cs);
     }
 
     /// <summary>A box centred at local (x, y, z), in this builder's orientation.</summary>

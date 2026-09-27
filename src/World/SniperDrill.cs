@@ -74,7 +74,7 @@ public partial class SniperDrill : Node3D
         var muzzle = _pos + dir * 0.8f;
         // A drill: its rounds are meant to miss, so they carry no damage.
         Ballistics.I.Fire(muzzle, dir, Speed, Drag, null, 0f, "drill", _plate.GetRid());
-        SoundWorld.I.Emit(Snd.Rifle762, muzzle);
+        SoundWorld.I.Emit(Snd.Rifle762, muzzle, facing: dir);
         Effects.I.MuzzleFlash(muzzle, dir);
         Effects.I.MuzzleDust(muzzle + Vector3.Down * 0.4f, dir);
     }

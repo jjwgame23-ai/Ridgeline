@@ -26,7 +26,7 @@ public partial class DistantWar : Node3D
 
     sealed class Burst
     {
-        public Vector3 Pos;
+        public Vector3 Pos, Facing; // where it's fired from, and toward (the other side)
         public Snd Kind;
         public int Left;
         public float Interval, Next;
@@ -77,7 +77,7 @@ public partial class DistantWar : Node3D
             b.Next -= dt;
             while (b.Next <= 0f && b.Left > 0)
             {
-                SoundWorld.I.Emit(b.Kind, b.Pos);
+                SoundWorld.I.Emit(b.Kind, b.Pos, facing: b.Facing);
                 b.Left--;
                 b.Next += b.Interval * _rng.RandfRange(0.9f, 1.1f);
             }
@@ -98,8 +98,10 @@ public partial class DistantWar : Node3D
             // Real firefights are mostly lulls and aimed shots, with the odd burst.
             site.Next = _rng.RandfRange(0.6f, 4.5f);
 
-            var side = _rng.Randf() < 0.5f ? site.A : site.B;
+            bool fromA = _rng.Randf() < 0.5f;
+            var side = fromA ? site.A : site.B;
             var pos = Ground(side + new Vector3(_rng.RandfRange(-45f, 45f), 0f, _rng.RandfRange(-45f, 45f)));
+            _facing = ((fromA ? site.B : site.A) - pos) with { Y = 0f };
             float roll = _rng.Randf();
             if (roll < 0.52f) Add(pos, Snd.Rifle556, _rng.RandiRange(1, 3), _rng.RandfRange(0.3f, 0.9f));    // aimed semi
             else if (roll < 0.8f) Add(pos, Snd.Rifle556, _rng.RandiRange(3, 7), 60f / 800f);             // auto burst
@@ -114,6 +116,8 @@ public partial class DistantWar : Node3D
         }
     }
 
+    Vector3 _facing;
+
     void Add(Vector3 pos, Snd kind, int count, float interval) =>
-        _bursts.Add(new Burst { Pos = pos, Kind = kind, Left = count, Interval = interval, Next = 0f });
+        _bursts.Add(new Burst { Pos = pos, Facing = _facing.Normalized(), Kind = kind, Left = count, Interval = interval, Next = 0f });
 }

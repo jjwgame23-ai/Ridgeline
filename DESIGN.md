@@ -41,48 +41,47 @@ It's the same bot with the same state either way; only the fidelity changes.
 
 ## Acoustics (built)
 
-- **Distance is simulated, not hand-made.** Guns and explosions are synthesised
-  "dry" (what you'd hear a metre away: a Friedlander blast wave, gas roar, body
-  thump, the bolt cycling) and then propagated offline to six distances (5 m to
-  1.2 km) by `Acoustics`:
-  - air absorption per ISO 9613-1 (at 1 km, 8 kHz is ~100 dB down, 1 kHz ~5 dB), which is what turns a crack into a thump;
-  - a ground-reflection dip in the low mids;
-  - a synthetic valley impulse response (discrete hillside echoes plus a tail that darkens as it decays), whose share grows with distance, which is why far gunfire rolls.
-  Everything runs in the frequency domain (FFT) at startup (~2 s). At play time the band is picked by chance weighted by log-distance, so moving away shifts the sound gradually.
+- **Distance is simulated, not hand-made.** Loud sounds are synthesised "dry" (what you'd hear
+  a metre or two away) and propagated offline by `Acoustics` to a ladder of twelve distances
+  (1.5 m to 2.4 km, at most about twice apart past 5 m):
+  - air absorption per ISO 9613-1 for the map's temperature and humidity (at 1 km, 8 kHz is ~100 dB down, 1 kHz ~5 dB), which is what turns a crack into a pop;
+  - the ground reflection, modelled physically: a spherical wave off porous ground (Miki impedance, ground wave via the Faddeeva function), losing coherence to turbulence at high frequencies and long range, averaged over uneven ground. Up close it's a faint colouring; far off it's the classic dip at a few hundred Hz with the lowest frequencies doubled;
+  - both as one minimum-phase (causal) filter per distance, so a distant shot keeps a clean onset.
+  At play time the band is picked by chance weighted by log-distance; neighbouring bands are close, so that's a small step in timbre. Far bands are stored at 22 or 11 kHz (the air has left nothing above). Built at startup in ~3 s.
+- **Sources.**
+  - Blast waves are Friedlander pulses with a negative phase of equal area: no net impulse, so no DC hump or inaudible sub-bass eating headroom.
+  - A rifle's low body thump is its near part: full strength by the gun, fading beyond ~6 m. Far off a rifle is a "pop", not a boom.
+  - Steel plates ring with a free plate's modes (~500 Hz up), split pairs beating, a random strike point, long below coincidence and radiating weakly there, and a chain jingle.
+  - Mortar, rocket, launcher, steel and armour hits go through the same distance physics as guns.
+- **Climate per map.** Temperature, humidity, ground softness, turbulence and typical wind come from the biome (desert hot and dry over sand, forest damp and still on a soft floor, highlands cool and windy). The speed of sound follows (340 m/s at 15 °C).
+- Every sound is an event at a point, and its wavefront travels at the speed of sound, carried a little by the wind (`SoundWorld`). A plate at 600 m rings about 1.8 s after it swings. A shot from 1 km lands about 3 s after the muzzle flash.
+- **Supersonic crack** (`Ballistics.CheckCrack`). The shock leaves the bullet all along its path as a Mach cone. The part that reaches you left a point upstream of the closest approach, when the bullet was there. So it arrives b·√(M²−1)/(M·c) after the bullet passes, from a direction tilted toward the shooter. Beside or behind the gun, outside the cone, there's no crack. The N-wave is Whitham's: its duration grows with miss distance and calibre (~120 µs at 1 m for rifle rounds, longer for .50 cal, autocannon and tank rounds and supersonic rockets), its peak falls as miss distance^-3/4, and it's a little louder for a faster bullet. Heard out to ~150 m (250 m for heavy rounds).
+- **Muzzle directivity.** A gun is loudest ahead of its muzzle (Fansler's fit to measured rifles up to a 105 mm gun: 0 / −9 / −18 dB at 0° / 90° / 180°, offset to +3 / −6 / −15 re the old all-round level) and thinner from behind; right behind a shooter, their body dulls it. The reverb is fed the all-round output, so a shot fired away from you is more reverb and less shot. Not applied within a few metres (your own gun) or to the guns of a vehicle you're aboard.
 - **Occlusion.** A hill or building between you and a sound makes it play as if from ~3x further (darker) and 5 dB quieter.
-- **Turbulence.** Beyond ~150 m each shot's level wobbles by a few dB.
-
-- Every sound is an event at a point, and its wavefront travels at 343 m/s
-  (`SoundWorld`). A plate at 600 m rings about 1.7 s after it swings. A shot from
-  1 km lands about 3 s after the muzzle flash.
-- **Supersonic crack.** A bullet passing within 40 m emits a crack from its
-  point of closest approach. The crack arrives before the muzzle report, and the
-  gap between them tells you the distance (`Ballistics.CheckPass`).
-- **Distance layers.** Near, mid and far versions of loud sounds. Far away you
-  hear low-passed rumble with terrain echoes. Loudness falls off at 12 dB per
-  tenfold distance, softer than the physical 20, so a firefight 1–2 km away
-  stays present in the mix.
-- **Voice budget.** 72 voices. When they're all busy, the quietest one is
-  replaced, so a huge battle degrades gracefully.
-- **Blasts.** The shockwave also travels at the speed of sound. Close blasts
-  cause ear ringing and temporarily muffle the whole world.
-- **Later.** Occlusion by terrain and buildings, crack direction from the Mach
-  cone, and aggregating many distant shots into a "battle bed".
+- **Weather.** The wind wanders (direction drifting, strength easing every minute or three, gusts). Downwind, sound carries a few dB further; upwind, beyond a shadow boundary tens of metres off in a strong wind, it drops by up to ~16 dB and dulls. Turbulence makes a distant sound's level wander physically (about 2 dB at 100 m, 4 dB at 1 km, more in wind), over about half a second and differently by direction, so a burst swells or fades together.
+- **Forest.** Woodland between you and a sound scatters its highs (about 2 dB per 100 m at 1 kHz, more above).
+- **Loudness.** Falls off at 12 dB per tenfold distance, softer than the physical 20, and far bands keep only part of the loss of highs and of the ground dip, so a firefight 1–2 km away stays present in the mix.
+- **Voice budget.** 96 voices. When they're all busy, the quietest one is replaced, so a huge battle degrades gracefully.
+- **Blasts.** The shockwave also travels at the speed of sound. Close blasts cause ear ringing and temporarily muffle the whole world.
+- **Impacts and footsteps by surface** (`Surfaces`). A round sounds different in earth, sand, masonry, rock, timber, sheet metal and flesh; grazing hits on something hard often ricochet with a falling whine. Footsteps on turf, sand, gravel, concrete, boards and metal differ, and hard floors carry further. The surface comes from the collider and the material each map box is tagged with.
+- **Moving sources** (engines, rotors, drones) are heard from where they were when the sound left them (a helicopter 1 km off is heard ~3 s behind where you see it) and Doppler-shifted by how fast they were closing.
+- **Later.** Aggregating many distant shots into a "battle bed"; rooms within a building (a building is one acoustic space now); HRTF.
 
 ### Acoustics, part 2: the space you're in (built)
 
-- **Bands are dry.** A gun's or explosion's distance bands hold only what the air and the ground do to it (absorption, the ground-reflection dip), with no reverb baked in. The rifle source has a shorter, brighter roar and a brief thump, so far off it stays a "pop" and doesn't turn into a boom.
+- **Bands are dry.** A gun's or explosion's distance bands hold only what the air and the ground do to it, with no reverb baked in.
 - **Live reverb of the listener's space** (Tail bus: a reverb whose room size, damping and pre-delay follow the listener, eased over ~0.5 s):
-  - a room: small, dense, bright, scaled to the building;
+  - a room: its decay from its volume and surfaces (Sabine: bare masonry, rubble, and every opening absorbing what reaches it), bright, first reflection after a mean free path;
   - a street: a quick slap and flutter;
   - forest: short and soft;
-  - open ground: sparse and late.
-  Outdoors, the reverberant share grows with distance.
-- **Real first reflections outdoors.** Rays from the source find walls and cliffs within 260 m that the listener can see. Each is an echo played from that surface's direction, delayed by the extra path, with spreading and absorption losses (walls reflect more than broken ground). The strongest three are kept, within a budget of about 30 a second.
-- **Buildings as acoustic spaces** (`Rooms`). Every enterable building registers its interior box and its openings. Between inside and outside (or two buildings), sound takes the shortest clear way through openings: the listener hears it from the window or doorway, later and a bit quieter. A closed door costs 14 dB and the highs. With no way through, only the walls' low thump gets in.
+  - open ground: sparse, late and dark.
+  Outdoors, the reverberant share grows with distance. A delay line in front of the reverb gives the gap before the first reflections (Godot's reverb "pre-delay" only times a feedback echo, used here for the flutter), and its damping runs backwards: 0 is the darkest tail.
+- **Real first reflections outdoors.** Rays from the source find walls and cliffs within 260 m that the listener can see. Each is an echo played from that surface's direction, delayed by the extra path, with spreading and absorption losses (walls reflect more than broken ground), and the muzzle's directivity toward it. The strongest three are kept, within a budget of about 30 a second.
+- **Buildings as acoustic spaces** (`Rooms`). Every enterable building registers its interior box and its openings. Between inside and outside (or two buildings), sound takes the shortest clear way through openings: the listener hears it from the window or doorway, later and a bit quieter. A closed door leaks round its edges: 16 dB down, nearly flat, a little dull. With no way through, only what the walls pass (mass law: the loss climbs above a few hundred Hz) gets in. The reverb of the room you're in hears it through the same filter.
 - **Doors** (`Door`). Real hinged doors in outside doorways, about half left open. Use key to open or close. Bots open doors in their way and leave them open. A closed door blocks movement, sight and bullets. Doors have their own physics layer, so the navmesh treats doorways as open. An open door swings back flat against the inside wall.
-- **Behind you.** Sounds from behind go through a gentle high-shelf cut (head and ear shadow), the main front/back cue on headphones.
-- F3 shows which acoustic space you're in.
+- **Behind you.** Sounds from behind go through a high-shelf cut (about 9 dB of head and ear shadow above 3.5 kHz), the main front/back cue on headphones, whatever other filtering they get.
+- F3 shows which acoustic space you're in and the wind.
+- `sounddump=<dir>` (dev arg) writes every synthesised sound to WAV files and a table of their levels.
 
 ## Ideas recorded for later (the user's)
 

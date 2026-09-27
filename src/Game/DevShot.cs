@@ -73,6 +73,14 @@ public partial class DevShot : Node
         return setup;
     }
 
+    /// <summary>sounddump=dir: write every synthesised sound to WAV files there, then quit (to listen to or analyse offline).</summary>
+    public static void DumpSoundsIfRequested(Node from)
+    {
+        if (!Args().TryGetValue("sounddump", out var dir) || SoundWorld.I == null) return;
+        SoundWorld.I.Dump(dir);
+        from.GetTree().Quit();
+    }
+
     public static void AttachIfRequested(Node parent)
     {
         var a = Args();

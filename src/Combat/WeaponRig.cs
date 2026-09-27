@@ -218,10 +218,10 @@ public partial class WeaponRig : Node3D
         dir = dir.Rotated(GlobalBasis.X.Normalized(), s.Zero);
         Ballistics.I.Fire(origin, dir, d.MuzzleVel * (1f + _rng.RandfRange(-0.006f, 0.006f)), d.Drag, P, d.Damage, d.Name,
             explosive: d.Explosive, armM: d.ArmM, pen: d.Pen, vehDamage: d.VehDamage, crater: d.Crater, frags: d.Frags, rocket: d.Rocket,
-            homing: d.Guided && LockProgress >= 1f ? LockTarget : null);
+            homing: d.Guided && LockProgress >= 1f ? LockTarget : null, heavyCrack: d.Rocket);
         LockProgress = 0f;
         if (d.Rocket) Effects.I.MuzzleDust(P.GlobalPosition - AimDir * 2f, -AimDir); // backblast
-        SoundWorld.I.Emit(d.Sound, MuzzlePos, 0f, P);
+        SoundWorld.I.Emit(d.Sound, MuzzlePos, 0f, P, facing: dir);
         Effects.I.MuzzleFlash(MuzzlePos, AimDir);
 
         float m = P.RecoilMult;

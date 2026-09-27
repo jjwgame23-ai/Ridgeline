@@ -221,6 +221,11 @@ public partial class Terrain : Node3D, IGround
         }
     }
 
+    public override void _ExitTree()
+    {
+        if (Main == this) Main = null;
+    }
+
     public override void _Process(double delta)
     {
         // Uploading the mask is a 16 MB copy: batch blasts that land close together in time.

@@ -109,11 +109,11 @@ public partial class Effects : Node3D
         return p;
     }
 
-    public void Impact(Vector3 pos, Vector3 normal, bool silent)
+    public void Impact(Vector3 pos, Vector3 normal, bool silent, Surface surface = Surface.Earth)
     {
         Burst(pos, normal, silent ? 3 : 8, 0.9f, 1.5f, 4.5f, 30f, new Vector3(0, -5f, 0), 0.12f, 0.4f, _dustRamp, _dust, 2f);
         Mark(pos, normal, 0.06f);
-        if (!silent) SoundWorld.I.Emit(Snd.Impact, pos);
+        if (!silent) SoundWorld.I.Emit(SoundWorld.HitFor(surface), pos);
     }
 
     public void Blood(Vector3 pos, Vector3 dir)

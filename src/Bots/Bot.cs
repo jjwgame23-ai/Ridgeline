@@ -518,7 +518,7 @@ public partial class Bot : CharacterBody3D, ICombatant
 
         Ballistics.I.Fire(origin, bdir, Def.MuzzleVel * (1f + _rng.RandfRange(-0.006f, 0.006f)), Def.Drag, this, Def.Damage, Def.Name, intendedDist: targetDist,
             tag: $"{Brain.State}/{Brain.FireMode}{(MathF.Abs(_lean) > 0.1f ? "/lean" : "")}{(Crouched ? "/crouch" : "")}{(origin == eye ? "/eyeorigin" : "")}");
-        SoundWorld.I.Emit(Def.Sound, origin, 0f, this);
+        SoundWorld.I.Emit(Def.Sound, origin, 0f, this, facing: bdir);
         Effects.I.MuzzleFlash(origin, dir);
         Aim.Kick(Def.VertKickDeg * _rng.RandfRange(0.85f, 1.15f), _rng.RandfRange(-1f, 1f) * Def.HorizKickDeg, Crouched ? 0.8f : 1f);
         return true;
@@ -699,7 +699,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         float spread = Mathf.DegToRad(rd.SpreadAdsDeg + (1f - P.Skill) * 0.4f);
         dir = dir.Rotated(perp.Rotated(dir, _rng.Randf() * Mathf.Tau), MathF.Sqrt(_rng.Randf()) * spread).Normalized();
         Ballistics.I.Fire(from, dir, rd.MuzzleVel, rd.Drag, this, rd.Damage, rd.Name, explosive: true, armM: rd.ArmM,
-            pen: rd.Pen, vehDamage: rd.VehDamage, crater: rd.Crater, frags: rd.Frags, rocket: true, homing: homing);
+            pen: rd.Pen, vehDamage: rd.VehDamage, crater: rd.Crater, frags: rd.Frags, rocket: true, homing: homing, heavyCrack: true);
         SoundWorld.I.Emit(Snd.Rocket, from, 0f, this);
         Effects.I.MuzzleDust(from - dir * 2f, -dir);
         return true;

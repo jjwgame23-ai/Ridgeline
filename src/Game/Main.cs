@@ -35,11 +35,15 @@ public partial class Main : Node3D
             return;
         }
 
-        // Order matters: systems first, since everything after emits sounds and effects.
+        // Order matters: systems first, since everything after emits sounds and effects. The air
+        // and ground of the map go into how every sound is made, so they're set before.
+        var biome = setup.Map == "valley" ? MapSpec.Get(string.IsNullOrEmpty(setup.MapId) ? Settings.Map : setup.MapId).Biome : Biome.Temperate;
+        Acoustics.SetClimate(biome);
         AddChild(new SoundWorld());
+        DevShot.DumpSoundsIfRequested(this);
         AddChild(new Ballistics());
         AddChild(new Effects());
-        BuildEnvironment(setup.Map == "valley" ? MapSpec.Get(string.IsNullOrEmpty(setup.MapId) ? Settings.Map : setup.MapId).Biome : Biome.Temperate);
+        BuildEnvironment(biome);
 
         if (setup.Map == "arena") BuildArena(setup);
         else if (setup.Map == "valley") BuildValley(setup);

@@ -438,8 +438,9 @@ public partial class Vehicle : CharacterBody3D
         LastFired = Clock.Now;
         Ballistics.I.Fire(from, dir, w.Speed, w.Drag, gunner, w.Damage, w.Name, GetRid(), explosive: w.Explosive, armM: w.Explosive ? 8f : 0f,
             pen: w.Pen, vehDamage: w.VehDamage, crater: w.Crater, frags: w.Frags, rocket: w.Sound == Snd.Rocket, prox: w.Prox,
-            whistle: t.Def.Indirect, shooterVehicle: this);
-        SoundWorld.I.Emit(w.Sound, from, 0f, gunner);
+            whistle: t.Def.Indirect, shooterVehicle: this, heavyCrack: w.Sound is Snd.Hmg or Snd.Autocannon or Snd.Cannon or Snd.Rocket);
+        // Aboard, you're in the gun's near field (and may be hearing through a chase camera): no muzzle directivity.
+        SoundWorld.I.Emit(w.Sound, from, 0f, gunner, facing: Player.I is { } pl && pl.Ride == this ? default : dir);
         Effects.I.MuzzleFlash(from, dir, w.Flash);
         if (w.Flash > 2f) Effects.I.MuzzleDust(GlobalPosition + dir * 3f, dir);
         return true;
@@ -461,7 +462,7 @@ public partial class Vehicle : CharacterBody3D
         if (pen >= effective)
         {
             Penetrate(p.VehDamage, pen / MathF.Max(effective, 1f), p.Shooter, p.Damage);
-            if (p.VehDamage >= 20f) Effects.I.Impact(pos, normal, false);
+            if (p.VehDamage >= 20f) Effects.I.Impact(pos, normal, false, Surface.Metal);
         }
         else
         {
@@ -469,6 +470,7 @@ public partial class Vehicle : CharacterBody3D
             if (p.Explosive && armor < 30f) Damage(p.VehDamage * 0.15f, p.Shooter);
             // Small arms: a faint tick-clank; a big round bouncing: a heavy one.
             SoundWorld.I.Emit(Snd.ArmorHit, pos, p.Pen > 20f ? 4f : -10f);
+            Ballistics.Ricochet(p, pos, normal, true); // a round glancing off sloped armour
             Effects.I.Impact(pos, normal, true);
         }
     }
