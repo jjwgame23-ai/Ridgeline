@@ -75,6 +75,7 @@ public static class Controls
         new("bot_debug", "Bot debug", "Game", Where.Anywhere, new[] { "key:F6" }),
         new("volume_down", "Volume down", "Game", Where.Anywhere, new[] { "key:F7" }),
         new("volume_up", "Volume up", "Game", Where.Anywhere, new[] { "key:F8" }),
+        new("pause", "Pause", "Game", Where.Anywhere, new[] { "key:P" }),
         new("main_menu", "Main menu", "Game", Where.Anywhere, new[] { "key:F10" }),
         new("fullscreen", "Fullscreen", "Game", Where.Anywhere, new[] { "key:F11" }),
     };

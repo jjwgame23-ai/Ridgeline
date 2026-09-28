@@ -64,7 +64,7 @@ public static class Radio
         {
             var r = Log[i];
             if (now - r.At > maxAge) break;
-            if (r.Team == team && r.Kind == RadioKind.Armor && r.Vehicle is { Destroyed: false, Def.Kind: VKind.SPAA }
+            if (r.Team == team && r.Kind == RadioKind.Armor && r.Vehicle is { Destroyed: false, Def.Kind: VKind.SPAA } && GodotObject.IsInstanceValid(r.Vehicle)
                 && ((r.Pos - p) with { Y = 0f }).Length() < within) return r;
         }
         return null;
@@ -79,7 +79,7 @@ public static class Radio
         {
             var r = Log[i];
             if (now - r.At > maxAge) break;
-            if (r.Team == team && r.Kind == RadioKind.Armor && r.Vehicle is { Destroyed: false, Def.Kind: VKind.SPAA } av && seen.Add(av)) yield return r;
+            if (r.Team == team && r.Kind == RadioKind.Armor && r.Vehicle is { Destroyed: false, Def.Kind: VKind.SPAA } av && GodotObject.IsInstanceValid(av) && seen.Add(av)) yield return r;
         }
     }
 
@@ -91,7 +91,9 @@ public static class Radio
         {
             var r = Log[i];
             if (now - r.At > maxAge) break;
-            if (r.Team == team && r.Kind == kind && (r.Vehicle == null || !r.Vehicle.Destroyed)) return r;
+            // (A report of a vehicle that's since been removed, a mortar packed up and moved, is no report: reading it
+            // threw, about 50 times an hour.)
+            if (r.Team == team && r.Kind == kind && (r.Vehicle == null || (GodotObject.IsInstanceValid(r.Vehicle) && !r.Vehicle.Destroyed))) return r;
         }
         return null;
     }

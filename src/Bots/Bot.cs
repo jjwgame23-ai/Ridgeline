@@ -65,6 +65,31 @@ public partial class Bot : CharacterBody3D, ICombatant
     public Vector3 GoalPos => _goal;
     public Vector3[] PathPoints => _path;
     public int PathIndex => _pathIdx;
+    /// <summary>For the verbose log: how the walk is going.</summary>
+    public string PathDebug => $"goal {(_hasGoal ? $"{Flat(_goal - GlobalPosition).Length():0} m (asked {Flat(_rawGoal - GlobalPosition).Length():0})" : "-")} path {_pathIdx}/{_path.Length}{(_partial ? " partial" : "")} stuck x{_stuckCount} {Mode} {new Vector2(Velocity.X, Velocity.Z).Length():0.0} m/s at ({GlobalPosition.X:0.0}, {GlobalPosition.Y:0.0}, {GlobalPosition.Z:0.0}), walled {Walled()}/8, mesh {Valley.ClosestOnFoot(GetWorld3D(), GlobalPosition).DistanceTo(GlobalPosition):0.0} m{Probe()}";
+
+    /// <summary>For the log: how far from here a fresh route to the goal gets (a few metres: he's cut off).</summary>
+    string Probe()
+    {
+        if (!_hasGoal) return "";
+        var np = NavBaker.Path(GetWorld3D().NavigationMap, GlobalPosition, _rawGoal);
+        return np.Length > 0 ? $", a route gets {Flat(np[^1] - GlobalPosition).Length():0} m of {Flat(_rawGoal - GlobalPosition).Length():0}" : ", no route";
+    }
+
+    /// <summary>For the log: of eight directions, how many are blocked within 4 m (8: shut in).</summary>
+    int Walled()
+    {
+        var space = GetWorld3D().DirectSpaceState;
+        int n = 0;
+        for (int k = 0; k < 8; k++)
+        {
+            float a = k * Mathf.Tau / 8f;
+            var from = GlobalPosition + Vector3.Up * 1.0f;
+            var q = PhysicsRayQueryParameters3D.Create(from, from + new Vector3(MathF.Cos(a), 0f, MathF.Sin(a)) * 4f, Layers.Solid, SelfOnly);
+            if (space.IntersectRay(q).Count > 0) n++;
+        }
+        return n;
+    }
     public float RemainingDistance => _hasGoal ? Flat(_goal - GlobalPosition).Length() : 0f;
 
     // --- ICombatant

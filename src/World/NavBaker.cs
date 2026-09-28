@@ -248,8 +248,35 @@ public partial class NavBaker : Node
             region.SetNavigationMap(Map);
             if (polys > 0) _tiles.Add((region.GetRid(), area));
             Done++;
-            if (Finished) Seconds = (Time.GetTicksMsec() - _startMs) / 1000.0;
+            if (Finished)
+            {
+                Seconds = (Time.GetTicksMsec() - _startMs) / 1000.0;
+                AddLinks();
+            }
         }).CallDeferred();
+    }
+
+    /// <summary>Short connections to add once the tiles are in (the doorways: see Builder.Doorways), both ways.</summary>
+    public List<(Vector3 A, Vector3 B)> Links = new();
+    readonly List<Rid> _links = new();
+
+    void AddLinks()
+    {
+        foreach (var (a, b) in Links)
+        {
+            var l = NavigationServer3D.LinkCreate();
+            NavigationServer3D.LinkSetMap(l, Map);
+            NavigationServer3D.LinkSetBidirectional(l, true);
+            NavigationServer3D.LinkSetStartPosition(l, a);
+            NavigationServer3D.LinkSetEndPosition(l, b);
+            _links.Add(l);
+        }
+    }
+
+    public override void _ExitTree()
+    {
+        foreach (var l in _links) NavigationServer3D.FreeRid(l);
+        _links.Clear();
     }
 
     /// <summary>Each non-empty tile's region, and the square of ground it was baked for.</summary>

@@ -70,6 +70,8 @@ public partial class DevShot : Node
         // level=alhamra etc.: which battlefield.
         if (setup != null && a.TryGetValue("level", out var lv)) setup.MapId = lv;
         if (a.TryGetValue("front", out var fr)) Settings.FrontLine = fr != "0";
+        if (a.TryGetValue("minutes", out var mn) && int.TryParse(mn, out var mins)) Settings.MatchMinutes = mins;
+        if (a.TryGetValue("tickets", out var tk) && int.TryParse(tk, out var tix)) TerritoryMode.TicketsOverride = tix;
         return setup;
     }
 

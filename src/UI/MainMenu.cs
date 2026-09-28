@@ -61,6 +61,11 @@ public partial class MainMenu : Control
         var front = new CheckBox { Text = "Front line", ButtonPressed = Settings.FrontLine, TooltipText = "Territory: points are linked, and you can only attack one linked to ground you hold (Hell Let Loose style)." };
         front.Toggled += on => { Settings.FrontLine = on; Settings.Save(); };
         mrow.AddChild(front);
+        var len = new OptionButton { TooltipText = "Territory: a side loses when its headquarters is overrun or its tickets run out. If neither has happened by then, the side holding the most ground wins." };
+        foreach (int m in Settings.MatchLengths) len.AddItem(m == 0 ? "No time limit" : $"{m / 60} h limit");
+        len.Selected = Math.Max(0, Array.IndexOf(Settings.MatchLengths, Settings.MatchMinutes));
+        len.ItemSelected += i => { Settings.MatchMinutes = Settings.MatchLengths[i]; Settings.Save(); };
+        mrow.AddChild(len);
         mrow.AddChild(blurb);
         box.AddChild(new Label { Text = "A map's first launch bakes its navigation (up to a minute on the 5 km maps); it's cached after that.", Modulate = new Color(1, 1, 1, 0.4f), AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(440, 0) });
         box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 6) });

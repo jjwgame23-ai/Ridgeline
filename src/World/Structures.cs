@@ -149,6 +149,16 @@ public sealed class Builder
     public readonly List<Perch> Perches = new();  // windows and rooftops to shoot from
     readonly Basis _rot;
 
+    /// <summary>
+    /// Every doorway in every wall built, as a short line through it from one side to the other (0.75 m out
+    /// from each face), for the navmesh to join the two sides by (see NavBaker.Links). Baked from voxels a
+    /// man's width inset from every wall, the navmesh closes most doorways that don't line up with its grid:
+    /// a 1.4 m door in a wall at an angle, or the 1.2 m door of an outpost's bunker, came out as solid wall,
+    /// and the room behind it an island. (A third of the Highlands' building points, half of Novigrad's, could
+    /// not be walked to or from; men who spawned inside stood there all match, and their squads waited for them.)
+    /// </summary>
+    public static readonly List<(Vector3 A, Vector3 B)> Doorways = new();
+
     public Builder(Node3D parent, Vector3 origin, float yawDeg)
     {
         Parent = parent;
@@ -236,6 +246,15 @@ public sealed class Builder
         if (len < 0.05f) return;
         var dir = d / len;
         float yaw = Mathf.RadToDeg(MathF.Atan2(-dir.Z, dir.X));
+        // Every doorway a man can walk through, for the navmesh (see Doorways).
+        var across = new Vector3(-dir.Z, 0f, dir.X);
+        foreach (var o in openings)
+            if (o.Bottom < 0.5f && o.Top - MathF.Max(o.Bottom, 0f) >= 1.8f && o.Width >= 0.8f)
+            {
+                var mid = a + dir * o.At + Vector3.Up * (y0 + MathF.Max(o.Bottom, 0f));
+                float reach = thick / 2f + 0.75f;
+                Doorways.Add((mid - across * reach, mid + across * reach));
+            }
 
         var ys = new SortedSet<float> { bottom, h };
         foreach (var o in openings)

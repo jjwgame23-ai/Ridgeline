@@ -199,7 +199,8 @@ public partial class TerritoryHud : CanvasLayer
         var m = Mode;
         _roster.Text = RosterText();
         _score.Text = string.Join("     ", Enumerable.Range(0, 3).Select(t =>
-            $"{TeamTag(t)} {m.Tickets[t]}{(m.Out[t] ? " [color=#888888](out)[/color]" : "")} [color=#aaaaaa]· {m.Owned(t)} pts[/color]"));
+            $"{TeamTag(t)} {m.Tickets[t]}{(m.Out[t] ? " [color=#888888](out)[/color]" : m.Spent(t) ? " [color=#ff5040](last stand)[/color]" : "")} [color=#aaaaaa]· {m.Owned(t)} pts[/color]"
+            + (!m.Out[t] && m.HQHold[t] < 0.999f ? $" [color=#ff5040]HQ {m.HQHold[t] * 100:0}%[/color]" : "")));
         _points.Text = PointsLine();
 
         var sq = m.PlayerSquad;
@@ -259,11 +260,13 @@ public partial class TerritoryHud : CanvasLayer
         if (m.PlayerRespawnAt > 0)
         {
             var opts = m.SpawnOptions(0);
-            string chosen = m.PlayerSpawn < 0 ? "nearest to your squad's objective"
+            string chosen = m.PlayerSpawn < 0 ? "with your squad"
                 : m.PlayerSpawn == 0 ? "base (vehicles are parked there)"
                 : opts.FirstOrDefault(o => o.Point == m.PlayerSpawn - 1).Name ?? "nearest (your pick was lost)";
             string roles = string.Join("  ", TerritoryMode.PlayerRoles.Select((r, i) => r == Settings.PlayerRole ? $"[{i + 1}] {Roles.Short(r)}◂" : $"[{i + 1}] {Roles.Short(r)}"));
-            respawn = $"Respawning in {Math.Max(0, m.PlayerRespawnAt - now):0}s at {chosen} as {Roles.Name(Settings.PlayerRole)} — map (M): click a spawn\n" +
+            respawn = (m.PlayerWait != "" && m.PlayerSpawn < 0
+                          ? $"Waiting to rejoin your squad as {Roles.Name(Settings.PlayerRole)}: {m.PlayerWait}. Map (M): click a spawn to go on your own\n"
+                          : $"Respawning in {Math.Max(0, m.PlayerRespawnAt - now):0}s at {chosen} as {Roles.Name(Settings.PlayerRole)} — map (M): click a spawn\n") +
                       $"Role: {roles}\n";
         }
         var b = s.Target;
@@ -412,8 +415,11 @@ public partial class TerritoryMap : Control
         for (int t = 0; t < 3; t++)
         {
             var b = P(m.Map.Bases[t]);
-            DrawRect(new Rect2(b - new Vector2(8, 8), new Vector2(16, 16)), Team[t]);
-            DrawString(font, b + new Vector2(12, 5), KothMode.TeamNames[t] + " base", HorizontalAlignment.Left, -1, 13, Team[t]);
+            DrawRect(new Rect2(b - new Vector2(8, 8), new Vector2(16, 16)), m.Out[t] ? Team[t] with { A = 0.35f } : Team[t]);
+            DrawString(font, b + new Vector2(12, 5), KothMode.TeamNames[t] + (m.Out[t] ? " HQ (overrun)" : m.HQHold[t] < 0.999f ? $" HQ {m.HQHold[t] * 100:0}%" : " HQ"), HorizontalAlignment.Left, -1, 13, Team[t]);
+            // Its hold, when it's being taken.
+            if (!m.Out[t] && m.HQHold[t] < 0.999f)
+                DrawArc(b, m.HQ[t].Radius * scale + 4f, -Mathf.Pi / 2f, -Mathf.Pi / 2f + Mathf.Tau * m.HQHold[t], 40, Colors.Red, 3f);
         }
         if (dead) DrawString(font, P(m.Map.Bases[0]) + new Vector2(12, 22), m.PlayerSpawn == 0 ? "▶ SPAWN" : "spawn", HorizontalAlignment.Left, -1, 13, m.PlayerSpawn == 0 ? Colors.White : Team[0]);
 

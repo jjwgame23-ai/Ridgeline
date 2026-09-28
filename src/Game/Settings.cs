@@ -13,6 +13,9 @@ public static class Settings
     public static string Map = "valley";
     /// <summary>Territory with a front line: points must be taken in order, linked from your own.</summary>
     public static bool FrontLine = true;
+    /// <summary>Territory: how long before the match is decided on ground held, if no side has lost by then (0: no limit).</summary>
+    public static int MatchMinutes = 180;
+    public static readonly int[] MatchLengths = { 60, 120, 180, 0 };
 
     // ---- graphics
     public enum DisplayMode { Windowed, Borderless, Exclusive }
@@ -42,6 +45,7 @@ public static class Settings
         PlayerRole = (Role)cfg.GetValue("game", "role", (int)Role.Rifleman).AsInt32();
         Map = cfg.GetValue("game", "map", "valley").AsString();
         FrontLine = cfg.GetValue("game", "front", true).AsBool();
+        MatchMinutes = cfg.GetValue("game", "match_minutes", 180).AsInt32();
         Display = (DisplayMode)cfg.GetValue("graphics", "display", 0).AsInt32();
         VSync = cfg.GetValue("graphics", "vsync", true).AsBool();
         MaxFps = cfg.GetValue("graphics", "max_fps", 0).AsInt32();
@@ -58,6 +62,7 @@ public static class Settings
         cfg.SetValue("game", "role", (int)PlayerRole);
         cfg.SetValue("game", "map", Map);
         cfg.SetValue("game", "front", FrontLine);
+        cfg.SetValue("game", "match_minutes", MatchMinutes);
         cfg.SetValue("graphics", "display", (int)Display);
         cfg.SetValue("graphics", "vsync", VSync);
         cfg.SetValue("graphics", "max_fps", MaxFps);

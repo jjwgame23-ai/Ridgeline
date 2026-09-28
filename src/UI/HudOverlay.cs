@@ -156,7 +156,7 @@ public partial class HudOverlay : Control
                 ? $"{t.Def.Coax!.Name} {t.CoaxLoaded}/{t.Def.Coax.Mag} +{t.CoaxStock}{(t.CoaxReloadT > 0f ? $"  RELOADING {t.CoaxReloadT:0.0}s" : "")}"
                 : $"{t.Weapon.Name} {t.Loaded[t.AmmoIdx]}{(t.Weapon.Mag > 1 ? $"/{t.Weapon.Mag}" : "")} +{t.Stock[t.AmmoIdx]}{(t.Reloading ? $"  LOADING {t.ReloadT:0.0}s" : "")}";
             if (t.Def.Indirect && t.AimAt is Vector3 lay)
-                lines.Add($"laying on {lay.DistanceTo(t.YawNode.GlobalPosition):0} m, bearing {Mathf.PosMod(-Mathf.RadToDeg(MathF.Atan2(lay.X - t.YawNode.GlobalPosition.X, -(lay.Z - t.YawNode.GlobalPosition.Z))), 360f):000} · {(t.Laid ? "ON TARGET — fire" : "laying...")} · look at the spot to aim");
+                lines.Add($"laying on {lay.DistanceTo(t.YawNode.GlobalPosition):0} m, bearing {Mathf.PosMod(-Mathf.RadToDeg(MathF.Atan2(lay.X - t.YawNode.GlobalPosition.X, -(lay.Z - t.YawNode.GlobalPosition.Z))), 360f):000} · {(t.OutOfRange ? "OUT OF RANGE" : t.Laid ? $"ON TARGET, charge {Mathf.RoundToInt((t.Charge - 0.4f) / 0.15f)} — fire" : "laying...")} · look at the spot to aim");
             lines.Add($"{ammo} · " + Controls.Fill("[{firemode}] ammo · [{reload}] reload · [{aim}] zoom") + (v.TurretDown[seat.Turret] ? " · TURRET JAMMED" : ""));
         }
         else if (seat.Role == SeatRole.Driver && v.Def.Air)

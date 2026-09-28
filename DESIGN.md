@@ -563,6 +563,75 @@ Two tools read it (Python 3 with numpy and Pillow):
   - Firing positions are judged from the barrel's height, not the turret roof. Hull-down with the line clear at the roof and not at the gun used to put the round into the crest.
 - **Telemetry** adds the radio net (who called in what, where) and what aircrews say. A helicopter's row says what it's doing (to a firing position, popped up, launching, guiding the missile, evading a radar, going home...). `Prof` counts radar locks, evasions, give-ways, missiles launched and lost, and why firing positions were turned down.
 
+### Long matches (built)
+
+Four matches the user recorded (8–51 minutes), plus two one-hour runs, showed what 6-minute tests couldn't:
+- **No side could lose.** A match ended only on tickets or at the 1-hour limit, and at 33 a side the tickets outlast the hour: about 6–7 a minute were spent, from 990. Bases couldn't be attacked, the base spawn couldn't be denied, and a side's home points could always be retaken through the link to its base.
+- **The front froze.** In the 51-minute Novigrad match 14 of the 20 changes of ownership came in the first 22 minutes, with 12 minutes at a time with none. In a one-hour run the points stood at 4/2/3 from minute 11 to the end. Fire per 5 minutes fell from about 2,500 rounds to 420.
+- **Why:**
+  - **Spawns.** Men respawned inside the capture circle of the owned point nearest their squad's objective, so that point became a fortress (13 ALPHA men sat in one district for half an hour) while the points around it were left empty.
+  - **Too little force.** Each side has two rifle squads, always sent to different places, so every front was a six-against-six duel.
+  - **Distraction.** A single enemy stepping onto an owned point recalled squads from their attacks.
+  - **Nobody pressed an advantage.** Both trailing sides always went for the leader.
+  - **Uneven starts.** The starting sectors depended on the map: Highlands gave 3/5/6 points, and the short side bled tickets from the first 15 s.
+
+What changed (`TerritoryMode`):
+- **Headquarters.** Each base is a headquarters (the ring round the flag, 50 m). Once an enemy holds a point linked to it, that enemy can go for it. More of them than defenders on it wears its hold down: 160 s with a one-man edge, 40 s with four or more. With no enemy on it, the hold comes back. At nothing, it's overrun and that side is out: no reinforcements, no vehicles, and its points go neutral. The last side left wins.
+- **Last stand.** Tickets are a side's reserves. At zero it gets no more reinforcements or vehicles, its squads fall back on its headquarters, and anyone can go for it, linked or not. It's out when the headquarters falls or its last man dies. It used to be out on the spot, its men stopping where they stood. In one-hour runs sides ran out of tickets at 45–70 minutes, and no headquarters was ever taken.
+- **Match length.** The time limit is now a setting (1, 2 or 3 hours, or none; 3 by default; `minutes=` for test runs). At the limit the side holding the most ground wins, then the most tickets. It used to be tickets alone, with a tie going to ALPHA.
+- **Reinforcements need a line back to base.**
+  - The base only takes reinforcements while no enemy is within 90 m of it.
+  - A point or FOB only takes them while it's joined to the headquarters through your own points along the links (FOBs within 500 m of one). A point that's been cut off gets nobody, and when there's nowhere to come back, men wait.
+  - Men respawn just outside the point on the side away from the enemy, and walk up to it.
+- **The commander.**
+  - It presses the weakest side, not the leader.
+  - For 90 s after a capture it pushes on to the points linked to the one it took.
+  - It sends more than one squad at a defended point or a headquarters.
+  - It answers a real attack on its own ground, not one man stepping onto it. The points in front of its headquarters matter most.
+  - Its own headquarters under attack is worth every squad it has.
+- **Fair starts:** every side starts with as many points as the side with the fewest.
+- **Fixes:**
+  - People flying over a point no longer count as on it.
+  - An owned point's hold comes back when nobody's on it, and half-done progress on a neutral point fades.
+  - A point linked to two bases (Novigrad's Signal Hill) now belongs to the nearer one.
+  - A squad can make a proper attack, with an ORP and support-by-fire, on a point it has attacked before, 90 s after the last one. Before, every later attempt was a walk-in.
+  - Radio reports of vehicles that have since been removed no longer throw. That happened about 50 times an hour, the one error the long runs found that the short ones never did.
+- **Telemetry** records the score every 5 s: tickets, who's out, point owners and headquarters hold. `tickets=N` starts every side with N for test runs.
+
+Fixes the long runs turned up:
+- **Mortars hit what they aim at.** The tube was laid in the frame of the slope its pit sits on (8–45°), and a tube near vertical is swung toward the downhill side by any tilt. Bombs came down a median 790 m from their aim point, none of several hundred within 50 m, all over the map.
+  - The baseplate is now bedded in and levelled.
+  - It uses charges 0–4 for the range, where before a single charge couldn't reach anything inside about 600 m.
+  - It's laid to a tenth of a degree, on each bomb's own point.
+  - The second crewman kneels at the tube and loads; alone, the gunner fires at half the rate.
+  - Result: a median miss of 19–43 m at 1.1–2.5 km.
+- **Men stuck for the whole match.**
+  - The navmesh's voxel bake closed doorways that didn't line up with its grid, so rooms behind them were islands: a third of the Highlands' building points and half of Novigrad's. Every doorway is now a navmesh link: 189 on Highlands, 4,173 on Novigrad.
+  - Spawn spots are checked for being inside something or cut off.
+  - A squad leader waits for a ride only while it's getting closer.
+- **Vehicles and support.**
+  - Crews try each side of the hull when they can't get round to the back, and go to their own vehicle however far off it is. Replacement aircraft used to sit on their pads uncrewed.
+  - The logistics truck goes home to load (it used to count as reloaded the moment it stopped), forward for a FOB, and out to drone teams that are running short. Drones restock at FOBs too; drone flying used to stop after 15–25 minutes.
+  - Shot-down aircrew go back to base, and replacements park clear of the wreck.
+- **Things removed from the world.** An explosion credited to a man since cleared away threw, about once every ten minutes. So did asking a mortar, which has no driver's seat, for its driver.
+
+From an 84-minute Al Hamra match played as a rifleman in ALPHA-1:
+- **Orders stay put.** Hour-long runs re-tasked each squad every minute or two, and a quarter of the changes came less than a minute after the one before, often straight back to the order the squad had just left: an enemy or two turned up near one of our points and dropped out of mind 15 s later. The orders at the top of the screen kept changing, and the squad walked back and forth. A fresh order now carries a commitment bonus that fades over two minutes, and a front point with a garrison keeps it unless another is clearly worse off.
+- **Smoke only with someone to screen from.** A squad used to pop smoke at a danger area whenever a hostile objective was within 450 m, so empty streets were screened. It now smokes only when someone in the squad has seen or heard an enemy within 400 m of the crossing in the last minute, or its last fight was that close. It still halts and crosses in bounds near the enemy, with or without smoke.
+- **Replacements join their squad.** A man came back at the spawn nearest his squad's objective, often 300–900 m from the squad itself. The player was separated from theirs for about 20 minutes of the match. He now comes back nearest the squad leader (on foot), and nearest the objective only when the squad has nobody left.
+- **Medics go further for their own.** Medics looked 60 m out at most when there was no fight on, so a downed man 65–300 m away bled out with nobody coming. The player was downed 8 times and picked up none of them. For a downed man in the medic's own squad, the reach is now 150 m when it's quiet; it's still 25 m in a firefight.
+- **Telemetry.** New `order` events (squad, new order) and `cross` events (start, smoke with the threat's position, crossed or abandoned).
+- **Replacements come up with the squad, not one at a time.** Every man used to come back on his own 10 s after he was killed. A squad in a fight was topped up the whole time, so none was ever wiped out, and men came back scattered and far from their squads. (The player killed themself with grenades to get a better respawn.) An infantryman's replacement now waits for his squad, and they come up together:
+  - once the squad is at a spawn of ours (its leader in or by a point we hold, at a FOB or at base) and out of contact;
+  - all at once, at the spawn nearest where it was sent, when nobody in the squad is left on his feet (once the last man killed, you included, is due);
+  - or, when it's got nowhere near a spawn in three minutes, on their own to the spawn nearest it, once it's out of contact.
+
+  A squad in a fight gets nobody new. A rifle squad worn down to a third of its men or fewer (with two or more waiting) is **shattered**: it breaks off what it's doing and falls back ("Regroup at …") to the nearest spawn to take them on, then gets new orders. Once it's falling back it keeps the same spawn while that stays open, and keeps going until it has its men or is back over half strength. Vehicle crews still come back at base.
+
+  In a 20-minute Valley run, 21 of 22 regroups got their men 4–130 s after the order. Wiped-out squads came back whole, and about 84 of 99 men were on the field on average, where before nearly everyone was. Smoke went on 28 of 67 crossings in that fighting, against about 60% of crossings before. On Al Hamra it was 2 of 36.
+- **You come back with your squad.** You wait with its other men, watching one of them. The dead screen says why you're waiting and how long before you're sent up anyway. A spawn you click on the map sends you there on your own, for that one time only: the pick used to stick, and every later death put you back there.
+- **Pause** (P). The game stops, its clock with it. F10 still goes to the main menu. There was no pause before.
+
 ### Not done
 
 - Hit rates at 100–300 m are still high: about 15% of aimed rounds hit, mostly men standing or crouched in cover or running to it. Real combat runs far lower, and much of the gap is how much bots expose themselves.

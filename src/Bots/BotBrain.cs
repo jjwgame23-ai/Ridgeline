@@ -65,12 +65,18 @@ public sealed class BotBrain
     double _stateSince, _reactAt, _nextShotAt, _hideUntil, _peekUntil, _holdUntil, _pauseUntil, _pauseStart, _strafeUntil;
     double _lastCallout = -99, _lastSay = -99, _lastContact, _lastHurt = -99, _nextNade = 5, _suppressUntil = -1, _prefireUntil = -1;
     double _evadeUntil, _pushAfter = -1, _nextBoundAt, _followAt;
+    /// <summary>Leading, waiting for the ride: since when (and how far off it was then, or when it last came 20 m closer); and walking on until.</summary>
+    double _rideWaitSince = -1, _rideGiveUpUntil = -1;
+    float _rideWaitGap;
     bool _following;
     double _nextAidCheck, _aidUntil, _nextLauncher = 4, _nextSupply, _lastMedicCall = -99, _nextShovel;
     ICombatant? _patient;
     int _aidKind; // 0 treat, 1 resupply, 2 build
     Vector3 _buildAt, _buildFacing;
     public bool Following => _following;
+    /// <summary>For the verbose log: what his Advance movement is doing (see TerritoryMode's report of men standing still).</summary>
+    public string MoveDebug => $"wp {(_hasWaypoint ? $"{_waypoint.DistanceTo(_b.FeetPos):0} m" : "-")}{(_pausing ? $" pausing {_pauseUntil - Now:0}s" : "")}{(_following ? " following" : "")}"
+        + $" obj {(Objective is SiteObjective so ? so.Site.Name : Objective?.GetType().Name ?? "-")} {FromObjective(_b.FeetPos):0} m{(InZone ? " (in zone)" : "")}";
     /// <summary>Going round with the flanking team in a react-to-contact drill (not a lone man's flank).</summary>
     bool _drillFlank;
     /// <summary>Who the cover we're in was taken from.</summary>
@@ -708,7 +714,9 @@ public sealed class BotBrain
 
     // ---- vehicles
 
-    double _boardCheck, _nextContactCall;
+    double _boardCheck, _nextContactCall, _boardBestAt;
+    float _boardBest;
+    int _boardSide;
 
     /// <summary>
     /// Crews go to their vehicle and get in (driver first, then the gun); a squad whose
@@ -724,7 +732,7 @@ public sealed class BotBrain
         // vehicle", "take the fight", "to the vehicle", twice a second, and did neither.) A crew's job is its
         // vehicle, not a rifle.
         if (Now < _boardCheck)
-            return State == BotState.Advance && Note is "to the transport" or "to the vehicle" && !close && Now - _lastHurt > 2.0;
+            return State == BotState.Advance && Note is "to the transport" or "to the vehicle" or ToTheTube or AssistantGunner && !close && Now - _lastHurt > 2.0;
         if (close) return false;
         Vehicle? v = null;
         SeatRole? seat = null;
@@ -732,7 +740,7 @@ public sealed class BotBrain
         // truck with its wheels shot out had its driver bailing out and climbing back in every second, and it was
         // never written off and replaced, since it was never empty.)
         if (Sq.Kind is SquadKind.Armor or SquadKind.Transport or SquadKind.Air or SquadKind.Mortar && Sq.Vehicle is { Destroyed: false, Useless: false } own) { v = own; seat = SeatRole.Driver; }
-        else if (Sq.Kind == SquadKind.Logistics && Sq.Vehicle is { Destroyed: false, Useless: false } truck && Sq.FobSite != null && Sq.FobBuildStart < 0) { v = truck; seat = SeatRole.Driver; }
+        else if (Sq.Kind == SquadKind.Logistics && Sq.Vehicle is { Destroyed: false, Useless: false } truck && Sq.TruckRun) { v = truck; seat = SeatRole.Driver; }
         else if (Sq.Transport is { Destroyed: false, Boarding: true } ride) { v = ride; seat = SeatRole.Passenger; }
         if (v == null)
         {
@@ -743,12 +751,20 @@ public sealed class BotBrain
         // No seat for us (a mortar has one, for its gunner): the other man stays by it, not climbing onto it.
         if (v.FreeSeat(seat) < 0)
         {
+            // A mortar's second man is its assistant gunner: he kneels beside the tube and hangs the bombs. (He
+            // used to stand about near it with nothing to do, "no seat", for the whole match.)
+            if (v.Turrets.Length > 0 && v.Turrets[0].Def.Indirect && v.Crewed && v.CrewTeam == _b.Team) return AtTheTube(v);
             // Was on the way to it, and the seat's gone: stop heading for it.
             if (Note is "to the transport" or "to the vehicle") { _b.Stop(); _hasWaypoint = false; SetState(BotState.Advance, "no seat"); }
             return false;
         }
         float d = v.GlobalPosition.DistanceTo(_b.FeetPos);
-        if (d > 400f) return false;
+        // A ride that has come for us, when it's close. A crew's own vehicle however far off it is: it's their job,
+        // and nobody else will bring it to them. (Crews more than 400 m from theirs were left to their old orders:
+        // a gunship's crew, shot down, walked on to the fight they had been flying over, and the replacement sat
+        // on its pad uncrewed for the rest of the match; the logistics team walked to its FOB site on foot and
+        // left the truck at base.)
+        if (d > 400f && seat != SeatRole.Driver) return false;
         // How far from the hull itself (not its middle, which is inside it).
         var l = v.ToLocal(_b.FeetPos);
         float ex = MathF.Max(0f, MathF.Abs(l.X) - v.Def.Hull.X * 0.5f), ez = MathF.Max(0f, MathF.Abs(l.Z) - v.Def.Hull.Z * 0.5f);
@@ -759,14 +775,30 @@ public sealed class BotBrain
             int s = v.FreeSeat(seat);
             // Crews take the driver's seat, then the gun, then anything.
             if (seat == SeatRole.Driver && v.DriverSeat >= 0 && v.Occupants[v.DriverSeat] != null && v.GunnerSeat >= 0 && v.Occupants[v.GunnerSeat] == null) s = v.GunnerSeat;
-            if (s >= 0 && v.Enter(_b, s)) { SetState(BotState.Advance, "mounted"); return true; }
+            if (s >= 0 && v.Enter(_b, s)) { SetState(BotState.Advance, "mounted"); _boardSide = 0; return true; }
             return false;
         }
-        // Round to the back (the ramp, the rear doors), onto ground we can stand on, not into the middle of the hull.
-        var door = v.GlobalPosition + v.GlobalBasis.Z * (v.Def.Hull.Z * 0.5f + 1.2f);
+        bool going = State == BotState.Advance && Note is "to the transport" or "to the vehicle";
+        if (!going || d < _boardBest - 3f) { _boardBest = d; _boardBestAt = Now; }
+        // Couldn't get round to where we were heading (the walk ended short of the hull, or was given up stuck on
+        // something: a wreck, a container, the next vehicle in the row), or no nearer for a while: try the next side.
+        // (The walk used to be set off once: a crew that got stuck on the way stood there, still "to the vehicle",
+        // for the rest of the match, and their vehicle sat at base uncrewed.)
+        bool lost = going && (_b.Arrived || Now - _boardBestAt > 20.0);
+        if (lost) { _boardSide++; _boardBest = d; _boardBestAt = Now; }
+        // Round to the back (the ramp, the rear doors), onto ground we can stand on, not into the middle of the
+        // hull; failing that a side (there are steps and hatches all round), then the front.
+        var basis = v.GlobalBasis;
+        var door = (_boardSide % 4) switch
+        {
+            1 => v.GlobalPosition + basis.X * (v.Def.Hull.X * 0.5f + 1.2f),
+            2 => v.GlobalPosition - basis.X * (v.Def.Hull.X * 0.5f + 1.2f),
+            3 => v.GlobalPosition - basis.Z * (v.Def.Hull.Z * 0.5f + 1.2f),
+            _ => v.GlobalPosition + basis.Z * (v.Def.Hull.Z * 0.5f + 1.2f),
+        };
         var navDoor = Valley.ClosestOnFoot(_b.GetWorld3D(), door);
         if (((navDoor - door) with { Y = 0f }).Length() < 4f) door = navDoor;
-        if (State != BotState.Advance || _b.GoalPos.DistanceTo(door) > 2f)
+        if (!going || lost || _b.GoalPos.DistanceTo(door) > 2f)
         {
             SetState(BotState.Advance, seat == SeatRole.Passenger ? "to the transport" : "to the vehicle");
             _b.MoveTo(door, MoveMode.Sprint);
@@ -774,6 +806,51 @@ public sealed class BotBrain
             _waypoint = door;
         }
         _boardCheck = Now + 0.5;
+        return true;
+    }
+
+    public const string AssistantGunner = "assistant gunner", ToTheTube = "to the tube";
+
+    /// <summary>
+    /// The assistant gunner's post: kneeling at the tube's left rear, clear of the way it's laid (he shifts round
+    /// with it as it traverses, the way a crew moves the bipod), close enough to hang each bomb in the muzzle.
+    /// </summary>
+    bool AtTheTube(Vehicle v)
+    {
+        var tube = v.Turrets[0].YawNode.GlobalBasis;
+        var fwd = (-tube.Z) with { Y = 0f };
+        fwd = fwd.LengthSquared() > 1e-4f ? fwd.Normalized() : v.Forward;
+        var left = Vector3.Up.Cross(fwd);
+        // Left rear by preference; if the ground there can't be stood on (a pit dug into a steep slope), the other
+        // side, behind, or beside it: the first spot a man can get to.
+        Vector3? post = null;
+        foreach (var off in new[] { -fwd * 0.7f + left * 1.0f, -fwd * 0.7f - left * 1.0f, -fwd * 1.2f, left * 1.2f, -left * 1.2f })
+        {
+            var want = v.GlobalPosition + off;
+            var onFoot = Valley.ClosestOnFoot(_b.GetWorld3D(), want);
+            if (((onFoot - want) with { Y = 0f }).Length() < 0.6f) { post = onFoot; break; }
+            if (post == null && ((onFoot - v.GlobalPosition) with { Y = 0f }).Length() < 2.5f) post = onFoot;
+        }
+        var at = post ?? v.GlobalPosition - fwd * 0.7f + left * 1.0f;
+        _boardCheck = Now + 0.5;
+        float d = ((_b.FeetPos - at) with { Y = 0f }).Length();
+        // At his post, or anywhere close beside or behind the tube, clear of the muzzle: he stays there until the
+        // tube is swung round onto him, rather than shuffling round after it every time it traverses.
+        var fromTube = (_b.FeetPos - v.GlobalPosition) with { Y = 0f };
+        // (His post can fall just inside the tube's own footprint, and he kept pushing at it, stuck, beside the tube.)
+        bool byTube = fromTube.Length() < 2.6f && fromTube.Dot(fwd) < 0.8f;
+        if (d < 0.8f || byTube)
+        {
+            if (Note != AssistantGunner) { _b.Stop(); _hasWaypoint = false; SetState(BotState.Advance, AssistantGunner); }
+            return true;
+        }
+        if (Note != ToTheTube || _b.GoalPos.DistanceTo(at) > 0.5f)
+        {
+            SetState(BotState.Advance, ToTheTube);
+            _b.MoveTo(at, MoveMode.Walk);
+            _hasWaypoint = true;
+            _waypoint = at;
+        }
         return true;
     }
 
@@ -1046,15 +1123,25 @@ public sealed class BotBrain
         // Drones in the air keep flying (and come home) whatever he's doing; new ones only go up from the post.
         _b.Ops.Think(area, launch: InZone && !contact);
         if (contact) return false;
-        // Short of drones and the logistics truck's close: go and get more off it.
-        if (_b.Ops.StockLevel < 0.5f && !_b.Ops.Flying
-            && Vehicle.All.Where(v => !v.Destroyed && v.Def.Kind == VKind.Logistics && v.Team == _b.Team && v.Velocity3.Length() < 1f)
-                          .OrderBy(v => v.GlobalPosition.DistanceTo(_b.FeetPos)).FirstOrDefault() is { } truck
-            && truck.GlobalPosition.DistanceTo(_b.FeetPos) < 150f)
+        // Short of drones and the logistics truck's close, or a FOB (its cache has them too): go and get more. (Only
+        // the truck used to count, within 150 m, and the teams' posts are rarely that close to it: they ran out.)
+        if (_b.Ops.StockLevel < 0.5f && !_b.Ops.Flying)
         {
-            if (truck.GlobalPosition.DistanceTo(_b.FeetPos) < 12f) { _b.Resupply(); return false; }
-            if (State != BotState.Advance || Now > _fetchAt) { _fetchAt = Now + 3.0; SetState(BotState.Advance, "fetching drones off the truck"); GoTo(truck.GlobalPosition); }
-            return true;
+            Vector3? cache = null;
+            float cd = float.MaxValue;
+            bool truck = false;
+            foreach (var v in Vehicle.All)
+                if (!v.Destroyed && v.Def.Kind == VKind.Logistics && v.Team == _b.Team && v.Velocity3.Length() < 1f && v.GlobalPosition.DistanceTo(_b.FeetPos) is var dv && dv < 150f && dv < cd)
+                { cd = dv; cache = v.GlobalPosition; truck = true; }
+            foreach (var f in Fob.All)
+                if (f.Team == _b.Team && f.GlobalPosition.DistanceTo(_b.FeetPos) is var df && df < 400f && df < cd)
+                { cd = df; cache = f.GlobalPosition; truck = false; }
+            if (cache is Vector3 at)
+            {
+                if (cd < (truck ? 12f : 20f)) { _b.Resupply(); return false; }
+                if (State != BotState.Advance || Now > _fetchAt) { _fetchAt = Now + 3.0; SetState(BotState.Advance, truck ? "fetching drones off the truck" : "fetching drones from the FOB"); GoTo(at); }
+                return true;
+            }
         }
         if (!InZone || !_b.Ops.Flying) return false;
         if (State != BotState.Hold) SetState(BotState.Hold, "flying a drone");
@@ -1215,11 +1302,13 @@ public sealed class BotBrain
                 if (c.Dead || c.Team != _b.Team || (c.Downed && Role != Role.Medic) || (Role == Role.Ammo && c == _b) || c.Ride != null) continue;
                 if (_claimed.TryGetValue(c, out var by) && by != _b && GodotObject.IsInstanceValid(by) && by.Alive && by.Brain.State == BotState.Aid) continue;
                 float d = c.FeetPos.DistanceTo(_b.FeetPos);
-                if (d > reach) continue;
+                bool squad = c is Bot cb && cb.Squad == Sq || c is Player && Sq != null && Sq.Members.Contains(c);
+                // A man down in his own squad, and no fight on: the medic goes further for him. (Out to 60 m only, a
+                // squad spread over a village left its downed men to bleed out 65-300 m from the medic.)
+                if (d > (squad && c.Downed && reach > 25f ? 150f : reach)) continue;
                 float need = Role == Role.Medic ? (_b.Medkits <= 0 ? 0f : MedicNeed(c))
                                                 : (Carried(c) < 0.4f ? (0.4f - Carried(c)) * 100f : 0f);
                 if (need <= 0f) continue;
-                bool squad = c is Bot cb && cb.Squad == Sq || c is Player && Sq != null && Sq.Members.Contains(c);
                 float score = d - need * 0.8f - (squad ? 15f : 0f);
                 if (score >= bestScore) continue;
                 bestScore = score;
@@ -1556,12 +1645,30 @@ public sealed class BotBrain
     void ActAdvance()
     {
         // Our ride's on its way: wait for it here (the squad holds round the leader) rather than walk away from it.
+        // However far off it is (the pickup was only started because it's worth the wait), but only while it's
+        // actually getting closer: a ride that's stuck, or busy elsewhere, gets 25 s to show it's coming, then the
+        // squad walks on for a while (the ride keeps heading for the leader, and picks them up on the way). (Squads
+        // walked on until the ride was within 400 m, so a carrier sent from the far side of the map chased them at
+        // little more than their own walking pace; and a squad whose IFV was stuck or off on overwatch stood in the
+        // street for minutes on end.)
         if (Sq != null && Sq.Leader == _b && Sq.Transport is { Destroyed: false, Boarding: false } ride && _b.Ride == null
-            && ride.GlobalPosition.DistanceTo(_b.FeetPos) is > 30f and < 400f && !Sq.Engaged)
+            && ride.GlobalPosition.DistanceTo(_b.FeetPos) is > 30f and var rideGap && !Sq.Engaged && Now > _rideGiveUpUntil)
         {
+            if (_rideWaitSince < 0 || rideGap < _rideWaitGap - 20f) { _rideWaitSince = Now; _rideWaitGap = rideGap; }
+            else if (Now - _rideWaitSince > 25.0)
+            {
+                _rideGiveUpUntil = Now + 45.0;
+                _rideWaitSince = -1;
+                Prof.Count("squad:ride not coming, walking on");
+                Say("Ride's not coming. On me, we walk.");
+                Note = "";
+                return;
+            }
+            Sq.RideWaitAt = Now;
             if (State == BotState.Advance && _b.Moving) { _b.Stop(); _hasWaypoint = false; Note = "waiting for the ride"; }
             return;
         }
+        _rideWaitSince = -1;
         // Leading the squad over a danger area: up to the near edge, then across at a sprint, then hold on the far side.
         if (Sq != null && Sq.Leader == _b && Sq.CrossingGoal is Vector3 cg)
         {
@@ -1703,7 +1810,7 @@ public sealed class BotBrain
             case AssaultPhase.None:
             {
                 bool hostile = Squad.Hostile?.Invoke(so.Site, _b.Team) == true;
-                if (!hostile || Sq.AssaultOn == Objective || Sq.Alive < 4 || d > 340f || d < 150f) return false;
+                if (!hostile || Sq.RecentlyAssaulted(Objective) || Sq.Alive < 4 || d > 340f || d < 150f) return false;
                 Sq.BeginOrp(_b.FeetPos, Objective);
                 Say("ORP here. Security out, form up on me.");
                 _b.Stop();
@@ -1878,6 +1985,8 @@ public sealed class BotBrain
             case BotState.Evade:
                 // Down behind it; or, with nothing to get behind, flat, as low as can be, till it goes off.
                 return !_b.Arrived ? Posture.Stand : Note.EndsWith("cover") ? Posture.Crouch : Posture.Prone;
+            case BotState.Advance when Note == AssistantGunner:
+                return Posture.Crouch; // kneeling at the tube
             case BotState.Advance:
                 // At an observation post, stay low: a head on a ridgeline is what gets seen first.
                 return Overwatch && InZone && _pausing ? (mayLie ? Posture.Prone : Posture.Crouch) : Posture.Stand;

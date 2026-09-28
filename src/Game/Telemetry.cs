@@ -21,7 +21,7 @@ public static class Telemetry
 {
     static StreamWriter? _w;
     public static bool On => _w != null;
-    static double _nextSample, _nextFlush;
+    static double _nextSample, _nextFlush, _nextScore;
     const double Every = 0.5;
     static readonly StringBuilder _sb = new();
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
@@ -51,6 +51,7 @@ public static class Telemetry
         try { _w = new StreamWriter(path, false, new UTF8Encoding(false), 1 << 16); }
         catch (Exception e) { GD.PrintErr($"telemetry: can't write {path}: {e.Message}"); return; }
         _nextSample = 0;
+        _nextScore = 0;
         Combatants.Killed += OnKilled;
         Combatants.Down += OnDowned;
         Comms.Said += OnSaid;
@@ -217,6 +218,13 @@ public static class Telemetry
         }
         _sb.Append("]}");
         Line(_sb.ToString());
+        // Every 5 s, the state of the match: tickets, who's out, who holds each point, and each headquarters' hold.
+        // (Recordings had none of it: the ticket race had to be rebuilt from the kills and the capture notes.)
+        if (Clock.Now >= _nextScore)
+        {
+            _nextScore = Clock.Now + 5.0;
+            Line($"{{\"k\":\"score\",\"t\":{T},\"tickets\":[{m.Tickets[0]},{m.Tickets[1]},{m.Tickets[2]}],\"out\":[{(m.Out[0] ? 1 : 0)},{(m.Out[1] ? 1 : 0)},{(m.Out[2] ? 1 : 0)}],\"owner\":[{string.Join(",", m.Owner)}],\"hq\":[{F2(m.HQHold[0])},{F2(m.HQHold[1])},{F2(m.HQHold[2])}]}}");
+        }
         if (Clock.Now > _nextFlush) { _nextFlush = Clock.Now + 5.0; _w.Flush(); }
     }
 
@@ -271,6 +279,27 @@ public static class Telemetry
     {
         if (who.Ride is not { Def.Air: true } v) return;
         Line($"{{\"k\":\"say\",\"t\":{T},\"s\":{S(who.Callsign)},\"team\":{who.Team},\"veh\":{S(v.Def.Name)},\"text\":{S(text)}}}");
+    }
+
+    /// <summary>A squad's new orders (whoever gave them: the commander, the player).</summary>
+    public static void Order(Squad sq)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"order\",\"t\":{T},\"sq\":{S(sq.Name)},\"team\":{sq.Team},\"o\":{S(sq.OrderText)}}}");
+    }
+
+    /// <summary>A danger-area crossing: e is start, smoke (at where the threat was), crossed or abandoned.</summary>
+    public static void Cross(Squad sq, string e, string what, Vector3 at)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"cross\",\"t\":{T},\"sq\":{S(sq.Name)},\"team\":{sq.Team},\"e\":\"{e}\",\"what\":{S(what)},\"p\":{P(at)}}}");
+    }
+
+    /// <summary>Replacements joining a squad: n men, at a spawn; how: wiped out, at a spawn, or sent up.</summary>
+    public static void Reinforce(Squad sq, int n, string at, string how)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"reinf\",\"t\":{T},\"sq\":{S(sq.Name)},\"team\":{sq.Team},\"n\":{n},\"at\":{S(at)},\"how\":{S(how)}}}");
     }
 
     public static void Note(string text)

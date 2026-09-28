@@ -70,6 +70,7 @@ The defaults, as `src/Game/Controls.cs` defines them (this file is written from 
 | Bot debug | F6 |  |
 | Volume down | F7 |  |
 | Volume up | F8 |  |
+| Pause | P |  |
 | Main menu | F10 |  |
 | Fullscreen | F11 |  |
 

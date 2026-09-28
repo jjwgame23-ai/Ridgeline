@@ -72,6 +72,8 @@ public sealed partial class Squad
     public Vehicle? Vehicle;
     /// <summary>A transport sent to carry this squad.</summary>
     public Vehicle? Transport;
+    /// <summary>When the leader last held the squad for its ride (BotBrain.ActAdvance): it's stopped for a pickup, not halted.</summary>
+    public double RideWaitAt = -999;
     /// <summary>A vehicle crew: the rifle squad it's working with (carries, for an IFV/APC; supports, for a tank).</summary>
     public Squad? Supports;
     /// <summary>The (player) leader's orders: everyone put fire on a point; the squad's vehicle fire on a point; the carrier come and get us, or let us out.</summary>
@@ -84,6 +86,8 @@ public sealed partial class Squad
     /// <summary>Logistics: where the commander wants a FOB, and when building started.</summary>
     public Vector3? FobSite;
     public double FobBuildStart = -1;
+    /// <summary>Logistics: the truck's going somewhere and needs its team aboard (supplies forward, home to load up, drones out).</summary>
+    public bool TruckRun;
 
     /// <summary>A recon team saw someone: pass it on (the faction's intel picture, the map).</summary>
     public static event Action<int, ICombatant, Vector3>? Spotted;
@@ -134,6 +138,9 @@ public sealed partial class Squad
 
     string _verb = "", _what = "";
     public string OrderText => Objective == null ? "no orders" : $"{_verb} {_what}";
+    /// <summary>Falling back to a spawn to take on replacements (TerritoryMode's Shattered); OrderPlace is where.</summary>
+    public bool Regrouping => _verb == "Regroup at";
+    public string OrderPlace => _what;
 
     public ICombatant? Leader
     {
@@ -176,6 +183,7 @@ public sealed partial class Squad
         Defend = defend;
         if (!changed) return;
         OrderSince = Clock.Now;
+        Telemetry.Order(this);
         StagedFor = null;
         StageSince = -1;
         AssaultOn = null;

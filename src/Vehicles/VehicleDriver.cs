@@ -66,10 +66,20 @@ public static class VehicleDriver
                 v.Brake = true;
                 v.Steer = 0f;
                 d.StuckSince = -1;
+                d.ProgressAt = now;
                 d.Note = $"stopped for {c.Callsign}";
+                // Someone who stays put (a mortar man at his tube, a sentry): back off and go round him. (It waited
+                // for him to move, and a logistics truck sat behind its own mortar crew for the whole match.)
+                if (d.PersonWaitSince < 0) d.PersonWaitSince = now;
+                else if (now - d.PersonWaitSince > 6.0)
+                {
+                    d.PersonWaitSince = -1;
+                    BackOff(v, d, now, l.X > 0f ? 0.8f : -0.8f, 2.0);
+                }
                 return;
             }
         }
+        d.PersonWaitSince = -1;
 
         // Backing out of a jam.
         if (now < d.ReverseUntil)
@@ -122,17 +132,64 @@ public static class VehicleDriver
             else if (now - d.StuckSince > 2.5)
             {
                 d.StuckSince = -1;
-                d.ReverseUntil = now + 2.2;
-                d.ReverseSteer = -steer;
-                d.RepathAt = now + 2.3; // then plan again from wherever we end up
-                d.Stucks++;
+                BackOff(v, d, now, -steer, 2.2);
             }
             d.Note = "pushing, not moving";
         }
         else d.StuckSince = -1;
+        // Driving, but getting nowhere: shoving at something with the speed flickering over and under the stuck
+        // threshold, which resets it every time. Measured on the ground covered instead: under 3 m in 8 s at more
+        // than a crawl. (A tank at base pushed at a container like that for the whole match.)
+        // (Only counted over unbroken driving: waiting, reversing or stopping starts it again.)
+        bool running = now - d.ProgressSeen < 0.5;
+        d.ProgressSeen = now;
+        if (throttle > 0.3f && !v.Immobile && running)
+        {
+            if (((pos - d.ProgressPos) with { Y = 0f }).Length() > 3f) { d.ProgressPos = pos; d.ProgressAt = now; }
+            else if (now - d.ProgressAt > 8.0)
+            {
+                d.ProgressPos = pos;
+                d.ProgressAt = now;
+                d.StuckSince = -1;
+                BackOff(v, d, now, -steer, 2.2);
+                d.Note = "no headway";
+            }
+        }
+        else { d.ProgressPos = pos; d.ProgressAt = now; }
 
         v.Throttle = throttle;
         v.Steer = steer;
+    }
+
+    /// <summary>
+    /// Back off (reversing, steering away) and plan again from wherever we end up. Having to back off again where we
+    /// last did, the plan is taking us into the same thing (the navmesh doesn't know about vehicles, or a corner it
+    /// cuts): back off further, and drive out to one side, alternately left and right, before heading on. (It only
+    /// ever backed off 2 s and replanned, so the same path took it back into the same thing: a tank pinned on the
+    /// containers at base, or behind the parked vehicles next to it in the row, pushed at them all match.)
+    /// </summary>
+    static void BackOff(Vehicle v, Vehicle.DriveState d, double now, float steer, double secs)
+    {
+        var pos = v.GlobalPosition;
+        bool again = now - d.BackedOffTime < 60.0 && ((d.BackedOffAt - pos) with { Y = 0f }).Length() < 15f;
+        d.BackOffs = again ? d.BackOffs + 1 : 0;
+        d.BackedOffTime = now;
+        if (!again) d.BackedOffAt = pos;
+        d.Stucks++;
+        double back = secs + Math.Min(d.BackOffs, 3) * 1.2;
+        d.ReverseUntil = now + back;
+        d.ReverseSteer = d.BackOffs % 2 == 1 ? -steer : steer;
+        d.RepathAt = now + back + 0.1;
+        if (d.BackOffs == 0 || d.Path.Length == 0) return;
+        var fwd = (v.Forward with { Y = 0f }).Normalized();
+        var right = fwd.Cross(Vector3.Up);
+        float side = d.BackOffs % 2 == 1 ? 1f : -1f;
+        var p = pos + right * side * (14f + 6f * Math.Min(d.BackOffs, 3)) - fwd * 6f;
+        var nav = Valley.ClosestForVehicles(p);
+        if (((nav - p) with { Y = 0f }).Length() < 12f) p = nav;
+        d.Path = new[] { p, d.PathGoal };
+        d.Idx = 0;
+        d.RepathAt = now + back + 15.0;
     }
 
     /// <summary>
@@ -205,15 +262,15 @@ public static class VehicleDriver
 
         if (!wait) { d.WaitSince = -1; return false; }
         if (d.WaitSince < 0) d.WaitSince = now;
-        // Stuck nose to nose: one of us (always the same one) backs off and finds another way.
-        if (now - d.WaitSince > 5.0 && blocker != null && v.GetInstanceId() < blocker.GetInstanceId())
+        // Stuck nose to nose: one of us (always the same one) backs off and finds another way. Against something that
+        // isn't going anywhere (parked, empty, a wreck), always us. (It went by id alone, and a tank that had drawn the
+        // higher id sat behind a parked truck at base, "going round" it, for the rest of the match.)
+        bool parked = blocker != null && (blocker.Destroyed || blocker.Driver == null || blocker.Goal == null || blocker.Boarding);
+        if (now - d.WaitSince > 5.0 && blocker != null && (parked || v.GetInstanceId() < blocker.GetInstanceId()))
         {
             d.WaitSince = -1;
-            d.ReverseUntil = now + 2.5;
             var away = (v.Center - blocker.Center) with { Y = 0f };
-            d.ReverseSteer = away.Dot(right) > 0f ? -0.8f : 0.8f;
-            d.RepathAt = now + 2.6;
-            d.Stucks++;
+            BackOff(v, d, now, away.Dot(right) > 0f ? -0.8f : 0.8f, 2.5);
         }
         v.Throttle = 0f;
         v.Brake = true;

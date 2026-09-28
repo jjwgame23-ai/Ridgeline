@@ -122,7 +122,7 @@ public partial class Ballistics : Node3D
             p.Visual.GlobalPosition = origin;
         }
         if (ignore.IsValid) p.Exclude.Add(ignore);
-        else if (shooter != null) p.Exclude.Add(shooter.BodyRid);
+        else if (shooter is not GodotObject gone || GodotObject.IsInstanceValid(gone)) { if (shooter != null) p.Exclude.Add(shooter.BodyRid); }
         if (tag != "") ShotTags[tag] = ShotTags.GetValueOrDefault(tag) + 1;
         Prof.Count(silent ? "proj:fragments" : "proj:rounds");
         _live.Add(p);
@@ -386,6 +386,8 @@ public partial class Ballistics : Node3D
         foreach (var (c, chest) in _standing)
         {
             if (c == p.Shooter || !c.Alive) continue; // (someone may have gone down to an earlier round this tick)
+            // A bomb leaving the tube isn't a near miss for the crew kneeling by it.
+            if (p.Whistle && (chest - p.Origin).LengthSquared() < 9f) continue;
             float t = (chest - p.Pos).Dot(seg) / len2;
             if (t < 0f || t > 1f) continue;
             float d = (p.Pos + seg * t).DistanceTo(chest);

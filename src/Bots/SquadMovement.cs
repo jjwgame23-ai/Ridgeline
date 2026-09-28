@@ -261,7 +261,20 @@ public sealed partial class Squad
         SetPhase(AssaultPhase.Assault);
     }
 
-    public void EndAssault() => SetPhase(AssaultPhase.None);
+    public void EndAssault()
+    {
+        AssaultEndedAt = Clock.Now;
+        SetPhase(AssaultPhase.None);
+    }
+
+    public double AssaultEndedAt = -999;
+
+    /// <summary>
+    /// Already attacking this objective, or did a minute and a half ago: no new ORP. After that, another go at it
+    /// gets a proper attack again. (A squad kept the last objective it had attacked for good, so every later attempt
+    /// on the same point, by men trickling back one at a time, was a straight walk-in.)
+    /// </summary>
+    public bool RecentlyAssaulted(IObjective? o) => AssaultOn == o && (Phase != AssaultPhase.None || Clock.Now - AssaultEndedAt < 90.0);
 
     /// <summary>Support-by-fire, firing on the objective: this man is in the support team during the assault.</summary>
     public bool FiringInSupport(ICombatant c) => Phase == AssaultPhase.Assault && TeamOf(c) == SbfTeam;

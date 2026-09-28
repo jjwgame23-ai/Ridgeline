@@ -35,7 +35,7 @@ public sealed partial class MotorPool
         public Vector3 Firing, FiringWatch, FiringAnchor;
         public bool HasFiring;
         public string FiringWhy = "";
-        public double FiringAt, LastHitSeen = -99, ScootUntil, RearmAt = -1, LastRequestAt = -99, CrewWaitSince = -1;
+        public double FiringAt, LastHitSeen = -99, ScootUntil, RearmAt = -1, LastRequestAt = -99, CrewWaitSince = -1, CrewWaitFor;
         public Vector3 ScootTo;
         public bool Rearming;
         public int ShotsAtFiring;
@@ -92,7 +92,9 @@ public sealed partial class MotorPool
 
     void Spawn(Slot s)
     {
-        var v = new Vehicle { Def = VehicleDef.Get(s.Kind, s.Team), Team = s.Team };
+        var def = VehicleDef.Get(s.Kind, s.Team);
+        s.Park = ClearPark(s.Park, def);
+        var v = new Vehicle { Def = def, Team = s.Team };
         _m.GetParent().AddChild(v);
         v.GlobalPosition = _m.Map.Ground(s.Park);
         v.Rotation = new Vector3(0f, s.Yaw, 0f);
@@ -100,6 +102,30 @@ public sealed partial class MotorPool
         s.Job = 0;
         s.HasSupplies = true;
         if (s.Crew != null) s.Crew.Vehicle = v;
+    }
+
+    /// <summary>
+    /// Where a replacement parks: its own spot, unless a wreck is lying on it (the burnt-out one it replaces, written
+    /// off on its pad), and then the nearest clear ground round it, which is its spot from then on. (Replacements
+    /// used to appear inside the wreck, and their crew couldn't get round it to the doors.)
+    /// </summary>
+    Vector3 ClearPark(Vector3 park, VehicleDef def)
+    {
+        float room = def.Air ? def.RotorRadius + 7f : MathF.Max(def.Hull.X, def.Hull.Z) * 0.5f + 5f;
+        bool Clear(Vector3 p) => !Vehicle.All.Any(o => GodotObject.IsInstanceValid(o) && o.Destroyed
+                                                     && ((o.GlobalPosition - p) with { Y = 0f }).Length() < room + MathF.Max(o.Def.Hull.X, o.Def.Hull.Z) * 0.5f);
+        if (Clear(park)) return park;
+        for (int ring = 1; ring <= 4; ring++)
+            for (int k = 0; k < 8; k++)
+            {
+                float a = k * MathF.PI / 4f + ring * 0.4f;
+                var p = park + new Vector3(MathF.Cos(a), 0f, MathF.Sin(a)) * room * ring;
+                if (MathF.Abs(p.X) > _m.Map.Half - 60f || MathF.Abs(p.Z) > _m.Map.Half - 60f) continue;
+                if (_m.Map.NormalAt(p.X, p.Z).Y < (def.Air ? 0.94f : 0.85f)) continue;
+                if (!def.Air && ((Valley.ClosestForVehicles(p) - p) with { Y = 0f }).Length() > 4f) continue;
+                if (Clear(p)) return p with { Y = _m.Map.HeightAt(p.X, p.Z) };
+            }
+        return park;
     }
 
     public void OnLost(Vehicle v)
@@ -121,7 +147,8 @@ public sealed partial class MotorPool
         {
             if (s.Live == null)
             {
-                if (now >= s.RespawnAt && !_m.Out[s.Team]) Spawn(s);
+                // (None once the side is out of reserves.)
+                if (now >= s.RespawnAt && !_m.Out[s.Team] && !_m.Spent(s.Team)) Spawn(s);
                 continue;
             }
             var v = s.Live;
@@ -262,30 +289,52 @@ public sealed partial class MotorPool
     }
 
     /// <summary>
-    /// The logistics truck: loaded, it goes to the FOB site the commander picked for the
-    /// logistics team and they build there; empty, it goes home to reload.
+    /// The logistics truck, driven by the logistics team:
+    /// - loaded, to the FOB site the commander picked, where they get out and build;
+    /// - empty, home to load up again (it takes a minute), and they get out there;
+    /// - loaded with nothing to build, out to the drone team when they're running short of drones (only a
+    ///   logistics truck or a FOB carries them), where it's left parked for the operators to restock from.
+    /// Job: 0 parked, 1 drone run. (The empty truck used to count as reloaded the moment it stopped anywhere: the
+    /// flag it had arrived at the FOB site was still set, so it was full again as the FOB went up, and the second
+    /// FOB was ordered seconds after the first. Short of that it reloaded by standing by a FOB for two minutes. And
+    /// it never took drones anywhere: the team walked to the drone team, and the drones stayed on the truck at base.)
     /// </summary>
     void Logistics(Slot s, Vehicle v, double now)
     {
         v.ArriveRadius = 8f;
         var sq = s.Crew;
+        if (sq == null) { v.Goal = null; return; }
         if (!s.HasSupplies)
         {
-            // Empty: it waits by a FOB or at base for the next supply run to reach it.
-            v.Goal = v.Driver != null ? s.Park : null;
-            if (s.JobSince <= 0) s.JobSince = now;
-            bool home = v.GlobalPosition.DistanceTo(_m.Map.Bases[s.Team]) < 80f || Fob.All.Any(f => f.Team == s.Team && f.GlobalPosition.DistanceTo(v.GlobalPosition) < 60f);
-            if ((home && now - s.JobSince > 120.0) || v.Arrived)
+            s.Job = 0;
+            bool home = ((v.GlobalPosition - s.Park) with { Y = 0f }).Length() < 30f;
+            if (!home)
             {
-                s.HasSupplies = true;
+                sq.TruckRun = true;
+                v.Goal = v.Driver != null ? s.Park : null;
+                v.Task = "empty: home to load up";
                 s.JobSince = 0;
+                return;
             }
+            if (sq.TruckRun) { sq.TruckRun = false; LetOut(v); }
+            v.Goal = null;
+            v.Task = "loading";
+            if (s.JobSince <= 0) s.JobSince = now;
+            if (now - s.JobSince > 60.0) { s.HasSupplies = true; s.JobSince = 0; }
             return;
         }
-        var site = sq?.FobSite;
-        v.Goal = site ?? s.Park;
+        var site = sq.FobSite;
+        if (site == null)
+        {
+            DroneRun(s, v, sq, now);
+            return;
+        }
+        if (s.Job == 1) { s.Job = 0; s.JobSince = 0; }
+        v.Goal = sq.FobBuildStart < 0 ? site : null;
+        v.Task = "supplies forward for a FOB";
+        sq.TruckRun = sq.FobBuildStart < 0;
         // Can't get there (stuck, blocked): put it down where we are, if that's forward enough.
-        if (site != null && v.Driver != null && sq!.FobBuildStart < 0)
+        if (v.Driver != null && sq.FobBuildStart < 0)
         {
             if (s.JobSince <= 0) s.JobSince = now;
             if (now - s.JobSince > 150.0 && v.GlobalPosition.DistanceTo(_m.Map.Bases[s.Team]) > 250f)
@@ -295,22 +344,93 @@ public sealed partial class MotorPool
             }
         }
         else s.JobSince = 0;
-        if (site is Vector3 fs && v.Arrived && v.Driver != null)
+        if (site is Vector3 fs && v.Arrived && ((fs - v.GlobalPosition) with { Y = 0f }).Length() < v.ArriveRadius + 5f && v.Driver != null)
         {
             // Unload and build: the team gets out; the FOB goes up once they've worked on it.
             if (sq!.FobBuildStart < 0)
             {
                 sq.FobBuildStart = now;
-                foreach (var o in v.Occupants.ToArray()) if (o is Bot b) v.Leave(b);
+                sq.TruckRun = false;
+                // Beside the truck, on the side towards home, not on top of it. (It went up where the truck stood,
+                // and the sandbag ring round it boxed the truck in: it never got out again, and anything driving
+                // past got caught on the two of them.)
+                var side = (v.GlobalBasis.X with { Y = 0f }).Normalized();
+                if (side.Dot(_m.Map.Bases[s.Team] - v.GlobalPosition) < 0f) side = -side;
+                var beside = v.GlobalPosition + side * (v.Def.Hull.X * 0.5f + 11f);
+                var foot = Valley.ClosestOnFoot(v.GetWorld3D(), beside);
+                sq.FobSite = ((foot - beside) with { Y = 0f }).Length() < 4f ? foot : beside;
                 Comms.Say(sq.Leader ?? v.Driver!, "Building a FOB here!");
+                LetOut(v);
             }
         }
-        if (sq != null && sq.FobBuildStart > 0 && now - sq.FobBuildStart > 25.0 && site is Vector3 at)
+        site = sq.FobSite;
+        if (sq.FobBuildStart > 0 && now - sq.FobBuildStart > 25.0 && site is Vector3 at)
         {
             _m.BuildFob(s.Team, at);
             sq.FobSite = null;
             sq.FobBuildStart = -1;
             s.HasSupplies = false;
+            s.JobSince = 0;
+        }
+    }
+
+    static void LetOut(Vehicle v)
+    {
+        foreach (var o in v.Occupants.ToArray()) if (o is Bot b) v.Leave(b);
+    }
+
+    /// <summary>A drone team of ours with an operator running short, and no FOB near them to restock from.</summary>
+    Squad? ShortOfDrones(int team)
+    {
+        foreach (var d in _m.Squads[team])
+        {
+            if (d.Kind != SquadKind.Drone || d.Leader is not ICombatant lead) continue;
+            if (!d.Members.Any(m => m is Bot { Alive: true, Ops: { } ops } && ops.StockLevel < 0.5f)) continue;
+            if (Fob.All.Any(f => f.Team == team && f.GlobalPosition.DistanceTo(lead.FeetPos) < 400f)) continue;
+            return d;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Loaded, and no FOB to build: drones out to a drone team that's short of them. The team drives it up to them,
+    /// parks it as close as a vehicle gets, and gets out; it stays there for the operators (and anyone short of
+    /// ammunition) to restock from until it's wanted for a FOB.
+    /// </summary>
+    void DroneRun(Slot s, Vehicle v, Squad sq, double now)
+    {
+        if (s.Job != 1)
+        {
+            v.Goal = null;
+            if (sq.TruckRun) { sq.TruckRun = false; LetOut(v); }
+            if (now < s.PickupRetryAt) return; // give the last lot time to walk over to it
+            var d = ShortOfDrones(s.Team);
+            if (d?.Leader is not ICombatant dl || dl.FeetPos.DistanceTo(v.GlobalPosition) < 120f) return;
+            s.Job = 1;
+            s.Cargo = d;
+            s.JobSince = now;
+            s.Drop = Valley.ClosestForVehicles(dl.FeetPos);
+            v.Arrived = false;
+            if (DuelMode.Verbose) GD.Print($"[{now:0}s] {v.Def.Name} ({KothMode.TeamNames[s.Team]}): drone run to {d.Name}, {s.Drop.DistanceTo(v.GlobalPosition):0} m");
+            return;
+        }
+        var to = s.Cargo;
+        sq.TruckRun = true;
+        v.Goal = s.Drop;
+        v.Task = $"drones up to {to?.Name}";
+        // The team walking back to it doesn't count against the run: only the drive.
+        if (v.Driver == null) { s.JobSince = now; return; }
+        bool there = v.Arrived && ((s.Drop - v.GlobalPosition) with { Y = 0f }).Length() < v.ArriveRadius + 5f;
+        if (there || to == null || to.Alive == 0 || now - s.JobSince > 300.0)
+        {
+            if (DuelMode.Verbose) GD.Print($"[{now:0}s] {v.Def.Name} ({KothMode.TeamNames[s.Team]}): drone run {(there ? "there" : "given up")}, {(to?.Leader is ICombatant l ? l.FeetPos.DistanceTo(v.GlobalPosition) : 0f):0} m from {to?.Name}");
+            if (there && v.Driver != null && to?.Leader != null) Comms.Say(v.Driver, $"{to.Name}, drones and batteries on the truck — come and get them.");
+            s.Job = 0;
+            s.Cargo = null;
+            s.PickupRetryAt = now + 180.0;
+            sq.TruckRun = false;
+            v.Goal = null;
+            LetOut(v);
         }
     }
 
@@ -498,6 +618,24 @@ public sealed partial class MotorPool
 
     public int Evacuated, AirAssaults;
 
+    /// <summary>
+    /// The gun seat's empty and a crewman is on his feet and on his way to it: wait for him, long enough for him to
+    /// walk it from where he was when the wait began. (It used to wait 40 s, and only for one within 400 m: a
+    /// replacement whose gunner was walking back from where the last one came down went without him, or, its
+    /// pilot away too, never went at all.)
+    /// </summary>
+    bool CrewComing(Slot s, Vehicle v, double now)
+    {
+        float d = float.MaxValue;
+        if (v.GunnerSeat >= 0 && v.Occupants[v.GunnerSeat] == null && s.Crew != null)
+            foreach (var m in s.Crew.Members)
+                if (m.Alive && !m.Downed && m.Ride == null && GodotObject.IsInstanceValid((GodotObject)m))
+                    d = MathF.Min(d, m.FeetPos.DistanceTo(v.GlobalPosition));
+        if (d > 2500f) { s.CrewWaitSince = -1; return false; }
+        if (s.CrewWaitSince < 0) { s.CrewWaitSince = now; s.CrewWaitFor = 40.0 + d / 2f; }
+        return now - s.CrewWaitSince < s.CrewWaitFor;
+    }
+
     /// <summary>How far round a known anti-aircraft vehicle aircraft keep away: most of its guns' reach.</summary>
     const float AirDefenceReach = 2500f;
 
@@ -566,13 +704,7 @@ public sealed partial class MotorPool
         }
         // The whole crew aboard before lifting off: without the front-seater there's no gun, and nobody to take
         // the controls if the pilot's hit (one flew off alone, bleeding, passed out at 60 m and came down).
-        if (v.Landed && v.GunnerSeat >= 0 && v.Occupants[v.GunnerSeat] == null && s.Crew != null
-            && s.Crew.Members.Any(m => m.Alive && m.Ride == null && m.FeetPos.DistanceTo(v.GlobalPosition) < 400f))
-        {
-            if (s.CrewWaitSince < 0) s.CrewWaitSince = Clock.Now;
-            if (Clock.Now - s.CrewWaitSince < 40.0) { v.AirMode = HeliMode.Land; v.Goal = v.GlobalPosition; v.Task = "waiting for the gunner"; return; }
-        }
-        else s.CrewWaitSince = -1;
+        if (v.Landed && CrewComing(s, v, Clock.Now)) { v.AirMode = HeliMode.Land; v.Goal = v.GlobalPosition; v.Task = "waiting for the gunner"; return; }
         v.AirMode = HeliMode.Attack;
         v.Goal = obj.Watch;
         Vector3? aim = null;
@@ -619,7 +751,11 @@ public sealed partial class MotorPool
         var newest = Fob.All.LastOrDefault(f => f.Team == s.Team);
         if (newest == null || v.GlobalPosition.DistanceTo(newest.GlobalPosition) < 250f) return;
         if (v.Crewed) foreach (var o in v.Occupants.ToArray()) if (o != null) v.Leave(o);
-        s.Park = newest.GlobalPosition + (newest.GlobalPosition - _m.Map.Bases[s.Team]).Normalized() * -25f;
+        // Behind the FOB, on ground its crew can walk to. (It was put down 25 m back whatever was there, and the crew
+        // walking to it from base could spend minutes stuck on the way.)
+        var pit = newest.GlobalPosition + (newest.GlobalPosition - _m.Map.Bases[s.Team]).Normalized() * -25f;
+        var onFoot = Valley.ClosestOnFoot(v.GetWorld3D(), pit);
+        s.Park = ((onFoot - pit) with { Y = 0f }).Length() < 15f ? onFoot : pit;
         s.Live = null;
         s.RespawnAt = now + 60.0;
         if (s.Crew != null) s.Crew.Vehicle = null;

@@ -63,6 +63,7 @@ public sealed partial class Squad
             bool done = Cross == Crossing.Second;
             if (done) CrossingsDone++; else CrossingsAborted++;
             if (DuelMode.Verbose) GD.Print($"[{Clock.Now:0}s] {Name} danger area {(done ? "crossed" : $"abandoned at {Cross}")} after {Clock.Now - _crossStarted:0} s");
+            Telemetry.Cross(this, done ? "crossed" : "abandoned", _crossWhat, CrossNear);
         }
         if (c == Crossing.Halt) _crossStarted = Clock.Now;
         _crossSlots.Clear();
@@ -93,12 +94,11 @@ public sealed partial class Squad
                     if (_edgeAt < 0)
                     {
                         _edgeAt = now;
-                        // The enemy's close, or has been shooting: screen the crossing with smoke first.
+                        // An enemy we know of could be watching it: screen the crossing with smoke first.
                         _smokeUp = -1;
-                        if (now - EngagedUntil < 90.0 || Objective is SiteObjective sso && sso.Center.DistanceTo(CrossNear) < 450f && Hostile?.Invoke(sso.Site, Team) == true)
+                        var mid = (CrossNear + CrossFar) * 0.5f;
+                        if (ThreatOver(mid) is Vector3 threat)
                         {
-                            var mid = (CrossNear + CrossFar) * 0.5f;
-                            var threat = now - EngagedUntil < 90.0 ? ContactAt : Objective!.Center;
                             var toward = (threat - mid) with { Y = 0f };
                             var at = mid + (toward.LengthSquared() > 1f ? toward.Normalized() * 8f : Vector3.Zero);
                             if (CrossNear.DistanceTo(CrossFar) > 12f && lead.ThrowGrenadeAt(at, smoke: true))
@@ -106,6 +106,7 @@ public sealed partial class Squad
                                 _smokeUp = now;
                                 SmokeCrossings++;
                                 Comms.Say(lead, "Popping smoke! Wait for it to build...");
+                                Telemetry.Cross(this, "smoke", _crossWhat, threat);
                             }
                         }
                     }
@@ -175,8 +176,33 @@ public sealed partial class Squad
         Crossings++;
         SetCross(Crossing.Halt);
         Comms.Say(lead, $"Danger area — {what} ahead. Hold up. {Squad.TeamName(1)}, cover left and right.");
+        Telemetry.Cross(this, "start", what, near);
         if (DuelMode.Verbose) GD.Print($"[{now:0}s] {Name} danger area: {what}, {near.DistanceTo(far):0} m across, {lead.FeetPos.DistanceTo(near):0} m ahead");
         return true;
+    }
+
+    /// <summary>
+    /// Where an enemy who could be watching this crossing is: one someone in the squad has seen or heard within
+    /// 400 m of it in the last minute, or the squad's last fight if it was that close in the last minute and a
+    /// half. Null: nobody known about, so no smoke, which would only tell them where you are. (A hostile
+    /// objective within 450 m used to be enough, so squads screened empty streets with nobody about.)
+    /// </summary>
+    Vector3? ThreatOver(Vector3 mid)
+    {
+        Vector3? best = null;
+        float bd = 400f;
+        if (Clock.Now - EngagedUntil < 90.0 && ((ContactAt - mid) with { Y = 0f }).Length() is var cd && cd < bd) { best = ContactAt; bd = cd; }
+        foreach (var m in Members)
+        {
+            if (m is not Bot { Alive: true } b || !GodotObject.IsInstanceValid(b)) continue;
+            foreach (var t in b.Senses.Threats)
+            {
+                if (!t.Who.Alive || Clock.Now - Math.Max(t.LastSeen, t.LastHeard) > 60.0) continue;
+                float d = ((t.LastKnownPos - mid) with { Y = 0f }).Length();
+                if (d < bd) { bd = d; best = t.LastKnownPos; }
+            }
+        }
+        return best;
     }
 
     bool NearEnemy(Bot lead)

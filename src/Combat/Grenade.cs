@@ -76,6 +76,10 @@ public partial class Grenade : RigidBody3D
     /// <param name="indirect">A mortar bomb (or a shell): squads close by run the react-to-indirect-fire drill.</param>
     public static void Detonate(Vector3 pos, Vector3 normal, ICombatant? by, float fragR, float crater, float gainDb, string weapon, Rid ignore = default, float power = 1f, bool indirect = false)
     {
+        // Whoever set it off may be long gone (the man who shot down an aircraft that only now hits the ground,
+        // dead and cleared away since): then it's nobody's. (Reaching for his body threw, about once every ten minutes
+        // in long matches.)
+        if (by is GodotObject g && !GodotObject.IsInstanceValid(g)) by = null;
         SoundWorld.I.Emit(power >= 2f ? Snd.Shell : Snd.Explosion, pos, gainDb, by);
         Effects.I.Explosion(pos, normal, crater > 0f ? crater : 0.01f, power);
         Telemetry.Explosion(pos, by, weapon, power, fragR);

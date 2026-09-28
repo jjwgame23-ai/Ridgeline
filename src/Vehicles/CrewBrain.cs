@@ -53,12 +53,15 @@ public sealed class CrewBrain
     double _nextMission, _nextRound;
     public static int MortarRounds;
     int _roundsLeft;
-    Vector3 _mission;
+    Vector3 _mission, _lay;
+    public static int MortarLoaded;
 
     /// <summary>
     /// A mortar: find a fresh cluster of enemy sightings in range (not near our own
     /// people), lay on it and put five or six bombs into it with a little spread; then
-    /// wait for the next target.
+    /// wait for the next target. With the assistant gunner at the tube hanging the bombs
+    /// the gunner only has to check his lay between rounds; alone, he loads each one
+    /// himself and re-lays after it, at about half the rate.
     /// </summary>
     void Mortar(Vehicle v, int ti)
     {
@@ -71,6 +74,7 @@ public sealed class CrewBrain
             var target = Intel.Cluster(_b.Team, v.GlobalPosition, 150f, 3200f);
             if (target is not Vector3 tg) { Note = "no targets"; return; }
             _mission = tg;
+            _lay = _mission + Sheaf();
             _roundsLeft = _rng.RandiRange(5, 7);
             Comms.Say(_b, $"Fire mission, {Comms.Bearing(v.GlobalPosition, tg)}, {v.GlobalPosition.DistanceTo(tg):0} meters. Rounds out!");
         }
@@ -85,18 +89,46 @@ public sealed class CrewBrain
             Comms.Say(_b, "Check fire, check fire! Friendlies in the target area.");
             return;
         }
-        // Each bomb a little off: the tube and the ranging aren't perfect.
-        var spread = new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * 22f;
-        t.AimAt = _mission + spread;
-        Note = $"fire mission: {_roundsLeft} to go";
-        if (!t.Laid || t.Reloading || t.Cool > 0f) return;
+        // Each bomb laid a little off the last: the sheaf spreads them over the target. The point is picked once per
+        // bomb and the tube laid on it. (It used to be re-picked every tick, so the lay chased a point that jumped
+        // about by 20 m, and the bomb went wherever the tube happened to be when it counted as laid.)
+        t.AimAt = _lay;
+        bool loader = Loader(v) != null;
+        if (t.LaidAt == _lay && t.OutOfRange)
+        {
+            _roundsLeft = 0;
+            _nextMission = now + 4.0;
+            Note = "target out of range";
+            return;
+        }
+        Note = $"fire mission: {_roundsLeft} to go{(loader ? "" : ", loading himself")}";
+        // Laid on this bomb's point, not still on the last one's.
+        if (!t.Laid || t.LaidAt != _lay || t.Reloading || t.Cool > 0f) return;
         if (v.Fire(ti, false))
         {
             MortarRounds++;
+            if (loader) MortarLoaded++;
             _roundsLeft--;
-            _nextRound = now + _rng.RandfRange(3.5f, 5f);
+            _lay = _mission + Sheaf();
+            // A crew of two: one lays, the other hangs the bomb, 3.5-5 s a round. One man alone has to take up a
+            // bomb, load it and check his sight after every round.
+            _nextRound = now + (loader ? _rng.RandfRange(3.5f, 5f) : _rng.RandfRange(7f, 9.5f));
             if (_roundsLeft <= 0) _nextMission = now + _rng.RandfRange(12f, 20f);
         }
+    }
+
+    /// <summary>Where in the target area the next bomb is laid: within ~20 m of the centre of the sightings.</summary>
+    Vector3 Sheaf() => new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * 22f;
+
+    /// <summary>The assistant gunner: one of the team at the tube, on his feet, loading (see BotBrain.Board).</summary>
+    Bot? Loader(Vehicle v)
+    {
+        if (_b.Squad == null) return null;
+        foreach (var m in _b.Squad.Members)
+            if (m is Bot b && b != _b && b.Alive && b.Ride == null && b.Brain.Note == BotBrain.AssistantGunner
+                && (b.FeetPos - v.GlobalPosition).Length() < 3f)
+                return b;
+        return null;
     }
 
     public static int InfantryTargets, InfantryShots, ArmorShots, AreaRounds, HeldForFriendlies;

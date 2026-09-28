@@ -97,8 +97,18 @@ public sealed partial class Squad
         // Fighting, but no drill.
         if (Engaged) return Make("In contact", $"Fight from cover. Enemy last seen {B(ContactAt)}.", NoSpot, (ContactAt - me.FeetPos) with { Y = 0f });
 
+        // Stopped for a vehicle coming to pick us up. (It read "halted", as if something had gone wrong.)
+        if (Transport is { Destroyed: false } pickup && Clock.Now - RideWaitAt < 2.0)
+            return Make($"Waiting for pickup: the {pickup.Def.Name}, {B(pickup.GlobalPosition)}",
+                        lead ? "Hold the squad here for the ride." : "Hold here and watch your side: the ride's on its way. Get in when it stops.");
+
         if (Objective == null) return Make("No orders", "Stay with the squad.");
         bool there = ((Objective.Center - me.FeetPos) with { Y = 0f }).Length() < Objective.Radius;
+        // Falling back to take on replacements.
+        if (_verb == "Regroup at")
+            return there || ((Objective.Center - me.FeetPos) with { Y = 0f }).Length() < 40f
+                ? Make($"Regrouping at {_what}", "Hold here and watch your sector: replacements come up once we're out of contact.")
+                : Make($"Falling back to {_what} to regroup, {B(Objective.Center)}", lead ? "Take them back: replacements join us there." : "Keep your place: we pick up replacements there.");
         if (Defend || there)
             return Make($"{(Defend ? "Holding" : "On")} {objName}", sector is Vector3 hs ? $"Watch your sector: {Comms.Bearing(Vector3.Zero, hs)}." : "Hold and watch for them.");
 

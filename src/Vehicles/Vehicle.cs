@@ -62,6 +62,10 @@ public partial class Vehicle : CharacterBody3D
         public double RepathAt, StuckSince = -1, ReverseUntil, WaitSince = -1;
         public float ReverseSteer, StuckAngle;
         public string Note = "";
+        // Where it last had to back off, and how many times running it has had to there (see VehicleDriver.BackOff).
+        public Vector3 BackedOffAt, ProgressPos;
+        public double BackedOffTime = -99, ProgressAt, ProgressSeen = -99, PersonWaitSince = -1;
+        public int BackOffs;
     }
     public readonly DriveState Drive = new();
 
@@ -85,6 +89,12 @@ public partial class Vehicle : CharacterBody3D
         public float Kick;
         public float WantYaw, WantPitch;
         public bool Laid;               // on the ordered bearing and elevation (for a mortar, "on target")
+        /// <summary>The aim point the lay was worked out for: a gunner given a new point isn't on it until the gun has been laid again.</summary>
+        public Vector3? LaidAt;
+        /// <summary>A mortar: the propellant charge for the range, as a fraction of the full charge's muzzle velocity.</summary>
+        public float Charge = 1f;
+        /// <summary>A mortar: no charge and elevation drops the bomb on the point (too close or too far).</summary>
+        public bool OutOfRange;
         public VWeapon Weapon => Def.Ammo[AmmoIdx];
         public bool Reloading => ReloadT > 0f;
         public Vector3 Forward => -Barrel.GlobalBasis.Z.Normalized();
@@ -109,7 +119,7 @@ public partial class Vehicle : CharacterBody3D
     public bool Crewed => Occupants.Any(o => o != null);
     /// <summary>Can't move, or can hardly move and is badly hit: the motor pool gives up on it (see MotorPool.Abandon).</summary>
     public bool Useless => Immobile || (EngineHit && Hp < Def.Hp * 0.3f) || (Def.Air && Hp < Def.Hp * 0.25f);
-    public ICombatant? Driver => Occupants[DriverSeat];
+    public ICombatant? Driver => DriverSeat >= 0 ? Occupants[DriverSeat] : null; // (a mortar has no driver: asking threw)
     public int DriverSeat => Def.Seats.FindIndex(s => s.Role == SeatRole.Driver);
     public int GunnerSeat => Def.Seats.FindIndex(s => s.Role == SeatRole.Gunner);
     /// <summary>The team it counts as right now: whoever's in it, else whoever it belongs to.</summary>
@@ -280,7 +290,11 @@ public partial class Vehicle : CharacterBody3D
         for (int i = 0; i < 4; i++) GroundAt(pts[i], out g[i]);
         var up = (g[1] - g[2]).Cross(g[0] - g[3]).Normalized();
         if (up.Y < 0f) up = -up;
-        if (up.Y < 0.5f) up = Vector3.Up;
+        // A mortar's baseplate is bedded in and its bipod levelled (the sight has bubbles for it): the tube is
+        // laid in a level frame. (It used to lie with the slope, and its elevation and bearing were worked out
+        // in that tilted frame. The pits sit on slopes of 8-45 degrees, and a tube near vertical is swung round
+        // toward the downhill side by any tilt: bombs came down 0.7-2 km from where they were aimed.)
+        if (up.Y < 0.5f || Def.Static) up = Vector3.Up;
         float targetY = (g[0].Y + g[1].Y + g[2].Y + g[3].Y) / 4f;
         float k = 1f - MathF.Exp(-dt * 10f);
         pos.Y = Mathf.Lerp(pos.Y, targetY, k);
@@ -351,6 +365,10 @@ public partial class Vehicle : CharacterBody3D
                 t.CoaxReloadT -= dt;
                 if (t.CoaxReloadT <= 0f && t.CoaxStock > 0) { t.CoaxStock--; t.CoaxLoaded = td.Coax!.Mag; }
             }
+            // Laid only for the point it was laid for this tick. (With no aim point it used to count as laid on
+            // the last one; a mortar that hadn't been laid at all was "on target" at 0 degrees elevation, and its
+            // first bomb went off along the ground by the tube, once killing its own crew.)
+            bool laying = false;
             if (td.Fixed) { t.Yaw = 0f; t.Pitch = td.PitchMin; }
             else if (!TurretDown[i] && t.AimAt is Vector3 aim)
             {
@@ -362,23 +380,57 @@ public partial class Vehicle : CharacterBody3D
                 float wantPitch = Mathf.Clamp(Mathf.RadToDeg(MathF.Atan2(local.Y - 0.5f, flat)), td.PitchMin, td.PitchMax);
                 if (td.Indirect)
                 {
-                    // A mortar: the high-angle solution that drops the bomb on the point.
-                    float v = td.Ammo[0].Speed, g = 9.81f, x = MathF.Max(flat, 1f), y = local.Y;
-                    float disc = v * v * v * v - g * (g * x * x + 2f * y * v * v);
-                    wantPitch = disc < 0f ? 45f : Mathf.Clamp(Mathf.RadToDeg(MathF.Atan((v * v + MathF.Sqrt(disc)) / (g * x))), td.PitchMin, td.PitchMax);
+                    // A mortar: the high-angle solution that drops the bomb on the point, with the charge for the
+                    // range. (It used to have one charge: nothing inside ~600 m could be reached, and a point it
+                    // couldn't reach got 45 degrees, laid and fired anyway.)
+                    float? elev = MortarElevation(td, flat, local.Y, out t.Charge);
+                    t.OutOfRange = elev == null;
+                    wantPitch = elev ?? t.Pitch;
                 }
                 t.WantYaw = wantYaw;
                 t.WantPitch = wantPitch;
                 float dy = Mathf.Wrap(wantYaw - t.Yaw, -180f, 180f);
                 t.Yaw += Mathf.Clamp(dy, -td.YawSpeed * dt, td.YawSpeed * dt);
                 t.Pitch = Mathf.MoveToward(t.Pitch, wantPitch, td.PitchSpeed * dt);
+                laying = !(td.Indirect && t.OutOfRange);
+                t.LaidAt = aim;
             }
             t.YawNode.Rotation = new Vector3(0f, Mathf.DegToRad(t.Yaw + td.MountYaw), 0f);
             t.PitchNode.Rotation = new Vector3(Mathf.DegToRad(t.Pitch), 0f, 0f);
-            t.Laid = MathF.Abs(Mathf.Wrap(t.WantYaw - t.Yaw, -180f, 180f)) < 0.6f && MathF.Abs(t.WantPitch - t.Pitch) < 0.6f;
+            // A mortar is laid to a mil or two on its sight: at 60-80 degrees, half a degree of elevation is 50 m of range.
+            float tol = td.Indirect ? 0.1f : 0.6f;
+            t.Laid = laying && MathF.Abs(Mathf.Wrap(t.WantYaw - t.Yaw, -180f, 180f)) < tol && MathF.Abs(t.WantPitch - t.Pitch) < tol;
             t.Kick = Mathf.MoveToward(t.Kick, 0f, dt * 1.2f);
             t.Barrel.Position = new Vector3(0f, 0f, t.Kick);
         }
+    }
+
+    /// <summary>A mortar's charges: the muzzle velocity of each as a fraction of the full charge's (an 81 mm bomb takes 0-4 increments).</summary>
+    static readonly float[] Charges = { 0.4f, 0.55f, 0.7f, 0.85f, 1f };
+
+    /// <summary>
+    /// A mortar's lay for a point <paramref name="x"/> metres off and <paramref name="y"/> above the tube: the
+    /// lowest charge that reaches it at 55 degrees or more (well inside that charge's reach, where the table is
+    /// steady), else any that reaches it within the bipod's elevation; null if none does.
+    /// </summary>
+    static float? MortarElevation(TurretDef td, float x, float y, out float charge)
+    {
+        const float g = 9.81f;
+        x = MathF.Max(x, 1f);
+        float? fallback = null;
+        float fallbackCharge = 1f;
+        foreach (float c in Charges)
+        {
+            float v = td.Ammo[0].Speed * c;
+            float disc = v * v * v * v - g * (g * x * x + 2f * y * v * v);
+            if (disc < 0f) continue;
+            float e = Mathf.RadToDeg(MathF.Atan((v * v + MathF.Sqrt(disc)) / (g * x)));
+            if (e < td.PitchMin || e > td.PitchMax) continue;
+            if (e >= 55f) { charge = c; return e; }
+            if (fallback == null) { fallback = e; fallbackCharge = c; }
+        }
+        charge = fallbackCharge;
+        return fallback;
     }
 
     /// <summary>How far off the gun is from where the gunner wants it, degrees.</summary>
@@ -459,7 +511,9 @@ public partial class Vehicle : CharacterBody3D
         if (rangeHint > 0f && w.Speed > 0f && !t.Def.Indirect && !t.Def.Fixed) dir = dir.Rotated(perp, Ballistics.ZeroAngle(w.Speed, w.Drag, rangeHint));
         var from = muzzle.GlobalPosition;
         LastFired = Clock.Now;
-        Ballistics.I.Fire(from, dir, w.Speed, w.Drag, gunner, w.Damage, w.Name, GetRid(), explosive: w.Explosive, armM: w.Explosive ? 8f : 0f,
+        // A mortar bomb goes with the charge its lay was worked out for.
+        float speed = t.Def.Indirect && !coax ? w.Speed * t.Charge : w.Speed;
+        Ballistics.I.Fire(from, dir, speed, w.Drag, gunner, w.Damage, w.Name, GetRid(), explosive: w.Explosive, armM: w.Explosive ? 8f : 0f,
             pen: w.Pen, vehDamage: w.VehDamage, crater: w.Crater, fragR: w.FragR, power: w.Power, rocket: w.Sound == Snd.Rocket, prox: w.Prox,
             whistle: t.Def.Indirect, shooterVehicle: this, heavyCrack: w.Sound is Snd.Hmg or Snd.Autocannon or Snd.Cannon or Snd.Rocket,
             homing: w.Guided ? homing : null, guidedBy: w.Guided && !w.FireAndForget && homing != null ? this : null);

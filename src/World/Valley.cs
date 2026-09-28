@@ -87,6 +87,7 @@ public partial class Valley : Node3D, IGround
         Seed = seed;
         Rooms.Clear();
         Door.Clear();
+        Builder.Doorways.Clear();
         var rng = new RandomNumberGenerator { Seed = (ulong)seed };
         float k = SizeScale;
 
@@ -231,7 +232,7 @@ public partial class Valley : Node3D, IGround
         float extent = Half - 40f, tile = 252f;
         string key = $"{Spec.Id}{seed}";
         Rect2? dense = City != null ? new Rect2(City.Center - Vector2.One * City.Radius * 1.12f, Vector2.One * City.Radius * 2.24f) : null;
-        Nav = new NavBaker { Root = this, Extent = extent, Tile = tile, Key = key, Dense = dense, DenseTile = 63f };
+        Nav = new NavBaker { Root = this, Extent = extent, Tile = tile, Key = key, Dense = dense, DenseTile = 63f, Links = Builder.Doorways.ToList() };
         AddChild(Nav);
         Nav.Start();
 

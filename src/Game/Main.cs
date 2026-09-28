@@ -27,6 +27,7 @@ public partial class Main : Node3D
             }
         Settings.Load();
         Combatants.Clear();
+        GetTree().Paused = false; // (a scene reloaded from the pause screen)
         AddChild(new Clock());
 
         var setup = _pending;
@@ -42,6 +43,8 @@ public partial class Main : Node3D
             if (!_menuShot) { _menuShot = true; DevShot.AttachIfRequested(this); } // a screenshot of the menu itself
             return;
         }
+
+        AddChild(new PauseOverlay());
 
         // Order matters: systems first, since everything after emits sounds and effects. The air
         // and ground of the map go into how every sound is made, so they're set before.

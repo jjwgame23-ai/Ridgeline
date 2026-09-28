@@ -45,9 +45,9 @@ public sealed partial class MotorPool
         var inf = s.Crew?.Supports;
         if (inf != null && (inf.Alive == 0 || inf.Leader == null)) inf = null;
         if (ReactToHit(s, v, inf, now)) return;
-        // The whole crew aboard before setting off: no gunner, no gun.
-        if (now - v.LastHit > 5.0 && s.Crew != null && v.GunnerSeat >= 0 && v.Occupants[v.GunnerSeat] == null
-            && s.Crew.Members.Any(m => m.Alive && m.Ride == null && m.FeetPos.DistanceTo(v.GlobalPosition) < 300f))
+        // The whole crew aboard before setting off: no gunner, no gun. (It waited only for one within 300 m, and for
+        // him for ever: a gunner walking back from further off was left behind, one stuck by the base kept it there.)
+        if (now - v.LastHit > 5.0 && CrewComing(s, v, now))
         {
             v.Goal = null;
             v.FireAt = null;
@@ -144,15 +144,17 @@ public sealed partial class MotorPool
                 // A long move ahead, nothing going on, and we're not far off: come and get them.
                 if (inf.WantRide) { inf.WantRide = false; s.PickupRetryAt = 0; if (v.Driver is Bot && lead.Ride == null) goto case 99; }
                 bool worth = obj != null && toGo > 450f && !inf.Engaged && inf.Phase == AssaultPhase.None && !inf.Consolidating
-                             && inf.Transport == null && lead.Ride == null && lead.FeetPos.DistanceTo(v.GlobalPosition) < MathF.Min(1600f, toGo * 3f);
-                // (Worth waiting for: fetching them and driving there beats walking it, at ~10 m/s against ~2.)
+                             && inf.Transport == null && lead.Ride == null && lead.FeetPos.DistanceTo(v.GlobalPosition) < MathF.Min(1600f, toGo * 1.3f + 120f);
+                // (Worth waiting for: the squad halts while it comes, so fetching them and driving to the dismount point,
+                // at the 4-5 m/s a carrier makes across country, has to beat walking it at ~2. It used to count on
+                // 10 m/s and fetch from three times the distance still to go: the pickups took longer than the walk.)
                 if (!worth || v.Driver is not Bot || now < s.PickupRetryAt) return false;
                 goto case 99;
             }
             case 99: // start a pickup
             {
                 s.Mech = 1;
-                s.PickupTimeout = 40.0 + lead.FeetPos.DistanceTo(v.GlobalPosition) / 5f;
+                s.PickupTimeout = 60.0 + lead.FeetPos.DistanceTo(v.GlobalPosition) / 3f; // (40 s + 1 s per 5 m, at a speed it doesn't make off-road)
                 s.JobSince = now;
                 inf.Transport = v;
                 Mounts++;
