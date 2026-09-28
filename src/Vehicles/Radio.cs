@@ -2,7 +2,7 @@ using Godot;
 
 namespace Ridgeline;
 
-public enum RadioKind { Armor, HeavyContact }
+public enum RadioKind { Armor, HeavyContact, Air }
 
 public sealed class RadioReport
 {
@@ -31,17 +31,25 @@ public static class Radio
     public static void Report(ICombatant from, RadioKind kind, Vector3 pos, Vehicle? v = null, int count = 0)
     {
         double now = Clock.Now;
+        // An aircraft is called in as one, not as armour. (Reported as armour, tanks were sent to overwatch where a
+        // helicopter had been, AT teams to ambush it, and gunships to fly air support over it.)
+        if (kind == RadioKind.Armor && v is { Def.Air: true }) kind = RadioKind.Air;
         // Someone on our side already called this in recently.
         foreach (var r in Log)
-            if (r.Team == from.Team && r.Kind == kind && now - r.At < (kind == RadioKind.Armor ? 15.0 : 30.0)
-                && (kind == RadioKind.Armor ? r.Vehicle == v : r.Pos.DistanceTo(pos) < 120f))
+            if (r.Team == from.Team && r.Kind == kind && now - r.At < (kind == RadioKind.HeavyContact ? 30.0 : 15.0)
+                && (kind == RadioKind.HeavyContact ? r.Pos.DistanceTo(pos) < 120f : r.Vehicle == v))
                 return;
         var rep = new RadioReport { Team = from.Team, Kind = kind, Pos = pos, At = now, Vehicle = v, From = from.Callsign, Count = count };
         Log.Add(rep);
         if (Log.Count > 300) Log.RemoveRange(0, 100);
         float d = from.FeetPos.DistanceTo(pos);
         string where = $"{Comms.Bearing(from.FeetPos, pos)}, {d:0} meters";
-        Comms.Say(from, kind == RadioKind.Armor ? $"Enemy armor! {v?.Def.ClassName.ToUpperInvariant()}, {where}!" : $"Heavy contact, {where}! We need support!");
+        Comms.Say(from, kind switch
+        {
+            RadioKind.Armor => $"Enemy armor! {v?.Def.ClassName.ToUpperInvariant()}, {where}!",
+            RadioKind.Air => $"Enemy aircraft! {v?.Def.ClassName.ToUpperInvariant()}, {where}!",
+            _ => $"Heavy contact, {where}! We need support!",
+        });
         Heard?.Invoke(rep);
     }
 

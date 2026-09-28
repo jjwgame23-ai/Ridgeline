@@ -24,6 +24,12 @@ public sealed class VWeapon
     public float Kick;         // visual recoil of the gun, metres
     public float Flash = 1f;   // muzzle flash scale
     public bool Prox;          // proximity fuse: bursts next to an aircraft it passes
+    /// <summary>A guided missile: flies to the vehicle it was launched at (see Ballistics.GuideGround).</summary>
+    public bool Guided;
+    /// <summary>Guided by its own seeker once launched; otherwise the aircraft has to keep the target in sight until it hits.</summary>
+    public bool FireAndForget;
+    /// <summary>How far a guided missile reaches (m).</summary>
+    public float Range;
     public bool AntiArmor => Pen >= 40f;
 }
 
@@ -133,6 +139,26 @@ public sealed class VehicleDef
     {
         Name = "30mm chain gun", Sound = Snd.Autocannon, Speed = 800f, Drag = 0.00035f, Damage = 140f, VehDamage = 26f, Pen = 50f,
         Explosive = true, Crater = 0.35f, FragR = 3.5f, Power = 0.25f, Rpm = 600f, Mag = 300, Mags = 3, Reload = 8f, SpreadDeg = 0.45f, Kick = 0.05f, Flash = 1.6f,
+    };
+
+    /// <summary>
+    /// The gunship's anti-tank missile, out to 7 km: it climbs, then comes down on the target's roof, where the armour
+    /// is thinnest. The Apache's (AGM-114L) has its own radar seeker: fire it and duck. The Viper's (AGM-114K) rides
+    /// the aircraft's laser, which has to stay on the target until it hits.
+    /// </summary>
+    public static VWeapon Hellfire(bool radar) => new()
+    {
+        Name = radar ? "Hellfire (radar)" : "Hellfire (laser)", Sound = Snd.Rocket, Speed = 425f, Drag = 0f, Damage = 350f, VehDamage = 900f, Pen = 1000f,
+        Explosive = true, Crater = 1f, FragR = 9f, Power = 4f, Rpm = 30f, Mag = 8, Mags = 0, Reload = 0f, SpreadDeg = 0.1f, Kick = 0f, Flash = 2f,
+        Guided = true, FireAndForget = radar, Range = 7000f,
+    };
+
+    /// <summary>The Hind's 9M120 Ataka, out to 6 km: steered by radio from the aircraft, whose gunner has to keep the target in sight until it hits.</summary>
+    public static VWeapon Ataka() => new()
+    {
+        Name = "9M120 Ataka", Sound = Snd.Rocket, Speed = 500f, Drag = 0f, Damage = 350f, VehDamage = 850f, Pen = 900f,
+        Explosive = true, Crater = 1f, FragR = 8f, Power = 3.5f, Rpm = 30f, Mag = 6, Mags = 0, Reload = 0f, SpreadDeg = 0.1f, Kick = 0f, Flash = 2f,
+        Guided = true, FireAndForget = false, Range = 6000f,
     };
 
     public static VWeapon Hydra() => new()
@@ -259,7 +285,7 @@ public sealed class VehicleDef
                 d.Turrets.Add(new TurretDef { Mount = new Vector3(0f, 0.6f, -4.6f * len), YawLimit = 110f, YawSpeed = 90f, PitchSpeed = 70f, PitchMin = -60f, PitchMax = 12f,
                     Size = new Vector3(0.5f, 0.35f, 0.5f), BarrelLen = 1.6f, BarrelRadius = 0.05f, Ammo = new[] { ChinGun() } });
                 d.Turrets.Add(new TurretDef { Mount = new Vector3(0f, 1.25f, -1.4f * len), Fixed = true, YawLimit = 0f, PitchMin = -4f, PitchMax = -4f,
-                    Size = new Vector3(3.8f, 0.3f, 0.9f), BarrelLen = 0.9f, BarrelRadius = 0.18f, Ammo = new[] { Hydra() } });
+                    Size = new Vector3(3.8f, 0.3f, 0.9f), BarrelLen = 0.9f, BarrelRadius = 0.18f, Ammo = new[] { Hydra(), f == 1 ? Ataka() : Hellfire(radar: f == 0) } });
                 d.Seats.Add(new SeatDef { Role = SeatRole.Driver, Pos = new Vector3(0f, 2.4f, -2.8f * len), Turret = 1 });
                 d.Seats.Add(new SeatDef { Role = SeatRole.Gunner, Pos = new Vector3(0f, 2.1f, -4.1f * len), Turret = 0 });
                 if (f == 1) for (int i = 0; i < 4; i++) d.Seats.Add(new SeatDef { Role = SeatRole.Passenger, Pos = new Vector3(i % 2 == 0 ? -0.4f : 0.4f, 1.8f, -0.8f + (i / 2) * 0.6f) }); // the Hind carries troops

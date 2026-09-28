@@ -492,7 +492,7 @@ public partial class TerritoryMap : Control
         }
         foreach (var r in Radio.Log)
         {
-            if (r.Team != 0 || Omni || r.Kind != RadioKind.Armor || Clock.Now - r.At > 60.0 || r.Vehicle is { Destroyed: true }) continue;
+            if (r.Team != 0 || Omni || r.Kind is not (RadioKind.Armor or RadioKind.Air) || Clock.Now - r.At > 60.0 || r.Vehicle is { Destroyed: true }) continue;
             var q = P(r.Pos);
             var red = new Color(1f, 0.3f, 0.25f, 1f - (float)((Clock.Now - r.At) / 60.0) * 0.6f);
             DrawRect(new Rect2(q - new Vector2(6, 5), new Vector2(12, 10)), red, false, 2f);

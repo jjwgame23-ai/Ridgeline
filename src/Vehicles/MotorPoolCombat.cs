@@ -413,8 +413,10 @@ public sealed partial class MotorPool
         // Count engagements from here; a tank moves on after a few (they'll have its position by then).
         if (v.LastFired > s.ShotsCheckedAt) { s.ShotsAtFiring++; s.ShotsCheckedAt = v.LastFired; }
         bool moveOn = s.HasFiring && !follow && (now - s.FiringAt > 150.0 || (tank && s.ShotsAtFiring >= 8));
+        // The gun's masked here (something right in front of the barrel), for a while now: somewhere else.
+        bool masked = s.HasFiring && !follow && now - v.GunMaskedAt < 1.0 && now - s.FiringAt > 8.0 && v.Arrived;
         bool redo = !s.HasFiring || s.FiringWhy != why || s.FiringWatch.DistanceTo(watch) > 60f
-                    || (anchor is Vector3 a0 && s.FiringAnchor.DistanceTo(a0) > (follow ? 12f : 60f)) || moveOn || exposed;
+                    || (anchor is Vector3 a0 && s.FiringAnchor.DistanceTo(a0) > (follow ? 12f : 60f)) || moveOn || exposed || masked;
         if (redo)
         {
             if (moveOn) Relocations++;
@@ -471,7 +473,10 @@ public sealed partial class MotorPool
         var space = v.GetWorld3D().DirectSpaceState;
         var home = (_m.Map.Bases[team] - watch) with { Y = 0f };
         float baseAng = MathF.Atan2(home.Z, home.X);
-        float turretH = v.Def.GroundClear + v.Def.Hull.Y + 0.5f, hullH = v.Def.GroundClear + v.Def.Hull.Y * 0.45f;
+        // The gun has to see, not just the sight on the turret roof above it: hull-down, a line clear at the roof and
+        // not at the barrel put the round into the crest.
+        float turretH = v.Def.Turrets.Count > 0 ? v.Def.Turrets[0].Mount.Y + v.Def.Turrets[0].Size.Y * 0.3f : v.Def.GroundClear + v.Def.Hull.Y + 0.5f;
+        float hullH = v.Def.GroundClear + v.Def.Hull.Y * 0.45f;
         float leadD = notPast != null ? ((watch - notPast.FeetPos) with { Y = 0f }).Length() : 0f;
         var target = watch + Vector3.Up * 1.5f;
         Vector3? best = null;

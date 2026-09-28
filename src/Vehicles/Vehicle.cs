@@ -29,6 +29,8 @@ public partial class Vehicle : CharacterBody3D
     public bool[] TurretDown = null!;
     public ICombatant?[] Occupants = null!;
     public double LastHit = -99, LastFired = -99;
+    /// <summary>When its gunner last held fire because something stood right in front of the barrel (see CrewBrain.Masked).</summary>
+    public double GunMaskedAt = -99;
     /// <summary>Where the last hit came from, and how hard it hit (penetration, mm): 40+ is something that can kill armour.</summary>
     public Vector3 LastHitFrom;
     public float LastHitPen;
@@ -106,7 +108,7 @@ public partial class Vehicle : CharacterBody3D
         : Center + GlobalBasis.Y * (Def.Hull.Y * 0.5f + 0.3f);
     public bool Crewed => Occupants.Any(o => o != null);
     /// <summary>Can't move, or can hardly move and is badly hit: the motor pool gives up on it (see MotorPool.Abandon).</summary>
-    public bool Useless => Immobile || (EngineHit && Hp < Def.Hp * 0.3f);
+    public bool Useless => Immobile || (EngineHit && Hp < Def.Hp * 0.3f) || (Def.Air && Hp < Def.Hp * 0.25f);
     public ICombatant? Driver => Occupants[DriverSeat];
     public int DriverSeat => Def.Seats.FindIndex(s => s.Role == SeatRole.Driver);
     public int GunnerSeat => Def.Seats.FindIndex(s => s.Role == SeatRole.Gunner);
@@ -421,7 +423,8 @@ public partial class Vehicle : CharacterBody3D
     }
 
     /// <summary>Fire the main gun (or the coax). The round leaves the muzzle down the barrel.</summary>
-    public bool Fire(int turret, bool coax, float rangeHint = 0f, Vector3? dirOverride = null)
+    /// <param name="homing">For a guided missile: the vehicle it's launched at.</param>
+    public bool Fire(int turret, bool coax, float rangeHint = 0f, Vector3? dirOverride = null, Vehicle? homing = null)
     {
         if (Destroyed || TurretDown[turret]) return false;
         var t = Turrets[turret];
@@ -458,7 +461,9 @@ public partial class Vehicle : CharacterBody3D
         LastFired = Clock.Now;
         Ballistics.I.Fire(from, dir, w.Speed, w.Drag, gunner, w.Damage, w.Name, GetRid(), explosive: w.Explosive, armM: w.Explosive ? 8f : 0f,
             pen: w.Pen, vehDamage: w.VehDamage, crater: w.Crater, fragR: w.FragR, power: w.Power, rocket: w.Sound == Snd.Rocket, prox: w.Prox,
-            whistle: t.Def.Indirect, shooterVehicle: this, heavyCrack: w.Sound is Snd.Hmg or Snd.Autocannon or Snd.Cannon or Snd.Rocket);
+            whistle: t.Def.Indirect, shooterVehicle: this, heavyCrack: w.Sound is Snd.Hmg or Snd.Autocannon or Snd.Cannon or Snd.Rocket,
+            homing: w.Guided ? homing : null, guidedBy: w.Guided && !w.FireAndForget && homing != null ? this : null);
+        if (w.Guided) Prof.Count(homing != null ? "missile:launched" : "missile:launched unguided");
         // Aboard, you're in the gun's near field (and may be hearing through a chase camera): no muzzle directivity.
         SoundWorld.I.Emit(w.Sound, from, 0f, gunner, facing: Player.I is { } pl && pl.Ride == this ? default : dir);
         Effects.I.MuzzleFlash(from, dir, w.Flash);
@@ -687,6 +692,7 @@ public partial class Vehicle : CharacterBody3D
             if (o.Dead || !GodotObject.IsInstanceValid((GodotObject)o))
             {
                 Occupants[i] = null;
+                if (Def.Air && !_landed && Aircrew(i)) CrewLost = true;
                 if (i == DriverSeat && Def.Air && !_landed) TakeControls();
                 continue;
             }

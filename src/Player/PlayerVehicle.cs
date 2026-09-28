@@ -18,6 +18,8 @@ public partial class Player
     public SeatRole? SeatRole => Ride == null ? null : Ride.Def.Seats[SeatIdx].Role;
     /// <summary>What the gunner has selected: an index into the turret's ammo, or the coax (== Ammo.Length).</summary>
     public int GunSel { get; private set; }
+    /// <summary>Flying a gunship with missiles selected: the enemy vehicle its sight is on, if any.</summary>
+    public Vehicle? MissileLock { get; private set; }
     public bool Zoomed { get; private set; }
     Camera3D? _vcam;
     Vector2 _stick;
@@ -115,8 +117,33 @@ public partial class Player
         }
         v.Collective = Mathf.Clamp(v.Collective, 0f, 1f);
         if (captured && Input.IsActionJustPressed("selfaid")) v.PopFlares();
-        // Rockets (the pods are where the nose points).
-        if (seat.Turret >= 0 && captured && Input.IsActionPressed("fire")) v.Fire(seat.Turret, false);
+        // The pods: rockets, where the nose points; or a missile at the enemy vehicle the nose is on (V switches).
+        MissileLock = null;
+        if (seat.Turret >= 0)
+        {
+            var pt = v.Turrets[seat.Turret];
+            if (captured && Input.IsActionJustPressed("firemode") && pt.Def.Ammo.Length > 1)
+            {
+                v.SelectAmmo(seat.Turret, (pt.AmmoIdx + 1) % pt.Def.Ammo.Length);
+                Hud.Toast(pt.Weapon.Guided ? $"{pt.Weapon.Name}: put the nose on an enemy vehicle" : pt.Weapon.Name, 1.5f);
+            }
+            if (pt.Weapon.Guided)
+            {
+                MissileLock = v.MissileLock(v.Forward, 12f);
+                if (captured && Input.IsActionJustPressed("fire"))
+                {
+                    if (MissileLock == null) Hud.Toast("No lock — put the nose on an enemy vehicle", 1.5f);
+                    else if (v.LaunchMissile(MissileLock))
+                    {
+                        // A laser or radio missile is steered from here: the target has to stay in sight until it hits.
+                        var mw = pt.Weapon;
+                        v.GuidingUntil = mw.FireAndForget ? Clock.Now : Clock.Now + v.Center.DistanceTo(MissileLock.Center) / mw.Speed + 0.5;
+                        Hud.Toast(mw.FireAndForget ? "Missile away — fire and forget" : "Missile away — keep the target in sight until it hits", 2f);
+                    }
+                }
+            }
+            else if (captured && Input.IsActionPressed("fire")) v.Fire(seat.Turret, false);
+        }
 
         // Chase camera: behind and above, turning with the aircraft; Alt to look around.
         bool look = captured && Input.IsActionPressed("free_look");

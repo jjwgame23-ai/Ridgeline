@@ -127,6 +127,19 @@ public sealed partial class MotorPool
             var v = s.Live;
             if (!GodotObject.IsInstanceValid(v) || v.Destroyed) continue;
             if (Abandon(s, v, now)) continue;
+            // A crippled aircraft (see Vehicle.Useless) flies nothing more: home, low, and down, where it's written
+            // off (Abandon). (One at a fifth of its hit points, its engine failing, pressed on with its attacks.) One
+            // of its crew hit, likewise: home, where they're lifted out.
+            if (v.Def.Air && v.Landed && v.GlobalPosition.DistanceTo(s.Park) < 60f) v.CrewLost = false;
+            if (v.Def.Air && !v.Immobile && !v.Landed && (v.Useless || v.AircrewHit))
+            {
+                if ((v.AirMode != HeliMode.Land || v.Goal != s.Park) && v.Driver is Bot pb)
+                    Comms.Say(pb, v.Useless ? "We're hit bad — going home." : "Crew hit — heading home.");
+                v.AirMode = HeliMode.Land;
+                v.Goal = s.Park;
+                v.Task = v.Useless ? "crippled: going home" : "crew hit: going home";
+                continue;
+            }
             switch (s.Kind)
             {
                 case VKind.Transport: Transport(s, v, now); break;
@@ -521,27 +534,32 @@ public sealed partial class MotorPool
         static int Rounds(Vehicle.TurretState t) => Enumerable.Range(0, t.Def.Ammo.Length).Sum(i => t.Loaded[i] + t.Stock[i] * t.Def.Ammo[i].Mag);
         bool gunLow = v.Turrets.Where(t => !t.Def.Fixed).All(t => Rounds(t) * 3 < t.Def.Ammo.Sum(a => a.Mag * (a.Mags + 1)));
         if (!s.Rearming && rocketsGone && gunLow) { s.Rearming = true; s.RearmAt = -1; Comms.Say(v.Driver, "Winchester — heading home to rearm."); }
+        // The pods jammed (a hit in the works): nothing to attack with but the gun. Home for the armourers to clear them.
+        if (!s.Rearming && pods >= 0 && v.TurretDown[pods]) { s.Rearming = true; s.RearmAt = -1; Comms.Say(v.Driver, "Pods are jammed — heading home."); }
         if (s.Rearming)
         {
             v.AirMode = HeliMode.Land;
             v.Goal = s.Park;
+            v.Task = "home to rearm";
             if (!v.Landed || v.GlobalPosition.DistanceTo(s.Park) > 50f) return;
             if (s.RearmAt < 0) s.RearmAt = Clock.Now + 45.0;
             if (Clock.Now < s.RearmAt) return;
             v.Restock();
+            Array.Fill(v.TurretDown, false);
             s.Rearming = false;
             Rearms++;
             Comms.Say(v.Driver, "Rearmed and refuelled. Back on station.");
         }
         // Enemy air defence known near the target: the gunship works from battle positions out of its sight (see
-        // HeliPilot.BattlePosition). If there are none for half a minute, that airspace is theirs until something
-        // kills the gun: hold off. (Gunships used to fly straight in and be shot down within half a minute of
-        // every start.)
-        if (v.NoPositionSince > 0 && Clock.Now - v.NoPositionSince > 30.0 && Radio.AirDefenceNear(s.Team, obj.Watch, AirDefenceReach) is { } aaRep)
+        // HeliPilot.BattlePosition), and goes after it with its missiles. With the missiles gone and nowhere to
+        // work from for half a minute, that airspace is theirs until something kills the gun: hold off. (Gunships
+        // used to fly straight in and be shot down within half a minute of every start.)
+        if (v.NoPositionSince > 0 && Clock.Now - v.NoPositionSince > 30.0 && v.MissilesLeft == 0 && Radio.AirDefenceNear(s.Team, obj.Watch, AirDefenceReach) is { } aaRep)
         {
             if (v.AirMode == HeliMode.Attack && v.Driver is Bot) Comms.Say(v.Driver, $"Enemy anti-air near the target ({aaRep.Vehicle!.Def.Name}) — nowhere to work from, holding off.");
             v.AirMode = HeliMode.Land;
             v.Goal = s.Park;
+            v.Task = "holding off: enemy air defence";
             v.BattlePos = null;
             v.NoPositionSince = -1;
             return;
@@ -552,14 +570,35 @@ public sealed partial class MotorPool
             && s.Crew.Members.Any(m => m.Alive && m.Ride == null && m.FeetPos.DistanceTo(v.GlobalPosition) < 400f))
         {
             if (s.CrewWaitSince < 0) s.CrewWaitSince = Clock.Now;
-            if (Clock.Now - s.CrewWaitSince < 40.0) { v.AirMode = HeliMode.Land; v.Goal = v.GlobalPosition; return; }
+            if (Clock.Now - s.CrewWaitSince < 40.0) { v.AirMode = HeliMode.Land; v.Goal = v.GlobalPosition; v.Task = "waiting for the gunner"; return; }
         }
         else s.CrewWaitSince = -1;
         v.AirMode = HeliMode.Attack;
         v.Goal = obj.Watch;
         Vector3? aim = null;
         var armor = Radio.Latest(s.Team, RadioKind.Armor, 45.0);
-        if (armor != null && armor.Pos.DistanceTo(obj.Watch) < 450f && armor.Vehicle is { Destroyed: false } ev) aim = ev.Center;
+        // Missiles: first for an air defence gun we know of anywhere near where we're working (it's what kills
+        // gunships, and from beyond its guns' 3 km, where the map allows, it can't shoot back), then for armour
+        // near the objective. Rockets and the gun for everything else.
+        if (v.MissileFocus is { } old && (old.Destroyed || !GodotObject.IsInstanceValid(old))) v.MissileFocus = null;
+        if (v.MissilesLeft > 0)
+        {
+            if (v.MissileFocus is not { Def.Kind: VKind.SPAA })
+                foreach (var r in Radio.AirDefences(s.Team))
+                    if (r.Vehicle is { Destroyed: false } av && GodotObject.IsInstanceValid(av) && av.Center.DistanceTo(obj.Watch) < 4000f)
+                    {
+                        if (v.MissileFocus != av && v.Driver is Bot pb) Comms.Say(pb, $"Going after their {av.Def.ClassName} with missiles.");
+                        v.MissileFocus = av;
+                        v.BattlePos = null;
+                        break;
+                    }
+            // Armour only: the missiles are for what rockets and the gun can't kill. (Half a load went on logistics trucks.)
+            if (v.MissileFocus == null && armor?.Vehicle is { Destroyed: false, Def.Heavy: true } mv && GodotObject.IsInstanceValid(mv) && !mv.Def.Air && armor.Pos.DistanceTo(obj.Watch) < 1200f)
+                v.MissileFocus = mv;
+        }
+        else v.MissileFocus = null;
+        if (v.MissileFocus is { } focus) aim = focus.Center;
+        else if (armor != null && armor.Pos.DistanceTo(obj.Watch) < 450f && armor.Vehicle is { Destroyed: false } ev) aim = ev.Center;
         aim ??= Intel.Cluster(s.Team, obj.Watch, 0f, 450f, 40f, 2);
         v.AttackPoint = aim;
     }

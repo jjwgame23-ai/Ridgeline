@@ -24,10 +24,15 @@ public sealed class Projectile
     public MeshInstance3D? Visual;
     public bool Prox;             // bursts when it passes close to an aircraft
     public bool Whistle, Whistled; // a mortar bomb: you hear it coming down
+    /// <summary>Let go from a drone: it falls from standing still, so it's no spent round however slow it's going.</summary>
+    public bool Dropped;
     public AudioStreamPlayer3D? Voice; // its whistle, travelling with it
     public float VoicePitch = 1f, VoiceT;
     public Vehicle? FromVehicle;  // don't proximity-fuse on the aircraft that fired it
     public Vehicle? Homing;       // a guided missile's target
+    /// <summary>An anti-tank missile steered from its aircraft (laser, radio): it needs that aircraft to keep the target in sight.</summary>
+    public Vehicle? GuidedBy;
+    public double GuideCheckAt;
     public bool Decoyed;
     public float MaxLife = 6f;
     public Vector3 DecoyAt;
@@ -69,7 +74,8 @@ public partial class Ballistics : Node3D
     public void Fire(Vector3 origin, Vector3 dir, float speed, float drag, ICombatant? shooter, float damage, string weapon,
                      Rid ignore = default, bool silent = false, float intendedDist = 0f, string tag = "", bool explosive = false, float armM = 0f,
                      float pen = -1f, float vehDamage = -1f, float crater = 0.65f, float fragR = 7f, float power = 1f, bool rocket = false,
-                     bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false, uint mask = 0xFFFFFFFF)
+                     bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false, uint mask = 0xFFFFFFFF,
+                     bool dropped = false, Vehicle? guidedBy = null)
     {
         var p = new Projectile
         {
@@ -90,11 +96,13 @@ public partial class Ballistics : Node3D
             Rocket = rocket,
             Prox = prox,
             Whistle = whistle,
+            Dropped = dropped,
+            GuidedBy = guidedBy,
             FromVehicle = shooterVehicle,
             Homing = homing,
             HeavyCrack = heavyCrack,
             // Mortar bombs are up for half a minute; missiles and rockets fly a few seconds more than bullets.
-            MaxLife = whistle ? 60f : homing != null ? 12f : rocket ? 10f : 6f,
+            MaxLife = whistle ? 60f : homing != null ? (homing.Def.Air ? 12f : 22f) : rocket ? 10f : 6f,
         };
         if (shooterVehicle != null) p.Exclude.Add(shooterVehicle.GetRid());
         homing?.MissileLaunched();
@@ -102,6 +110,14 @@ public partial class Ballistics : Node3D
         {
             p.Visual = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.05f, Height = 0.6f, RadialSegments = 8 },
                 MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.2f, 0.22f, 0.15f), EmissionEnabled = true, Emission = new Color(1f, 0.6f, 0.2f), EmissionEnergyMultiplier = 0.3f } };
+            AddChild(p.Visual);
+            p.Visual.GlobalPosition = origin;
+        }
+        if (dropped)
+        {
+            // A grenade falling from a drone: small, dark, and you might just see it coming.
+            p.Visual = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.035f, BottomRadius = 0.035f, Height = 0.11f, RadialSegments = 8 },
+                MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.18f, 0.2f, 0.14f) } };
             AddChild(p.Visual);
             p.Visual.GlobalPosition = origin;
         }
@@ -172,9 +188,11 @@ public partial class Ballistics : Node3D
                 // The cylinder's axis is Y: turn it to lie along the flight path.
                 var look = Basis.LookingAt(d, MathF.Abs(d.Y) > 0.95f ? Vector3.Right : Vector3.Up);
                 p.Visual.GlobalTransform = new Transform3D(look * new Basis(Vector3.Right, -Mathf.Pi / 2f), next);
-                if (Engine.GetPhysicsFrames() % 3 == 0) Effects.I.Puff(next - d * 0.4f);
+                if (p.Rocket && Engine.GetPhysicsFrames() % 3 == 0) Effects.I.Puff(next - d * 0.4f);
             }
-            if (p.Life > p.MaxLife || (speed < 40f && !p.Whistle)) RemoveAt(i);
+            // A bullet slowed to a crawl is spent. (That rule also used to delete every grenade a quad let go, on
+            // its first step, falling at 2 m/s: not one ever went off.)
+            if (p.Life > p.MaxLife || (speed < 40f && !p.Whistle && !p.Dropped)) RemoveAt(i);
         }
     }
 
@@ -193,6 +211,7 @@ public partial class Ballistics : Node3D
     static void Guide(Projectile p, float dt)
     {
         var tgt = p.Homing!;
+        if (!tgt.Def.Air) { GuideGround(p, dt); return; }
         // Flares out: about a 60% chance over their three seconds that the seeker goes for them.
         if (!p.Decoyed && tgt.FlaresActive && GD.Randf() < 0.3f * dt)
         {
@@ -208,6 +227,36 @@ public partial class Ballistics : Node3D
         float ang = cur.AngleTo(want);
         var dir = ang <= maxTurn ? want : cur.Slerp(want, maxTurn / ang);
         // The motor keeps it going: hold speed against drag and gravity.
+        p.Vel = dir * MathF.Max(speed, p.MuzzleSpeed * 0.95f) - Gravity * dt;
+    }
+
+    /// <summary>
+    /// An anti-tank missile on a vehicle: led by where it's going, it climbs and then dives onto the roof. One steered
+    /// from its aircraft (a laser, a radio link) needs that aircraft to keep the target in sight all the way: lose it
+    /// (the aircraft ducks or is hit, the target goes behind a hill) and the missile flies on unguided.
+    /// </summary>
+    static void GuideGround(Projectile p, float dt)
+    {
+        var tgt = p.Homing!;
+        if (!GodotObject.IsInstanceValid(tgt) || tgt.Destroyed) { p.Homing = null; return; }
+        if (p.GuidedBy != null && Clock.Now >= p.GuideCheckAt)
+        {
+            p.GuideCheckAt = Clock.Now + 0.2;
+            var by = p.GuidedBy;
+            bool lit = GodotObject.IsInstanceValid(by) && !by.Destroyed && by.Crewed
+                       && by.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(by.Center, tgt.TopPoint, Layers.World)).Count == 0;
+            if (!lit) { p.Homing = null; Prof.Count(GodotObject.IsInstanceValid(by) && !by.Destroyed && by.Crewed ? "missile:guidance lost (out of sight)" : "missile:guidance lost (aircraft down)"); return; }
+        }
+        float speed = p.Vel.Length();
+        var goal = tgt.Center + tgt.Velocity3 * (p.Pos.DistanceTo(tgt.Center) / MathF.Max(speed, 1f));
+        float d = ((goal - p.Pos) with { Y = 0f }).Length();
+        // Aim above it while far off, so it comes down on it from above.
+        var aim = goal + Vector3.Up * Mathf.Clamp((d - 250f) * 0.18f, 0f, 160f);
+        var want = (aim - p.Pos).Normalized();
+        var cur = p.Vel / MathF.Max(speed, 1f);
+        float maxTurn = Mathf.DegToRad(30f) * dt;
+        float ang = cur.AngleTo(want);
+        var dir = ang <= maxTurn ? want : cur.Slerp(want, maxTurn / ang);
         p.Vel = dir * MathF.Max(speed, p.MuzzleSpeed * 0.95f) - Gravity * dt;
     }
 

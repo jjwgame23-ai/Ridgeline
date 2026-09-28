@@ -120,9 +120,14 @@ public sealed class DroneOps
                 var tp = _bombTarget.FeetPos;
                 q.Goal = tp;
                 q.GoalAgl = 55f;
-                float off = ((q.GlobalPosition - tp) with { Y = 0f }).Length();
-                // Over it, near enough still, and it isn't going anywhere: let go.
-                if (off < 1.8f && q.Vel.Length() < 1.5f && _bombTarget.Vel.Length() < 1.5f)
+                // Where it'd land if let go now: straight down, carried on by half our drift for the ~3 s it falls;
+                // and where he'll be by then. Close enough, and we're steady: let go. (It used to wait to be within
+                // 1.8 m of dead overhead, all but still: a drone hovering in the wind seldom is.)
+                float fall = MathF.Sqrt(2f * MathF.Max(1f, q.GlobalPosition.Y - tp.Y) / 9.81f);
+                var land = q.GlobalPosition + (q.Vel with { Y = 0f }) * (0.5f * fall);
+                var there = tp + (_bombTarget.Vel with { Y = 0f }) * fall;
+                float off = ((land - there) with { Y = 0f }).Length();
+                if (off < 2.5f && q.Vel.Length() < 3f && _bombTarget.Vel.Length() < 2f)
                 {
                     q.Drop();
                     Comms.Say(_b, "Drop, drop!");

@@ -53,6 +53,8 @@ public static class Telemetry
         _nextSample = 0;
         Combatants.Killed += OnKilled;
         Combatants.Down += OnDowned;
+        Comms.Said += OnSaid;
+        Radio.Heard += OnRadio;
         WriteMap(m);
         GD.Print($"telemetry: writing to {path}");
     }
@@ -62,6 +64,8 @@ public static class Telemetry
         if (_w == null) return;
         Combatants.Killed -= OnKilled;
         Combatants.Down -= OnDowned;
+        Comms.Said -= OnSaid;
+        Radio.Heard -= OnRadio;
         _w.Flush();
         _w.Dispose();
         _w = null;
@@ -256,6 +260,17 @@ public static class Telemetry
     {
         if (_w == null) return;
         Line($"{{\"k\":\"drill\",\"t\":{T},\"sq\":{S(sq.Name)},\"team\":{sq.Team},\"d\":\"{d}\",\"p\":{P(at)}}}");
+    }
+
+    /// <summary>A report on the radio net (enemy armour, air defence, a heavy fight).</summary>
+    static void OnRadio(RadioReport r) =>
+        Line($"{{\"k\":\"radio\",\"t\":{T},\"team\":{r.Team},\"kind\":\"{r.Kind}\",\"p\":{P(r.Pos)},\"v\":{S(r.Vehicle?.Def.Name ?? "")},\"vk\":\"{r.Vehicle?.Def.Kind}\",\"s\":{S(r.From)}}}");
+
+    /// <summary>What an aircrew says (the rest of the chatter would swamp the file).</summary>
+    static void OnSaid(ICombatant who, string text)
+    {
+        if (who.Ride is not { Def.Air: true } v) return;
+        Line($"{{\"k\":\"say\",\"t\":{T},\"s\":{S(who.Callsign)},\"team\":{who.Team},\"veh\":{S(v.Def.Name)},\"text\":{S(text)}}}");
     }
 
     public static void Note(string text)

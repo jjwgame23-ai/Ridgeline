@@ -519,13 +519,58 @@ Two tools read it (Python 3 with numpy and Pillow):
   - `KEYBINDS.md` is written from the list (`-- bindsdoc=KEYBINDS.md`).
 - **Relevance, again.** A man at the objective who has just decided a far-off enemy isn't his business doesn't turn to fight him every time he shows: for 8 s he carries on, shooting at him if he's in sight, unless that enemy comes close or starts hitting him.
 
+### Third round (built)
+
+- **Drone bombs go off.** Not one grenade a quad let go had ever exploded: the rule that deletes a spent bullet (slower than 40 m/s) deleted each one on its first step, falling at 2 m/s. The player's drops were lost the same way. Dropped rounds are exempt now.
+  - The quad lets go when the grenade will land on the man: it allows for its own drift during the ~3 s fall and for where he's moving. It used to wait until it was within 1.8 m of dead overhead and all but still, which a drone hovering in the wind seldom is.
+  - A drop lands a metre or so off, more from higher up: it's aimed off a picture on a screen, from a drone that's never quite still.
+- **Guided missiles** (`VWeapon.Guided`, `Ballistics.GuideGround`), a second load on the gunships' pods:
+  - the Apache's AGM-114L Hellfire (its own radar seeker: fire and forget), the Viper's AGM-114K (rides the aircraft's laser), and the Hind's 9M120 Ataka (radio command). 6–8 each, 6–7 km.
+  - They loft and come down on the roof. A laser or radio missile needs the aircraft to keep the target in sight until it hits: if the aircraft ducks, is hit, or the target goes behind something, the missile flies on unguided.
+  - Bots use them on air defence first, anywhere near where they're working, then on armour near the objective (not on trucks). Rockets and the gun do the rest.
+  - The player's pilot seat: Fire Mode switches pods between rockets and missiles. The sight boxes the vehicle a missile would go for (the one nearest the nose within 12°, in sight and in range), and Fire launches.
+- **Air defence radar and warning receivers.**
+  - An anti-aircraft gun's radar takes 4 s to lock on and its fire control to work out a solution before the first burst. It sees any aircraft in the open out to its guns' reach, 3 km. The gun used to open fire the moment its crew saw one, and a gunship over a ridge for a second was gone.
+  - The aircraft's radar warning receiver hears the lock. A bot crew calls the gun in on the radio (so every aircraft on the side plans round it), and the pilot gets out of its sight: to the nearest spot low over the tops, with the ground or a building between, favouring the way it's already going. Two radars at once: the warning is for the nearer.
+  - If the gun that locks on is the one the gunship has come for, and it's in sight and in reach, it doesn't run. It takes the shot from where it is, launching at once, and stays up to steer the missile: whoever shoots first wins. Chased off again and again on the way to a firing position, one gunship never got a missile away.
+  - The player gets the warning on the HUD, with a bearing. After launching a laser or radio missile the HUD counts down while it's steered ("GUIDING — keep it in sight").
+- **Aircraft are called in as aircraft.** A helicopter someone saw went out on the radio as "enemy armour". Tanks were sent to overwatch where it had been, AT teams to ambush it, and gunships to fly air support over it, and Kessel logged scores of navmesh errors routing vehicles toward points in the sky.
+- **Gunship crews' eyes.** From the air, vehicles are picked out to 1.5 km all round, and to 3 km ahead in a gunship's sight (it was 900 m, as for a tank's crew).
+- **Where gunships fight from** (`HeliPilot.BattlePosition`).
+  - Missile positions are as far out as the missile reaches and the map allows, best about 4 km, never under 800 m. They used to be 3.2–5.2 km out always: on Valley (2 km across) every one was pulled in to the edge and failed, and the gunship hung about there for the rest of the match.
+  - Not within 350–500 m of an enemy base. The way there counts: a route in sight of known air defence scores badly.
+  - Rockets need the top of what's in the target area in sight (roofs, canopy, ground), not a point at head height among the houses. That was why most positions failed.
+  - With nowhere to fire from, it waits somewhere hidden from the air defence it knows of, not at the map's edge in view of the gun that just chased it off. It only holds off altogether once its missiles are gone.
+- **Flying.**
+  - See and avoid: an aircraft closing on another gives way by the rules of the air. The one with the other on its right slows, turns right and passes above. Landing and hovering aircraft are kept clear of, and bots give way to the player. Two took off side by side at the start of a match, crossed 12 m up and came down together.
+  - Two aircraft that collide both take the hit and come apart. Wrecks fall to the ground, sliding off walls and past other aircraft. The two above hung 13 m up on each other for the rest of the match, and a helicopter flew into them later.
+  - Take-off goes straight up clear of what's round the pad before moving off. One tipped forward into the base's flagpole. The way in to the pads allows for the pole too: it's too thin for the rays that find what's ahead, and two clipped it coming home.
+  - The last 45 m of a landing keeps over what's between it and the LZ (one flew into a roof). With a damaged engine it can still land: the test was under 55% collective, and a damaged hover takes 72%.
+  - Speed is held to what the aircraft can climb over. Flat out up a hillside at 35 m/s, three flew into it in one Highlands match.
+  - A base's pads may stand nearer the map's edge than aircraft otherwise go. On Valley they stood outside it, and a gunship sent home to rearm was stopped 140 m short and never rearmed.
+- **Coming home.**
+  - A crippled aircraft (a damaged engine and under 30% of its hit points, or under 25%) flies home and is written off there.
+  - If one of the crew in the cockpit is hit, it goes home, and the wounded are lifted out. A gunship whose front-seater was down pressed on for half a minute until its pilot went down too.
+  - Pods jammed: home for the armourers to clear them.
+- **Result** (6-minute 33-a-side runs on Valley, Kessel, Highlands and Novigrad):
+  - Gunships now destroy 2–4 enemy air defence vehicles a match with missiles, from 0.6–2.9 km. Before, none.
+  - They launch 4–13 missiles a match, up from 1.
+  - Valley is 2 km across, all of it within the guns' 3 km, and a gunship or two is still lost there most matches. They last longer than before: in the last Valley run two of the three flew for 300 s and more.
+  - On Kessel and Highlands they mostly last the match.
+  - No more mid-air collisions or flying into hillsides, and gunships rearm.
+  - No exceptions, and no engine errors except Kessel's usual handful from the navmesh.
+- **A vehicle's gun doesn't fire into what's in front of it.** Before each shot the gunner checks the barrel's line for the first 60 m: a wall, a tree, the crest the hull is down behind. The sight sits higher than the gun and sees over what the barrel can't. A Centauro put two 105 mm HE rounds into a wall ten metres in front of it and killed its own infantry beside it. If it stays masked, the vehicle moves.
+  - Firing positions are judged from the barrel's height, not the turret roof. Hull-down with the line clear at the roof and not at the gun used to put the round into the crest.
+- **Telemetry** adds the radio net (who called in what, where) and what aircrews say. A helicopter's row says what it's doing (to a firing position, popped up, launching, guiding the missile, evading a radar, going home...). `Prof` counts radar locks, evasions, give-ways, missiles launched and lost, and why firing positions were turned down.
+
 ### Not done
 
-- Guided missiles for gunships (true standoff: Hellfire-type, 5–8 km). With only rockets and the chin gun, a pop-up at 1.2–1.8 km is still inside a SPAAG's reach. What saves them now is terrain masking and short exposure.
 - Hit rates at 100–300 m are still high: about 15% of aimed rounds hit, mostly men standing or crouched in cover or running to it. Real combat runs far lower, and much of the gap is how much bots expose themselves.
 - Suppressive fire is still a modest share, about 15% of rifle and machine-gun rounds. When a bot means to suppress it is often moving, has its own cover in the way, or isn't yet aimed at the spot. The `supp:*` counters count the windows and why none opened.
 - Transport helicopters have one pilot seat. When he's hit, nobody can take over and the aircraft comes down (a real UH-60 has two pilots). Gunships' front-seaters do take over.
 - A downed man in a ground vehicle is still pulled out on the spot.
+- Every anti-aircraft vehicle is a radar-laid gun. None carries missiles (the real Stormer carries Starstreak), so beyond about 3 km a helicopter is safe from them.
+- Vehicles still run over their own infantry now and then, 1–3 times in a 6-minute match. Drivers stop for anyone in a corridor straight ahead. How the rest happen (people stepping in from the side, a turn, reversing) hasn't been traced yet.
 
 ## Big-map notes (3a)
 

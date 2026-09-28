@@ -275,9 +275,14 @@ public partial class Drone : Node3D
         BombsDropped++;
         Log?.Invoke($"[{Clock.Now:0}s] {Operator?.Callsign}'s quad dropped a grenade from {GlobalPosition.Y - GroundAt(GlobalPosition):0} m");
         var p = GlobalPosition + Vector3.Down * 0.25f;
-        var dir = (Vel * 0.5f + Vector3.Down * 2f);
+        // Let go off a picture on a screen, from a drone that's never quite still: it lands a metre or so from where
+        // it was meant to, more from higher up.
+        float h = MathF.Max(1f, GlobalPosition.Y - GroundAt(GlobalPosition));
+        float miss = 0.3f + 0.015f * h, fall = MathF.Sqrt(2f * h / 9.81f);
+        var dir = Vel * 0.5f + Vector3.Down * 2f + new Vector3((float)GD.Randfn(0.0, miss), 0f, (float)GD.Randfn(0.0, miss)) / fall;
         Ballistics.I.Fire(p, dir.Normalized(), dir.Length(), 0.01f, Operator, 0f, "drone-dropped grenade",
-                          ignore: _hit.GetRid(), silent: true, explosive: true, armM: 0f, pen: 20f, vehDamage: 40f, crater: 0.5f, fragR: 7f, power: 0.6f);
+                          ignore: _hit.GetRid(), silent: true, explosive: true, armM: 0f, pen: 20f, vehDamage: 40f, crater: 0.5f, fragR: 7f, power: 0.6f,
+                          dropped: true);
         SoundWorld.I?.Emit(Snd.Click, GlobalPosition, -4f);
         return true;
     }

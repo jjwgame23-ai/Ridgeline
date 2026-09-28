@@ -15,6 +15,11 @@ public sealed class CrewBrain
     readonly Bot _b;
     readonly RandomNumberGenerator _rng = new();
     double _nextPick, _burstUntil, _nextShot;
+    // An air defence gun's radar: the aircraft it's locked on to, since when, and when it last had it in sight.
+    Vehicle? _lockOn;
+    double _lockSince, _lockSeen;
+    /// <summary>How long an air defence gun's radar takes to lock on and its fire control to work out a solution.</summary>
+    const double RadarLockTime = 4.0;
     Vector3 _err;
     float _settle;
     public object? Target { get; private set; }
@@ -95,7 +100,8 @@ public sealed class CrewBrain
     }
 
     public static int InfantryTargets, InfantryShots, ArmorShots, AreaRounds, HeldForFriendlies;
-    double _areaPickAt, _ffAt, _calloutAt;
+    double _areaPickAt, _ffAt, _calloutAt, _maskAt;
+    bool _masked;
     Vector3 _areaPoint;
     bool _ffBlocked;
 
@@ -131,6 +137,23 @@ public sealed class CrewBrain
             if ((from + seg * t).DistanceTo(p) < 2.5f) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Something solid right in front of the barrel (a wall, a tree, the crest the hull is down behind): the round
+    /// would hit it a few metres off, among whoever is round the vehicle. The sight sits higher than the gun and sees
+    /// over what the barrel can't. (A Centauro put two 105 mm HE rounds into a wall ten metres in front of it and
+    /// killed its own infantry standing beside it.)
+    /// </summary>
+    static bool Masked(Vehicle v, Vector3 muzzle, Vector3 dir, float dist)
+    {
+        float reach = MathF.Min(dist - 3f, 60f);
+        if (reach < 1f) return false;
+        var hit = v.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(muzzle, muzzle + dir * reach, Layers.World | Layers.Trees, new Godot.Collections.Array<Rid> { v.GetRid() }));
+        if (hit.Count == 0) return false;
+        v.GunMaskedAt = Clock.Now;
+        Prof.Count("gun:masked");
+        return true;
     }
 
     /// <summary>How close to our own people HE may land: past most of its fragments' reach (a hand grenade's worth at the least).</summary>
@@ -252,6 +275,21 @@ public sealed class CrewBrain
         var w = useCoax ? t.Def.Coax! : t.Weapon;
         Note = $"{(armor ? "engaging armour" : "engaging infantry")} with {w.Name} at {dist:0} m";
 
+        // An aircraft: the radar has to lock on to it, and the fire control work out where to put the rounds, before
+        // the first burst: a few seconds. The aircraft's warning receiver hears the lock. Out of sight for more than a
+        // moment, and it's lost. (The gun used to open up the moment its crew saw one: a gunship that showed itself
+        // over a ridge for a second was gone, and nothing it could do would have told it why.)
+        if (Target is Vehicle { Def.Air: true, Landed: false } craft && t.Def.Ammo.Any(a => a.Prox))
+        {
+            if (_b.Senses.Vehicles.Find(x => x.Who == craft) is { Visible: true })
+            {
+                if (_lockOn != craft || now - _lockSeen > 1.5) { _lockOn = craft; _lockSince = now; }
+                _lockSeen = now;
+                craft.RadarLock(v);
+            }
+            if (_lockOn != craft || now - _lockSince < RadarLockTime) { Note = $"locking on to the {craft.Def.ClassName}"; return; }
+        }
+
         float tol = armor ? 0.6f : 1.4f;
         // Only fire at what we can actually see right now.
         if (armor && _b.Senses.Vehicles.Find(x => x.Who == Target) is { Visible: false }) return;
@@ -263,6 +301,12 @@ public sealed class CrewBrain
             if (_ffBlocked) HeldForFriendlies++;
         }
         if (_ffBlocked) { Note = "holding: friendlies in the way"; return; }
+        if (now > _maskAt)
+        {
+            _maskAt = now + 0.25;
+            _masked = Masked(v, useCoax && t.CoaxMuzzle != null ? t.CoaxMuzzle.GlobalPosition : t.Muzzle.GlobalPosition, t.Forward, dist);
+        }
+        if (_masked) { Note = "holding: gun masked"; return; }
         // Automatic weapons fire in bursts; big guns one round at a time when laid.
         if (w.Mag > 1)
         {
@@ -295,6 +339,7 @@ public sealed class CrewBrain
         bool main = he >= 0 || t.Def.Coax == null;
         var w = main ? t.Weapon : t.Def.Coax!;
         if (v.AimError(ti) > 2.5f || now < _nextShot) return;
+        if (Masked(v, main ? t.Muzzle.GlobalPosition : t.CoaxMuzzle?.GlobalPosition ?? t.Muzzle.GlobalPosition, t.Forward, dist)) { Note = v.FireAtWhy + " (gun masked)"; _nextShot = now + 1.0; return; }
         if (w.Mag > 1)
         {
             if (now > _burstUntil + 0.6) _burstUntil = now + _rng.RandfRange(0.4f, 1.0f);

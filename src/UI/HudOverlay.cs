@@ -162,12 +162,31 @@ public partial class HudOverlay : Control
         else if (seat.Role == SeatRole.Driver && v.Def.Air)
         {
             lines.Add($"alt {v.Agl:0} m · {v.AirSpeed * 3.6f:0} km/h · climb {v.Velocity3.Y:+0.0;-0.0} m/s · collective {v.Collective * 100:0}% · flares {v.FlaresLeft}" +
-                      (seat.Turret >= 0 ? $" · rockets {v.Turrets[seat.Turret].Loaded[0]}" : "") + (v.Landed ? " · ON THE GROUND" : ""));
-            lines.Add(Controls.Fill("[mouse] cyclic · [{move_forward}/{move_back}] collective · [{move_left}/{move_right}] pedals · [{jump}] hover assist · [{selfaid}] flares · [{free_look}] look" + (seat.Turret >= 0 ? " · [{fire}] rockets" : "")));
+                      (seat.Turret >= 0 ? $" · rockets {v.Turrets[seat.Turret].Loaded[0]}" + (v.MissileIdx >= 0 ? $" · missiles {v.MissilesLeft}" : "") : "") + (v.Landed ? " · ON THE GROUND" : ""));
+            bool missilesOn = seat.Turret >= 0 && v.Turrets[seat.Turret].Weapon.Guided;
+            lines.Add(Controls.Fill("[mouse] cyclic · [{move_forward}/{move_back}] collective · [{move_left}/{move_right}] pedals · [{jump}] hover assist · [{selfaid}] flares · [{free_look}] look"
+                + (seat.Turret >= 0 ? (missilesOn ? " · [{fire}] missile (nose on a vehicle)" : " · [{fire}] rockets") + (v.MissileIdx >= 0 ? " · [{firemode}] rockets/missiles" : "") : "")));
+            // The missile sight: the vehicle it would go for.
+            if (p.MissileLock is { } lk && cam != null && !cam.IsPositionBehind(lk.TopPoint))
+            {
+                var q = cam.UnprojectPosition(lk.TopPoint);
+                var col = new Color(1f, 0.35f, 0.25f, 0.95f);
+                DrawRect(new Rect2(q - new Vector2(16, 16), new Vector2(32, 32)), col, false, 2f);
+                DrawString(font, q + new Vector2(20, -8), $"{lk.Def.ClassName} {v.Center.DistanceTo(lk.Center) / 1000f:0.0} km", HorizontalAlignment.Left, -1, 14, col);
+            }
+            else if (missilesOn) DrawString(font, new Vector2(size.X / 2f - 60f, size.Y / 2f + 60f), "NO LOCK", HorizontalAlignment.Left, -1, 16, new Color(1f, 1f, 1f, 0.6f));
+            if (Clock.Now < v.GuidingUntil)
+                DrawString(font, new Vector2(size.X / 2f - 110f, size.Y / 2f + 84f), $"GUIDING — keep it in sight, {v.GuidingUntil - Clock.Now:0.0} s", HorizontalAlignment.Left, -1, 16, new Color(1f, 0.85f, 0.3f, 0.95f));
             if (Clock.Now - v.MissileWarning < 4.0)
             {
                 bool blink = (int)(Clock.Now * 4) % 2 == 0;
                 DrawString(font, new Vector2(size.X / 2f - 120f, size.Y * 0.3f), $"MISSILE LAUNCH — [{Controls.Keys("selfaid")}] FLARES", HorizontalAlignment.Left, -1, 22, blink ? Colors.Red : Colors.Orange);
+            }
+            // The radar warning receiver: an air defence gun is locking on (it fires a few seconds later).
+            else if (Clock.Now - v.RadarWarning < 0.5 && v.RadarFrom is { } rdr && GodotObject.IsInstanceValid(rdr))
+            {
+                bool blink = (int)(Clock.Now * 6) % 2 == 0;
+                DrawString(font, new Vector2(size.X / 2f - 120f, size.Y * 0.3f), $"RADAR LOCK — {Comms.Bearing(v.Center, rdr.Center).ToUpperInvariant()} — GET LOW", HorizontalAlignment.Left, -1, 22, blink ? Colors.Red : Colors.Orange);
             }
             // Where the rockets will go: along the pods.
             if (seat.Turret >= 0 && cam != null)

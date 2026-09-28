@@ -24,24 +24,45 @@ public partial class Vehicle
     Vector3 _vel;
     float _pitchA, _rollA, _rotorSpin, _spin;
     bool _landed = true, _doomed;
+    float _wedged; // a falling wreck caught where it can neither rest nor fall on (see FallWreck)
     ICombatant? _doomBy;
     double _flaresUntil = -1;
     public int FlaresLeft;
     public double MissileWarning = -99;
+    /// <summary>An air defence radar tracking us (the warning receiver hears it): lately, since when, and whose.</summary>
+    public double RadarWarning = -99, RadarSince = -99;
+    public Vehicle? RadarFrom;
+    /// <summary>Getting out of a radar's sight (see HeliPilot): until when, from where it was, and to where.</summary>
+    public double EvadeUntil;
+    public Vector3 EvadeFrom, EvadeTo;
+    /// <summary>A gunship with nowhere to fire from: where it waits, out of sight of the air defence it knows of.</summary>
+    public Vector3 HoldAt;
+    /// <summary>Where it last lifted off from (see HeliPilot: straight up first, clear of what's round the pad).</summary>
+    public Vector3? LiftedFrom;
 
     // ---- bot pilot state
     public HeliMode AirMode;
     public Vector3? AttackPoint;         // what the gunship's runs are aimed at (a vehicle, a cluster)
     public int AttackPhase;
     public Vector3 RunFrom = Vector3.Back;
+    /// <summary>The vehicle a gunship is going after with its missiles (an air defence gun first, then armour).</summary>
+    public Vehicle? MissileFocus;
+    /// <summary>A missile in the air that the aircraft is still steering (laser, radio): stay up, eyes on it, until then.</summary>
+    public double GuidingUntil, MissileAwayAt = -1;
     // A gunship's pop-up attacks (see HeliPilot.AttackRun): where it's working from, and how high it must come up there to see.
     public Vector3? BattlePos, LastBattlePos;
     public float PopAgl;
     public double PhaseSince, NoPositionSince = -1, SeeCheckAt;
     public bool SeesTarget;
+    // See and avoid (see HeliPilot.Avoid): the aircraft we're giving way to, until when, and whether we go over it.
+    public Vehicle? AvoidFrom;
+    public double AvoidCheckAt, AvoidUntil;
+    public bool AvoidClimb;
     // The tops of whatever's under and ahead of it, for flying low (see HeliPilot.Tops).
     public double TopsAt;
     public float TopsCached;
+    /// <summary>How steeply it must climb (metres up per metre on) to clear what's ahead at its low height.</summary>
+    public float TopsGrade;
     public Vector3 TopsFrom, TopsDir;
     public double NextSalvo;
     public double NowT => Clock.Now;
@@ -101,7 +122,7 @@ public partial class Vehicle
 
         if (_landed)
         {
-            if (thrust > 10.3f && piloted) { _landed = false; _vel.Y = MathF.Max(_vel.Y, 0.5f); }
+            if (thrust > 10.3f && piloted) { _landed = false; _vel.Y = MathF.Max(_vel.Y, 0.5f); LiftedFrom = GlobalPosition; }
             else
             {
                 _vel = Vector3.Zero;
@@ -120,12 +141,15 @@ public partial class Vehicle
         _trail?.MoveTo(Center);
         if (col != null) Touch(col);
 
-        // Height above whatever is below.
+        // Height above whatever is below. (From a little above the skids: from right at them, touching the ground,
+        // the ray could start inside the ground and see nothing: one flying into a hillside read 800 m up.)
         var excl = new Godot.Collections.Array<Rid> { GetRid() };
-        var hit = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(GlobalPosition, GlobalPosition + Vector3.Down * 800f, Layers.World | Layers.Trees, excl));
-        Agl = hit.Count > 0 ? GlobalPosition.Y - hit["position"].AsVector3().Y : 800f;
-        // Settling gently onto flat ground from a hover: that's a landing.
-        if (Agl < Def.GroundClear + 0.35f && _vel.Y < 0.5f && _vel.Y > -3.5f && AirSpeed < 4f && MathF.Abs(_pitchA) < 12f && MathF.Abs(_rollA) < 12f && Collective < 0.55f)
+        var hit = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(GlobalPosition + Vector3.Up * 1.5f, GlobalPosition + Vector3.Down * 800f, Layers.World | Layers.Trees, excl));
+        Agl = hit.Count > 0 ? MathF.Max(0f, GlobalPosition.Y - hit["position"].AsVector3().Y) : 800f;
+        // Settling gently onto flat ground from a hover (not pulling up off it): that's a landing. (It asked for under
+        // 55% collective: with a damaged engine a hover takes 72%, and a crippled gunship hung a metre over its pad,
+        // for good.)
+        if (Agl < Def.GroundClear + 0.35f && _vel.Y < 0.5f && _vel.Y > -3.5f && AirSpeed < 4f && MathF.Abs(_pitchA) < 12f && MathF.Abs(_rollA) < 12f && thrust < 9.81f * 1.1f)
         {
             _landed = true;
             _vel = Vector3.Zero;
@@ -156,9 +180,24 @@ public partial class Vehicle
     void Touch(KinematicCollision3D col)
     {
         var n = col.GetNormal();
+        var other = col.GetCollider() as Vehicle;
         float vs = -_vel.Y, hs = AirSpeed;
         bool soft = n.Y > 0.7f && vs < 4f && hs < 6f && MathF.Abs(_pitchA) < 20f && MathF.Abs(_rollA) < 20f;
-        if (_doomed) { _doomed = false; _landed = true; Destroy(_doomBy); return; }
+        if (_doomed)
+        {
+            _doomed = false;
+            // Down on the ground (or something that will hold it): it burns there. Into a wall or another aircraft:
+            // it breaks up there, and the wreck falls the rest of the way (FallWreck). (Two that collided in the air
+            // came to rest on each other, and hung there, 13 m up, for the rest of the match.)
+            if (Holds(n, other)) _landed = true;
+            else
+            {
+                if (other != null) Part(other);
+                _vel = _vel.Slide(n) * 0.5f;
+            }
+            Destroy(_doomBy);
+            return;
+        }
         if (soft)
         {
             _landed = n.Y > 0.7f;
@@ -166,12 +205,30 @@ public partial class Vehicle
             return;
         }
         // Rotor or airframe into something at speed.
-        float impact = _vel.Length();
+        float impact = (other != null ? _vel - other.Velocity3 : _vel).Length();
         if (DuelMode.Verbose) GD.Print($"[{Clock.Now:0}s] CRASH {Def.Name} into {(col.GetCollider() as Node)?.Name} at {impact:0.0} m/s, agl {Agl:0}, normal {n}, pitch {_pitchA:0} roll {_rollA:0}");
         _vel = _vel.Slide(n) * 0.3f;
         // A real crash (not a bump) wrecks it: no helicopter sits on the ground half-broken with its rotors turning.
         // Shot up and brought down that way, it's whoever shot it up that brought it down.
-        Damage(impact > 9f ? 99999f : impact * impact * 2.2f + 40f, Clock.Now - LastHit < 30.0 ? LastHitBy : null);
+        float dmg = impact > 9f ? 99999f : impact * impact * 2.2f + 40f;
+        Damage(dmg, Clock.Now - LastHit < 30.0 ? LastHitBy : null);
+        // Another aircraft: it's hit as hard, and the two tangle just the once; then each falls (or flies) on its own.
+        if (other is { Def.Air: true, Destroyed: false })
+        {
+            Part(other);
+            other.Damage(dmg, null);
+        }
+    }
+
+    /// <summary>Whether a wreck coming down on this can rest on it: not a wall, and not something that may move off from under it (a vehicle still going, an aircraft still in the air).</summary>
+    static bool Holds(Vector3 normal, Vehicle? other) =>
+        normal.Y > 0.6f && (other == null || (other.Destroyed && (!other.Def.Air || other._landed)));
+
+    /// <summary>Two bodies that have met once and mustn't catch on each other again.</summary>
+    void Part(Vehicle other)
+    {
+        AddCollisionExceptionWith(other);
+        other.AddCollisionExceptionWith(this);
     }
 
     void SpinRotors()
@@ -208,6 +265,18 @@ public partial class Vehicle
         _trail?.MoveTo(Center);
         var col = MoveAndCollide(_vel * dt);
         if (col == null) return;
+        // Off a wall, or past another aircraft (or anything that may yet move from under it): on down, the way it
+        // was going along the wall. Caught where it can do neither for a second (wedged), it stays there.
+        var n = col.GetNormal();
+        var what = col.GetCollider() as Vehicle;
+        if (!Holds(n, what) && _wedged < 1f)
+        {
+            if (what != null) Part(what);
+            var s = _vel.Slide(n);
+            _vel = new Vector3(s.X * 0.5f, s.Y, s.Z * 0.5f);
+            _wedged = col.GetTravel().LengthSquared() < 1e-4f ? _wedged + dt : 0f;
+            return;
+        }
         _landed = true;
         _vel = Vector3.Zero;
         _trail?.MoveTo(Center);
@@ -224,8 +293,22 @@ public partial class Vehicle
     /// </summary>
     public void CasualtyAboard(ICombatant c)
     {
-        if (Array.IndexOf(Occupants, c) == DriverSeat) TakeControls();
+        int seat = Array.IndexOf(Occupants, c);
+        if (seat >= 0 && Aircrew(seat)) CrewLost = true;
+        if (seat == DriverSeat) TakeControls();
     }
+
+    /// <summary>
+    /// One of the aircrew hit: down in their seat, or the pilot bleeding and failing. The mission's over: they go home
+    /// (see MotorPool). (A gunship whose front-seater was down pressed on with its attack for half a minute, until
+    /// the pilot went down too, and nobody was flying it.)
+    /// </summary>
+    public bool AircrewHit => CrewLost || (Driver is { } p && p.Body.Bleeding > 0f && p.Body.Condition < 60f);
+
+    /// <summary>One of the aircrew (in the cockpit: not a door gunner or a passenger) was hit in flight, down or dead: cleared once it's home.</summary>
+    public bool CrewLost;
+
+    bool Aircrew(int seat) => Def.Seats[seat].Role != SeatRole.Passenger && !Def.Seats[seat].Exposed;
 
     /// <summary>The pilot's out of it, in the air: whoever else aboard can fly it takes over, swapping seats.</summary>
     void TakeControls()
@@ -246,6 +329,66 @@ public partial class Vehicle
         }
     }
 
+    /// <summary>How far the pods' missiles reach (0: none).</summary>
+    public float MissileRange => MissileIdx is int mi and >= 0 ? Def.Turrets[Def.Turrets.FindIndex(t => t.Fixed)].Ammo[mi].Range : 0f;
+
+    /// <summary>The pods' missiles: which ammunition they are, and how many are left.</summary>
+    public int MissileIdx => Def.Turrets.FindIndex(t => t.Fixed) is int pods and >= 0 ? Array.FindIndex(Def.Turrets[pods].Ammo, a => a.Guided) : -1;
+    public int MissilesLeft
+    {
+        get
+        {
+            int pods = Def.Turrets.FindIndex(t => t.Fixed), mi = MissileIdx;
+            return pods < 0 || mi < 0 ? 0 : Turrets[pods].Loaded[mi] + Turrets[pods].Stock[mi];
+        }
+    }
+
+    /// <summary>
+    /// What the aircraft's sight would put a missile on: an enemy vehicle within the missile's reach that it can see
+    /// (nothing in between), nearest the line of <paramref name="look"/> and within <paramref name="cone"/> degrees
+    /// of it. An air defence gun counts as much nearer the line than it is.
+    /// </summary>
+    public Vehicle? MissileLock(Vector3 look, float cone)
+    {
+        int pods = Def.Turrets.FindIndex(t => t.Fixed), mi = MissileIdx;
+        if (pods < 0 || mi < 0) return null;
+        float range = Def.Turrets[pods].Ammo[mi].Range;
+        var space = GetWorld3D().DirectSpaceState;
+        var eye = Center;
+        Vehicle? best = null;
+        float bestAng = cone;
+        foreach (var v in All)
+        {
+            if (v == this || v.Destroyed || v.Def.Air || !v.Crewed || v.CrewTeam == CrewTeam || !GodotObject.IsInstanceValid(v)) continue;
+            var to = v.TopPoint - eye;
+            float d = to.Length();
+            if (d > range || d < 300f) continue;
+            float ang = Mathf.RadToDeg(look.AngleTo(to)) * (v.Def.Kind == VKind.SPAA ? 0.6f : 1f);
+            if (ang >= bestAng) continue;
+            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, v.TopPoint, Layers.World)).Count > 0) continue;
+            bestAng = ang;
+            best = v;
+        }
+        return best;
+    }
+
+    /// <summary>Launch a missile from the pods at a vehicle, up at an angle so it climbs before it comes down on it.</summary>
+    public bool LaunchMissile(Vehicle target)
+    {
+        int pods = Def.Turrets.FindIndex(t => t.Fixed), mi = MissileIdx;
+        if (pods < 0 || mi < 0) return false;
+        var t = Turrets[pods];
+        int was = t.AmmoIdx;
+        t.AmmoIdx = mi;
+        var from = t.Muzzle.GlobalPosition;
+        var to = (target.Center - from).Normalized();
+        var right = to.Cross(Vector3.Up);
+        var dir = right.LengthSquared() > 1e-4f ? to.Rotated(right.Normalized(), Mathf.DegToRad(8f)) : to;
+        bool ok = Fire(pods, false, 0f, dir, target);
+        t.AmmoIdx = was;
+        return ok;
+    }
+
     /// <summary>Hp gone in the air: it doesn't blow up there, it falls.</summary>
     bool AirDoom(ICombatant? by)
     {
@@ -256,6 +399,33 @@ public partial class Vehicle
         _trail = Effects.I.Burn(Center, 25f);
         return true;
     }
+
+    /// <summary>A radar has had us long enough for the crew to react: the warning tone, and a moment to take it in.</summary>
+    public bool RadarLocked => Clock.Now - RadarWarning < 0.4 && Clock.Now - RadarSince > 0.7;
+
+    /// <summary>
+    /// An air defence gun's radar is tracking us (see CrewBrain.Gun). The warning receiver gives its bearing, and near
+    /// enough where it is: a bot crew calls it in, and the pilot gets out of its sight (see HeliPilot).
+    /// </summary>
+    public void RadarLock(Vehicle by)
+    {
+        double now = Clock.Now;
+        bool on = now - RadarWarning < 1.5;
+        if (!on) RadarSince = now;
+        // Two on us at once: the warning is for the nearer. (Switching back and forth between them, each switch
+        // restarted the crew's reaction, and they never reacted at all.)
+        if (!on || RadarFrom is not { } cur || !GodotObject.IsInstanceValid(cur) || cur.Destroyed || by.Center.DistanceTo(Center) < cur.Center.DistanceTo(Center))
+            RadarFrom = by;
+        RadarWarning = now;
+        if (Driver is not Bot pilot || (_rwrCalled.TryGetValue(by, out var called) && now - called < 15.0)) return;
+        _rwrCalled[by] = now;
+        Prof.Count("heli:radar lock");
+        float d = by.Center.DistanceTo(Center);
+        Radio.Report(pilot, RadioKind.Armor, by.Center + new Vector3((float)GD.Randfn(0.0, d * 0.05), 0f, (float)GD.Randfn(0.0, d * 0.05)), by);
+    }
+
+    /// <summary>When each radar that's locked on to us was last called in.</summary>
+    readonly Dictionary<Vehicle, double> _rwrCalled = new();
 
     /// <summary>Decoys: a few seconds during which an incoming missile may go for the flares instead.</summary>
     public void PopFlares()

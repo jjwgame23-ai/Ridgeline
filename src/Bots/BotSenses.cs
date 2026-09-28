@@ -127,10 +127,16 @@ public sealed class BotSenses
             // By eye, a vehicle is spotted out to ~600 m (further if it's moving or firing);
             // a crew's optics ~900 m; recon with binoculars ~1500 m.
             float range = _b.Squad?.Kind == SquadKind.Recon ? 1500f : _b.Ride != null ? 900f : 600f;
+            // Up in an aircraft, with the ground laid out below: out to 1.5 km, and in a gunship's sight (magnified,
+            // day and thermal) out to 3 km ahead.
+            if (_b.Ride is { Def.Air: true, Landed: false } mine)
+                range = mine.Def.Kind == VKind.AH && Mathf.RadToDeg((mine.Forward with { Y = 0f }).AngleTo((c - eye) with { Y = 0f })) < 60f ? 3000f : 1500f;
             if (v.Speed * v.Speed > 4f || Clock.Now - v.LastFired < 3.0) range *= 1.3f;
             // A helicopter against the sky, and you hear it long before: no need to be looking its way.
             bool flying = v.Def.Air && !v.Landed;
             if (flying) range = MathF.Max(range, 2200f);
+            // An air defence vehicle's search radar: any aircraft in the open within reach of its guns.
+            if (flying && _b.Ride is { Def.Kind: VKind.SPAA }) range = MathF.Max(range, 3000f);
             if (d < range && (_b.Ride != null || flying || Mathf.RadToDeg(look.AngleTo(c - eye)) < 110f))
                 // Hull-down, only the turret may show: check it too, and remember which part we saw.
                 foreach (var p in new[] { c, v.TopPoint })
