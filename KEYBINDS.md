@@ -41,6 +41,7 @@ The defaults, as `src/Game/Controls.cs` defines them (this file is written from 
 | Fly an FPV drone | J |  |
 | Fly an anti-tank FPV | K |  |
 | Look around (hold) | Alt |  |
+| Night vision goggles | L | Up or down, if your side issues them to your role |
 
 ## Squad
 
@@ -77,7 +78,7 @@ The defaults, as `src/Game/Controls.cs` defines them (this file is written from 
 ## Fixed keys
 
 - **Esc**: let go of the mouse; close the squad command menu.
-- **1–8**: in the squad command menu, pick a command; while waiting to respawn, pick your role.
+- **1–9, 0**: in the squad command menu, pick a command; while waiting to respawn, pick your role (0 steps through the roles past 9).
 - **1–9**: in a vehicle, change seats.
 
 ## Shared keys
