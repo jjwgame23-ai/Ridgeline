@@ -94,7 +94,7 @@ public partial class Grenade : RigidBody3D
         {
             var dir = new Vector3(Rng.NextSingle() * 2f - 1f, Rng.NextSingle() * 2f - 1f, Rng.NextSingle() * 2f - 1f).Normalized();
             if (dir.Dot(up) < -0.25f) dir = (dir - up * (dir.Dot(up) * 1.5f)).Normalized(); // mostly away from what it hit
-            Ballistics.I.Fire(from, dir, 900f + Rng.NextSingle() * 500f, 0.012f, by, 0f, weapon, ignore, silent: true, mask: Layers.World | Layers.Trees);
+            Ballistics.I.Fire(from, dir, 900f + Rng.NextSingle() * 500f, 0.012f, by, 0f, weapon, ignore, silent: true, mask: Layers.World | Layers.Trees, burst: true);
         }
         Combatants.Blast(pos, power);
         if (indirect) Squad.IndirectImpact(pos);
@@ -125,7 +125,9 @@ public partial class Grenade : RigidBody3D
                 // Somewhere on him as the burst sees him: head to feet, shoulder to shoulder.
                 var at = c.FeetPos + Vector3.Up * (0.08f + Rng.NextSingle() * (h - 0.1f)) + across * (Rng.NextSingle() * 0.5f - 0.25f);
                 // A fragment is a small jagged thing: through a door or a car's skin close to the burst, not a wall.
-                Ballistics.I.Fire(from, (at - from).Normalized(), 900f + Rng.NextSingle() * 500f, 0.012f, by, damage, weapon, ignore, silent: true, pen: 1.2f);
+                // (burst: from the burst, not the gun. A grenadier's 40 mm at 15 m, or a rocket into a wall close by, used to
+                // spare the man who fired it, while a hand grenade didn't spare its thrower.)
+                Ballistics.I.Fire(from, (at - from).Normalized(), 900f + Rng.NextSingle() * 500f, 0.012f, by, damage, weapon, ignore, silent: true, pen: 1.2f, burst: true);
             }
         }
     }

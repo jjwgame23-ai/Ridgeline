@@ -96,7 +96,7 @@ public partial class Player
         Cam.MakeCurrent();
         _ears?.ClearCurrent();
         SoundWorld.Ears = null;
-        Weapon.Visible = true;
+        Weapon.Visible = Alive; // (down or dead at the sticks: the rifle stayed floating in front of the downed view)
     }
 
     public override void _Input(InputEvent e)

@@ -84,7 +84,8 @@ public sealed partial class Squad
         double now = Clock.Now;
         if (Cross != Crossing.None)
         {
-            if (Engaged || Phase != AssaultPhase.None || now - _crossSince > 45.0) { SetCross(Crossing.None); return false; }
+            // (Nor with a ride come for us: the men went out to the near edge while the leader waited for the pickup.)
+            if (Engaged || Phase != AssaultPhase.None || now - _crossSince > 45.0 || Transport != null) { SetCross(Crossing.None); return false; }
             switch (Cross)
             {
                 case Crossing.Halt:
@@ -165,7 +166,7 @@ public sealed partial class Squad
         if (NoCross || now < _crossScanAt || now < _crossCooldown || Alive < 2 || Engaged || Phase != AssaultPhase.None || lead.Vel.LengthSquared() < 0.5f) return false;
         // Men on foot: not crews, not anyone riding.
         if (Kind is not (SquadKind.Rifle or SquadKind.Weapons or SquadKind.Recon or SquadKind.Engineer or SquadKind.AntiTank or SquadKind.Drone)) return false;
-        if (Members.Any(m => m.Alive && m.Ride != null)) return false;
+        if (Members.Any(m => m.Alive && m.Ride != null) || Transport != null || now - RideWaitAt < 5.0) return false;
         _crossScanAt = now + 2.0;
         if (!NearEnemy(lead)) return false;
         if (FindDangerArea(lead) is not var (near, far, what)) return false;

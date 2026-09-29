@@ -40,6 +40,10 @@ public sealed partial class MotorPool
         public bool Rearming;
         public int ShotsAtFiring;
         public double PickupRetryAt, PickupTimeout;
+        // Boarding: since when it has been stopped with the doors open for them, and how the men still to get in are
+        // coming on (the sum of their distances at its lowest, and when that last came down).
+        public double BoardSince = -1, ClosingAt;
+        public float ClosingBest;
         public double ShotsCheckedAt;
     }
 
@@ -220,16 +224,15 @@ public sealed partial class MotorPool
                     v.Goal = lead.FeetPos - toLead.Normalized() * 15f;
                     v.ArriveRadius = 12f;
                     v.Boarding = false;
+                    s.BoardSince = -1;
                     if (now - s.JobSince > 150.0) Release(s); // can't get to them: they'll walk
                     break;
                 }
                 v.Goal = null;
                 v.Boarding = true;
-                int aboard = sq.Members.Count(m => m.Alive && m.Ride == v);
-                // Bots, plus the player if they're close enough to be waited for.
-                int alive = sq.Members.Count(m => m.Alive && GodotObject.IsInstanceValid((GodotObject)m)
-                                                  && (m is Bot || m.FeetPos.DistanceTo(v.GlobalPosition) < 150f));
-                if (aboard >= alive || (now - s.JobSince > 50.0 && aboard * 2 >= alive) || now - s.JobSince > 90.0)
+                // The clock starts once it has pulled up.
+                if (s.BoardSince < 0 && MathF.Abs(v.Speed) > 0.5f) break;
+                if (BoardingDone(s, v, sq, now, 20.0, 90.0, out int aboard))
                 {
                     if (aboard == 0) { Release(s); break; }
                     // Drop-off: short of the objective, on the side we're coming from, somewhere it can't see (a soft-skinned truck full of men).
@@ -280,8 +283,52 @@ public sealed partial class MotorPool
         }
     }
 
+    /// <summary>
+    /// Stopped for a squad with the doors open: is it time to go? Everyone aboard, yes. Otherwise it waits, timed
+    /// from when it stopped for them (not from when it was sent: the drive or the flight out isn't boarding time),
+    /// for at least half of them, the squad leader among them, and for as long as those still out there keep coming
+    /// on. Taking fire, it goes with whoever's in; and after <paramref name="cap"/> seconds it goes whatever, so a
+    /// squad that won't come can't hold it for ever. (It went on a clock started at dispatch, with no look at who
+    /// was still out: a Merlin that had been down a few seconds lifted off with three men sprinting at it from 10 m,
+    /// and helicopters left squad leaders behind, their squads then walking back to them, away from the objective.)
+    /// </summary>
+    static bool BoardingDone(Slot s, Vehicle v, Squad sq, double now, double settle, double cap, out int aboard)
+    {
+        aboard = 0;
+        int alive = 0, coming = 0;
+        float sum = 0f;
+        foreach (var m in sq.Members)
+        {
+            if (!m.Alive || !GodotObject.IsInstanceValid((GodotObject)m)) continue;
+            if (m.Ride == v) { aboard++; alive++; continue; }
+            float d = m.FeetPos.DistanceTo(v.GlobalPosition);
+            // Bots, plus the player if they're close enough to be waited for.
+            if (m is Bot || d < 150f) alive++;
+            // Near enough to be making for it (a bot comes for a ride within 400 m; see BotBrain.Board).
+            if (m.Ride == null && !m.Downed && d < (m is Bot ? 400f : 150f)) { coming++; sum += d; }
+        }
+        if (s.BoardSince < 0) { s.BoardSince = now; s.ClosingBest = float.MaxValue; s.ClosingAt = now; }
+        if (sum < s.ClosingBest - 2f) { s.ClosingBest = sum; s.ClosingAt = now; }
+        double waited = now - s.BoardSince;
+        bool go;
+        if (aboard >= alive || waited > cap) go = true;
+        else if (now - v.LastHit < 3.0 && aboard > 0) go = true; // under fire: go with who's in
+        else if (waited < settle || aboard * 2 < alive) go = false;
+        else
+        {
+            var lead = sq.Leader;
+            bool leaderOut = lead != null && lead.Ride != v && !lead.Downed && lead.FeetPos.DistanceTo(v.GlobalPosition) < (lead is Bot ? 400f : 150f);
+            // Nobody out there has got any nearer for ten seconds: they aren't coming (in a fight, stuck, lost).
+            bool stillComing = coming > 0 && now - s.ClosingAt < 10.0;
+            go = !leaderOut && !stillComing;
+        }
+        if (go) s.BoardSince = -1;
+        return go;
+    }
+
     void Release(Slot s)
     {
+        s.BoardSince = -1;
         if (s.Cargo != null) s.Cargo.Transport = null;
         s.Cargo = null;
         s.Job = 0;
@@ -544,11 +591,15 @@ public sealed partial class MotorPool
                 if (sq == null || sq.Objective == null || sq.Alive == 0) { Release(s); s.Job = 3; break; }
                 v.AirMode = HeliMode.Land;
                 v.Goal = s.Drop;
-                if (!v.Landed || v.GlobalPosition.DistanceTo(s.Drop) > 40f) break;
+                if (!v.Landed || v.GlobalPosition.DistanceTo(s.Drop) > 40f)
+                {
+                    s.BoardSince = -1;
+                    // Never got down to them (no LZ it could reach, or held off): they'll walk.
+                    if (now - s.JobSince > 200.0) { Release(s); s.Job = 3; }
+                    break;
+                }
                 v.Boarding = true;
-                int aboard = sq.Members.Count(m => m.Alive && m.Ride == v);
-                int alive = sq.Members.Count(m => m.Alive && GodotObject.IsInstanceValid((GodotObject)m) && (m is Bot || m.FeetPos.DistanceTo(v.GlobalPosition) < 150f));
-                if (s.JobSince < now - 200.0 || aboard >= alive || (aboard * 2 >= alive && now - s.JobSince > 120.0))
+                if (BoardingDone(s, v, sq, now, 20.0, 90.0, out int aboard))
                 {
                     if (aboard == 0) { Release(s); s.Job = 3; break; }
                     var c = sq.Objective.Center;
@@ -624,13 +675,20 @@ public sealed partial class MotorPool
     /// replacement whose gunner was walking back from where the last one came down went without him, or, its
     /// pilot away too, never went at all.)
     /// </summary>
-    bool CrewComing(Slot s, Vehicle v, double now)
+    bool CrewComing(Slot s, Vehicle v, double now) => CrewComing(s, v, now, out _);
+
+    /// <param name="who">The nearest of them, the one it's waiting for.</param>
+    bool CrewComing(Slot s, Vehicle v, double now, out ICombatant who)
     {
         float d = float.MaxValue;
+        who = null!;
         if (v.GunnerSeat >= 0 && v.Occupants[v.GunnerSeat] == null && s.Crew != null)
             foreach (var m in s.Crew.Members)
                 if (m.Alive && !m.Downed && m.Ride == null && GodotObject.IsInstanceValid((GodotObject)m))
-                    d = MathF.Min(d, m.FeetPos.DistanceTo(v.GlobalPosition));
+                {
+                    float md = m.FeetPos.DistanceTo(v.GlobalPosition);
+                    if (md < d) { d = md; who = m; }
+                }
         if (d > 2500f) { s.CrewWaitSince = -1; return false; }
         if (s.CrewWaitSince < 0) { s.CrewWaitSince = now; s.CrewWaitFor = 40.0 + d / 2f; }
         return now - s.CrewWaitSince < s.CrewWaitFor;

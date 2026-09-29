@@ -121,9 +121,9 @@ void fragment() {
         QueueRedraw();
 
         _status.Text = b.Down
-            ? $"YOU'RE DOWN — {b.Summary()}\nbleeding out: {BleedOut(b)} · [X] bandage yourself · wait for a medic · hold [Space] to give up"
+            ? $"YOU'RE DOWN — {b.Summary()}\nbleeding out: {BleedOut(b)} · [{Controls.Keys("selfaid")}] bandage yourself · wait for a medic · hold [{Controls.Keys("jump")}] to give up"
             : b.Wounds.Count == 0 ? ""
-            : $"{b.Summary()}{(b.NeedsSelfAid ? $" — BLEEDING ({BleedOut(b)}) · [X] bandage" : b.Bleeding > 0.0005f ? " — still bleeding inside: find a medic" : "")}";
+            : $"{b.Summary()}{(b.NeedsSelfAid ? $" — BLEEDING ({BleedOut(b)}) · [{Controls.Keys("selfaid")}] bandage" : b.Bleeding > 0.0005f ? " — still bleeding inside: find a medic" : "")}";
     }
 
     static string BleedOut(Body b)

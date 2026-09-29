@@ -61,7 +61,7 @@ public partial class Hud : CanvasLayer
         "You're in a squad; the compass diamond points at its objective.\n" +
         "{map} map (pick a spawn there when dead). As squad leader: click a point to\n" +
         "send your squad there, {squad_follow} to call them onto you. Otherwise follow your SL.\n" +
-        "Roles: pick yours in the menu, or with 1-8 while waiting to respawn.\n" +
+        "Roles: pick yours in the menu, or while waiting to respawn with 1-9 (0 steps through the rest).\n" +
         "{gadget}: your role's tool (medic: patch up · engineer: sandbags · drone operator: quad; {drone_fpv} / {drone_fpv_at}: FPV / AT FPV).\n" +
         "Green triangles: your squad. The lines under the order tell you what the squad is doing and your part in it;\n" +
         "the green diamond is your spot. Squad leader: {squad_menu} for squad commands.\n\n" +

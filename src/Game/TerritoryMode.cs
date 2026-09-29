@@ -230,6 +230,10 @@ public partial class TerritoryMode : Node, IMatch
     /// <summary>Is the player leading their squad (picked the squad leader role)?</summary>
     public bool PlayerLeads => PlayerSquad != null && PlayerBody is { Alive: true } p && p.Kit == Role.Leader;
     readonly List<(Personality P, double At)> _respawns = new();
+    /// <summary>Where each squad last had someone on his feet: a squad wiped out comes back near there.</summary>
+    readonly Dictionary<Squad, Vector3> _lastSeenAt = new();
+    /// <summary>How long most of a squad waits for the rest of it to get somewhere it can take them on, before it comes up on its own.</summary>
+    const double SplitAfter = 90.0;
     /// <summary>A group of replacements that's just come up: the rest of that squad's due in the next few seconds go with it.</summary>
     readonly Dictionary<Squad, ((string Name, Vector3 Pos, int Point) Spawn, double Until, string How)> _joining = new();
     double _nextReinforce;
@@ -569,10 +573,15 @@ public partial class TerritoryMode : Node, IMatch
         // Replacements join their squad where it is (its leader, on foot); with nobody left, where it was sent.
         // (Coming back nearest the objective, you were often 300-900 m from your squad: ahead of it, or off to
         // one side, with a long walk to find it.)
-        var lead = Anchor(sq);
-        if (lead == null && sq?.Objective == null) return opts[0];
-        var goal = lead?.FeetPos ?? sq!.Objective!.Center;
-        return opts.OrderBy(o => (o.Pos - goal with { Y = o.Pos.Y }).Length()).First();
+        // With nobody left on his feet, near where it last was: its men come back near where they fell, not at the
+        // objective it was sent to (often a point further off than the FOB by the fight). Only with nothing known of
+        // it, where it was sent.
+        // (The leader riding counts: where the squad is, not where it got in.)
+        var lead = Anchor(sq) ?? sq?.Leader;
+        Vector3? near = lead?.FeetPos ?? (sq != null && _lastSeenAt.TryGetValue(sq, out var last) ? last : sq?.Objective?.Center);
+        if (near is not Vector3 goal) return opts[0];
+        // A FOB counts as 150 m nearer: it's built forward to put men back into the fight close to it.
+        return opts.OrderBy(o => (o.Pos - goal with { Y = o.Pos.Y }).Length() - (o.Point >= 100 ? 150f : 0f)).First();
     }
 
     float Face(Vector3 from, Vector3 to)
@@ -700,9 +709,15 @@ public partial class TerritoryMode : Node, IMatch
             if (w == null && !sq.Engaged && left <= 0) { why = "sent up"; w = BestSpawn(team, sq); }
             if (w == null)
             {
+                var waitingBots = _respawns.Where(r => _roster[r.P].Squad == sq).ToList();
+                double splitIn = waitingBots.Count > 0 ? SplitAfter - (Clock.Now - (waitingBots.Min(r => r.At) - RespawnDelay)) : SplitAfter;
+                bool mostDown = sq.Kind == SquadKind.Rifle && sq.DetachedFrom == null && sq.LinkUpWith == null && !Squads[sq.Team].Any(x => x.DetachedFrom == sq)
+                                && waitingBots.Count >= 2 && Waiting(sq) >= Standing(sq);
                 why = sq.Engaged ? $"{sq.Name} is in contact, and nobody new comes up until it's out of it"
                     : sq.Regrouping ? $"{sq.Name} is falling back to {sq.OrderPlace} to regroup"
                     : $"{sq.Name} takes you on when it reaches a spawn of ours, or you go up on your own in {left:0}s";
+                // Most of it down: the rest of you come up as a detachment after a while, fighting or not.
+                if (mostDown) why += $" (most of it is down: you come up as a detachment in {Math.Max(0, splitIn):0}s)";
                 return null;
             }
         }
@@ -764,24 +779,138 @@ public partial class TerritoryMode : Node, IMatch
     void Reinforce(double now)
     {
         _respawns.RemoveAll(r => Winner >= 0 || Out[_roster[r.P].Team] || Spent(_roster[r.P].Team));
+        for (int t = 0; t < 3; t++)
+            foreach (var s in Squads[t])
+                if ((Anchor(s) ?? s.Leader) is { } a) _lastSeenAt[s] = a.FeetPos;
+        LinkUps(now);
         foreach (var g in _respawns.Where(r => now >= r.At).GroupBy(r => _roster[r.P].Squad).ToList())
         {
             var sq = g.Key;
-            if (JoinAt(sq, g.Min(r => r.At) - RespawnDelay, out string how) is not { } w) continue;
+            double oldest = g.Min(r => r.At) - RespawnDelay;
+            var into = sq;
+            if (JoinAt(sq, oldest, out string how) is not { } w)
+            {
+                // Most of the squad down, and the rest hasn't got anywhere it can take them on in time: they come up
+                // anyway, as a detachment of their own under the senior man among them, at the spawn nearest the
+                // squad. The smaller of the two goes to join the larger; the larger gets on with the job. They merge
+                // again when they meet (LinkUps). (Otherwise they waited for as long as the survivors took to reach a
+                // spawn, and a squad down to two men in a long fight kept four men and you out of the match.)
+                if (!CanSplit(sq, g.Count(), oldest, now) || BestSpawn(sq.Team, sq) is not { } sw) continue;
+                into = Detach(sq);
+                w = sw;
+                how = "a detachment";
+                _joining[into] = (sw, now + 15.0, how);
+            }
             int n = 0;
             foreach (var r in g)
             {
                 _respawns.Remove(r);
+                if (into != sq) _roster[r.P] = (_roster[r.P].Team, into, _roster[r.P].Role);
                 SpawnBot(r.P, sq.Team, w);
                 n++;
             }
             if (IsCrew(sq)) continue;
-            Log($"[{now:0}s] {sq.Name}: {n} replacement{(n == 1 ? "" : "s")} up at {w.Name} ({how})");
-            Telemetry.Reinforce(sq, n, w.Name, how);
-            if (sq == PlayerSquad && PlayerBody is { Alive: true }) _hud.Event($"{n} replacement{(n == 1 ? "" : "s")} joined {sq.Name} at {w.Name}", 1);
+            if (into != sq) Split(sq, into, n, now);
+            Log($"[{now:0}s] {into.Name}: {n} replacement{(n == 1 ? "" : "s")} up at {w.Name} ({how})");
+            Telemetry.Reinforce(into, n, w.Name, how);
+            if (into == PlayerSquad && PlayerBody is { Alive: true }) _hud.Event($"{n} replacement{(n == 1 ? "" : "s")} joined {into.Name} at {w.Name}", 1);
             // Back up to strength: new orders.
             if (sq.Regrouping) _commandAt[sq.Team] = Math.Min(_commandAt[sq.Team], now + 2.0);
         }
+    }
+
+    /// <summary>A rifle squad with most of its men waiting (two or more), and the oldest of them waiting long enough.</summary>
+    bool CanSplit(Squad sq, int due, double oldest, double now) =>
+        sq.Kind == SquadKind.Rifle && sq.DetachedFrom == null && sq.LinkUpWith == null && !Squads[sq.Team].Any(d => d.DetachedFrom == sq)
+        && due >= 2 && Standing(sq) >= 1 && Waiting(sq) >= Standing(sq) && now - oldest >= SplitAfter;
+
+    Squad Detach(Squad sq)
+    {
+        var d = new Squad { Team = sq.Team, Number = sq.Number, Kind = sq.Kind, Suffix = "B", DetachedFrom = sq };
+        Squads[sq.Team].Add(d);
+        return d;
+    }
+
+    /// <summary>The detachment is up: who joins whom, and you with it if you're waiting too.</summary>
+    void Split(Squad sq, Squad d, int n, double now)
+    {
+        // Waiting to come back yourself: you come up with the detachment (JoinAt finds its spawn in _joining, which lasts
+        // past your own delay).
+        if (PlayerSquad == sq && PlayerBody is { Dead: true }) PlayerSquad = d;
+        bool detachmentLarger = n > Standing(sq);
+        // A squad you lead, or one you've given an order, isn't re-tasked: that's your call, and the detachment comes to you.
+        bool yours = sq == PlayerSquad && PlayerLeads || sq.PlayerOrderUntil > now;
+        if (detachmentLarger && !yours && sq.Objective != null && sq.Objective is not FollowObjective)
+        {
+            // It takes over the job; the few left go to it.
+            d.Order(sq.Site, sq.Objective, sq.Defend);
+            sq.LinkUpWith = d;
+            sq.Order(null, new FollowObjective { Target = d }, false, "Link up with", d.Name);
+        }
+        else
+        {
+            d.LinkUpWith = sq;
+            d.Order(null, new FollowObjective { Target = sq }, false, "Link up with", sq.Name);
+        }
+        var follower = sq.LinkUpWith != null ? sq : d;
+        if (follower.Leader is Bot fl) Comms.Say(fl, $"{follower.Name}, we're linking up with {follower.LinkUpWith!.Name}. Move!");
+        if (follower == PlayerSquad || follower.LinkUpWith == PlayerSquad) _hud.Center($"Squad orders: {PlayerSquad!.OrderText}", 4f);
+        Log($"[{now:0}s] {sq.Name} split: {d.Name} up with {n}, {sq.Name} has {Standing(sq)} standing; {follower.Name} links up with {follower.LinkUpWith!.Name}");
+        _commandAt[sq.Team] = Math.Min(_commandAt[sq.Team], now + 2.0);
+    }
+
+    /// <summary>
+    /// A squad split in two is one squad again once the two meet (leaders within 40 m), or as soon as either has
+    /// nobody left on his feet (what's left of it is the squad).
+    /// </summary>
+    void LinkUps(double now)
+    {
+        for (int t = 0; t < 3; t++)
+            foreach (var d in Squads[t].Where(s => s.DetachedFrom != null).ToList())
+            {
+                var p = d.DetachedFrom!;
+                var ad = Anchor(d);
+                var ap = Anchor(p);
+                bool met = ad != null && ap != null && ad.FeetPos.DistanceTo(ap.FeetPos) < 40f;
+                // Not while either is in a vehicle: the ride's carrying that squad, and would carry the men off with it (its
+                // cargo gone, nobody would be let out at the drop). They merge once they're on foot.
+                if (Riding(d) || Riding(p)) continue;
+                if (met || Standing(d) == 0 || Standing(p) == 0) Merge(d, p, now, met ? "linked up with" : "merged back into");
+            }
+    }
+
+    bool Riding(Squad s) => s.Transport != null || s.Members.Any(m => Here(m) && m.Ride != null);
+
+    void Merge(Squad d, Squad p, double now, string how)
+    {
+        // Whichever of them had the job keeps it; and if you were with the detachment, what you'd told it goes on.
+        if (p.LinkUpWith == d && d.Objective != null && d.Objective is not FollowObjective) p.Order(d.Site, d.Objective, d.Defend);
+        if (PlayerSquad == d)
+        {
+            p.FollowPlayer = d.FollowPlayer;
+            if (d.PlayerOrderUntil > now && d.Objective != null) { p.Order(d.Site, d.Objective, d.Defend); p.PlayerOrderUntil = d.PlayerOrderUntil; }
+            // Still waiting to come up with it: you come up where it did.
+            if (PlayerBody is { Dead: true } && _joining.TryGetValue(d, out var jd)) _joining[p] = jd;
+        }
+        foreach (var m in d.Members.ToList())
+        {
+            if (m is not GodotObject go || !IsInstanceValid(go)) continue;
+            if (m is Bot b) b.Squad = p;
+            if (!m.Dead) p.Join(m);
+        }
+        foreach (var k in _roster.Keys.ToList())
+            if (_roster[k].Squad == d) _roster[k] = (_roster[k].Team, p, _roster[k].Role);
+        if (PlayerSquad == d) PlayerSquad = p;
+        d.Members.Clear();
+        p.LinkUpWith = d.LinkUpWith = null;
+        Squads[d.Team].Remove(d);
+        Squad.All.Remove(d);
+        _lastSeenAt.Remove(d);
+        _joining.Remove(d);
+        _commandAt[d.Team] = Math.Min(_commandAt[d.Team], now + 2.0);
+        Log($"[{now:0}s] {d.Name} {how} {p.Name}");
+        Telemetry.Note($"{d.Name} {how} {p.Name}");
+        if (p == PlayerSquad) _hud.Event($"{d.Name} {how} {p.Name}", 1);
     }
 
     // ================================================================ orders
@@ -867,7 +996,7 @@ public partial class TerritoryMode : Node, IMatch
         var defenders = new HashSet<Squad>();
         if (Front)
         {
-            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && s.Alive > 0 && s.Transport == null && !s.Busy && !Shattered(s)).ToList();
+            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && s.Alive > 0 && s.Transport == null && !s.Busy && !Shattered(s) && s.LinkUpWith == null).ToList();
             // One in three: with only two rifle squads both attack (engineers still dig in on the front).
             int want = rifles.Count / 3;
             // A point that already has a garrison keeps it unless another is clearly worse off (a couple of enemies
@@ -896,6 +1025,12 @@ public partial class TerritoryMode : Node, IMatch
         foreach (var sq in Squads[team])
         {
             if (sq.PlayerOrderUntil > Clock.Now || sq.Kind != SquadKind.Rifle || defenders.Contains(sq)) continue;
+            // The smaller part of a split squad: it goes to join the rest (see Reinforce).
+            if (sq.LinkUpWith is { } rest && Squads[team].Contains(rest))
+            {
+                sq.Order(null, new FollowObjective { Target = rest }, false, "Link up with", rest.Name);
+                continue;
+            }
             // Shattered: it breaks off whatever it was doing, falls back to the nearest spawn of ours and takes on its
             // replacements there. (You lead yours: that's your call.)
             if (!(sq == PlayerSquad && PlayerLeads) && Shattered(sq) && RegroupAt(sq) is { } rg)
@@ -911,7 +1046,8 @@ public partial class TerritoryMode : Node, IMatch
             // Consolidating, or in the middle of a deliberate attack: leave them to finish it.
             if (sq.Busy || sq.Phase != AssaultPhase.None) { if (IndexOf(sq.Site) is >= 0 and var bi) assigned[bi]++; continue; }
             if (sq.Transport != null && IndexOf(sq.Site) is >= 0 and var ti) { assigned[ti]++; continue; } // riding there: don't change its mind mid-journey
-            var origin = sq.Position ?? Map.Bases[team];
+            // (Nobody up: from where it'll come back, near where it last was; see BestSpawn.)
+            var origin = sq.Position ?? (_lastSeenAt.TryGetValue(sq, out var lastAt) ? lastAt : Map.Bases[team]);
             int best = -1;
             float bestScore = float.MinValue;
             for (int i = 0; i < N; i++)
@@ -1300,12 +1436,28 @@ public partial class TerritoryMode : Node, IMatch
     }
 
     /// <summary>Where the player is aiming, out to ~900 m (null: at the sky).</summary>
+    /// <summary>
+    /// The squad goes back to its own leader's judgement when you go down or are killed: your last order doesn't hold it
+    /// for the rest of its five minutes. (It did, even through a regroup, with the squad down to two men.)
+    /// </summary>
+    void ReleasePlayerOrder()
+    {
+        if (PlayerSquad == null || PlayerSquad.PlayerOrderUntil <= Clock.Now) return;
+        PlayerSquad.PlayerOrderUntil = -1;
+        _commandAt[0] = Math.Min(_commandAt[0], Clock.Now + 2.0);
+    }
+
     Vector3? PlayerAimPoint()
     {
         if (PlayerBody is not { Alive: true } p) return null;
-        var from = p.Cam.GlobalPosition;
-        var to = from - p.Cam.GlobalBasis.Z * 900f;
-        var hit = p.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(from, to, Layers.World | Layers.Trees | Layers.Vehicles));
+        // Whatever you're looking through: your eyes, a vehicle's sight or camera, a drone's. (It was always the head
+        // camera, which in a vehicle stays pointing wherever you looked as you got in.)
+        var cam = p.GetViewport().GetCamera3D() ?? p.Cam;
+        var from = cam.GlobalPosition;
+        var to = from - cam.GlobalBasis.Z * 900f;
+        var q = PhysicsRayQueryParameters3D.Create(from, to, Layers.World | Layers.Trees | Layers.Vehicles);
+        if (p.Ride != null) q.Exclude = new Godot.Collections.Array<Rid> { p.Ride.GetRid() };
+        var hit = p.GetWorld3D().DirectSpaceState.IntersectRay(q);
         return hit.Count > 0 ? hit["position"].AsVector3() : null;
     }
 
@@ -1736,7 +1888,11 @@ public partial class TerritoryMode : Node, IMatch
         string zone = hit.Zone.ToString().ToLowerInvariant();
         _hud.AddKill(hit.Shooter, victim, $"downed · {zone}, {hit.Distance:0} m");
         Log($"[{Clock.Now:0}s] {hit.Shooter?.Callsign ?? "?"} downed {victim.Callsign} — {victim.Body.Summary()}");
-        if (victim == PlayerBody) _hud.Center("You're down", 2f);
+        if (victim == PlayerBody)
+        {
+            _hud.Center("You're down", 2f);
+            ReleasePlayerOrder();
+        }
     }
 
     void OnKilled(ICombatant victim, HitInfo hit)
@@ -1763,6 +1919,7 @@ public partial class TerritoryMode : Node, IMatch
         }
         if (victim == PlayerBody)
         {
+            ReleasePlayerOrder();
             _playerDiedAt = Clock.Now;
             PlayerRespawnAt = Clock.Now + RespawnDelay;
             _hud.Center($"Killed by {killer} — {zone}, {hit.Distance:0} m", 3f);

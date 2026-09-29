@@ -188,6 +188,63 @@ public sealed class CrewBrain
         return true;
     }
 
+    float _shortBy;
+
+    /// <summary>How far short of the target the round may come down before the shot isn't worth taking: a burst
+    /// in the cover right in front of him still does its work, one on a crest halfway there doesn't.</summary>
+    static float ShortLimit(float dist) => 30f + dist * 0.03f;
+
+    /// <summary>
+    /// Fly the round the gun is about to fire at <paramref name="to"/> (the superelevation the gun will put on it
+    /// included) and find what it first strikes on the way: where, how far along the line to the target, and whether
+    /// it's the hull of one of our own vehicles. Nothing before the target: null.
+    /// </summary>
+    static (Vector3 At, float Along, bool FriendHull)? FirstImpact(Vehicle v, Vector3 muzzle, Vector3 to, VWeapon w, float rangeHint, float dist)
+    {
+        if (dist < 1f || w.Speed <= 0f) return null;
+        var los = (to - muzzle) / dist;
+        var dir = los;
+        var perp = dir.Cross(Vector3.Up);
+        if (rangeHint > 0f && perp.LengthSquared() > 1e-4f) dir = dir.Rotated(perp.Normalized(), Ballistics.ZeroAngle(w.Speed, w.Drag, rangeHint));
+        var space = v.GetWorld3D().DirectSpaceState;
+        var excl = new Godot.Collections.Array<Rid> { v.GetRid() };
+        const float dt = 1f / 60f;
+        var g = new Vector3(0f, -9.81f, 0f);
+        var pos = muzzle;
+        var vel = dir * w.Speed;
+        var chordFrom = pos;
+        for (int k = 1; k <= 600; k++)
+        {
+            float sp = vel.Length();
+            var nv = vel + (g - vel * (sp * w.Drag)) * dt;
+            pos += (vel + nv) * (0.5f * dt);
+            vel = nv;
+            bool past = (pos - muzzle).Dot(los) > dist + 5f;
+            if (k % 4 != 0 && !past) continue;
+            var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(chordFrom, pos, Layers.Solid, excl));
+            if (hit.Count > 0)
+            {
+                var at = hit["position"].AsVector3();
+                bool friend = hit["collider"].As<GodotObject>() is Vehicle o && o != v && !o.Destroyed && o.CrewTeam == v.CrewTeam;
+                return (at, (at - muzzle).Dot(los), friend);
+            }
+            // A proximity-fuzed round goes off beside any aircraft in the air it passes (Ballistics.ProxBurst), ours
+            // included: one of our helicopters near the line is in the way as surely as a hull on it.
+            if (w.Prox)
+                foreach (var o in Vehicle.All)
+                {
+                    if (!o.Def.Air || o.Destroyed || o.Landed || o == v || o.CrewTeam != v.CrewTeam) continue;
+                    var seg = pos - chordFrom;
+                    float u = Mathf.Clamp((o.Center - chordFrom).Dot(seg) / MathF.Max(seg.LengthSquared(), 1e-6f), 0f, 1f);
+                    var near = chordFrom + seg * u;
+                    if (near.DistanceTo(o.Center) < 8f + o.Def.Hull.Z * 0.3f) return (near, (near - muzzle).Dot(los), true);
+                }
+            if (past) return null;
+            chordFrom = pos;
+        }
+        return null;
+    }
+
     /// <summary>How close to our own people HE may land: past most of its fragments' reach (a hand grenade's worth at the least).</summary>
     static float DangerClose(VWeapon w) => MathF.Max(14f, w.FragR * 1.3f);
 
@@ -285,16 +342,6 @@ public sealed class CrewBrain
             return;
         }
         float dist = p.DistanceTo(t.Muzzle.GlobalPosition);
-        // Aircraft: lead them by where they'll be when the rounds get there.
-        if (Target is Vehicle { Def.Air: true } ac)
-            p += ac.Velocity3 * (dist / MathF.Max(t.Weapon.Speed, 1f)) + Vector3.Up * (9.81f * MathF.Pow(dist / MathF.Max(t.Weapon.Speed, 1f), 2f) * 0.5f);
-        else if (Target is Drone tdr)
-            p += tdr.Vel * (dist / MathF.Max(t.Weapon.Speed, 1f)) + Vector3.Up * (9.81f * MathF.Pow(dist / MathF.Max(t.Weapon.Speed, 1f), 2f) * 0.5f);
-        // The lay settles over a couple of seconds, faster for better gunners.
-        _settle = MathF.Max(0f, _settle - dt * (0.4f + _b.P.Skill * 0.6f));
-        var err = _err * (dist * 0.012f * _settle + dist * 0.0015f * (1.2f - _b.P.Skill));
-        t.AimAt = p + err;
-
         bool armor = Target is Vehicle;
         // The round for the job.
         int want = -1;
@@ -305,6 +352,32 @@ public sealed class CrewBrain
         bool useCoax = !armor && t.Def.Coax != null && (want < 0 || dist < 150f);
         if (!useCoax && want >= 0 && want != t.AmmoIdx) v.SelectAmmo(ti, want);
         var w = useCoax ? t.Def.Coax! : t.Weapon;
+        var muzzle = useCoax && t.CoaxMuzzle != null ? t.CoaxMuzzle.GlobalPosition : t.Muzzle.GlobalPosition;
+        // Aircraft and drones: lead them by where they'll be when the rounds get there, with the round's real time of
+        // flight (drag slows it) and its drop over that flight, both from the fire-control solution for the round
+        // being fired. The gun is laid on that solution as it stands, so no superelevation is added on firing (see
+        // rangeHint below). (It led by distance over muzzle speed and added the drop, and the gun then added its
+        // superelevation for the range on top: at 1.3 km the 35 mm bursts went 6 m high and 7 m short of the aircraft.)
+        Vector3? mover = Target switch { Vehicle { Def.Air: true } ac => ac.Velocity3, Drone tdr => tdr.Vel, _ => null };
+        if (mover is Vector3 mv)
+        {
+            var pred = p;
+            var dir = (p - muzzle) / MathF.Max(dist, 1e-3f);
+            for (int i = 0; i < 3; i++)
+            {
+                dir = Ballistics.Launch(w.Speed, w.Drag, pred - muzzle, out float tof);
+                pred = p + mv * tof;
+            }
+            dist = pred.DistanceTo(muzzle);
+            p = muzzle + dir * dist;
+        }
+        // The lay settles over a couple of seconds, faster for better gunners. A radar-directed gun locked on is laid
+        // by its fire control, not by hand: what's left is the radar's tracking error, a milliradian or two. (It
+        // used to be laid by eye like any other gun, with up to 0.6° of slack: 14 m at 1.3 km, beyond the fuze.)
+        bool radarLaid = Target is Vehicle { Def.Air: true, Landed: false } rl && rl == _lockOn && !useCoax && w.Prox;
+        _settle = MathF.Max(0f, _settle - dt * (0.4f + _b.P.Skill * 0.6f));
+        var err = radarLaid ? _err * (dist * 0.0015f) : _err * (dist * 0.012f * _settle + dist * 0.0015f * (1.2f - _b.P.Skill));
+        t.AimAt = p + err;
         Note = $"{(armor ? "engaging armour" : "engaging infantry")} with {w.Name} at {dist:0} m";
 
         // An aircraft: the radar has to lock on to it, and the fire control work out where to put the rounds, before
@@ -322,23 +395,49 @@ public sealed class CrewBrain
             if (_lockOn != craft || now - _lockSince < RadarLockTime) { Note = $"locking on to the {craft.Def.ClassName}"; return; }
         }
 
-        float tol = armor ? 0.6f : 1.4f;
+        // The radar-laid gun holds its fire until the lay is within the fuze's reach of the solution.
+        float tol = radarLaid ? 0.25f : armor ? 0.6f : 1.4f;
         // Only fire at what we can actually see right now.
         if (armor && _b.Senses.Vehicles.Find(x => x.Who == Target) is { Visible: false }) return;
         if (v.AimError(ti) > tol || now < _nextShot) return;
+        // The range handed to the gun for its superelevation: none when the fire-control solution already has the drop in it.
+        float rangeHint = mover != null ? 0f : dist;
         if (now > _ffAt)
         {
             _ffAt = now + 0.25;
-            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, p, !useCoax && w.Explosive ? DangerClose(w) : 0f);
+            _ffBlocked = Friendly(v, muzzle, p, !useCoax && w.Explosive ? DangerClose(w) : 0f);
+            // Where the round will actually land, flown along its trajectory: a friendly hull in the way, or a crest,
+            // wall or wood that stops it short and bursts it among our own. (Only the line's first 60 m and the
+            // target point were checked: a Gepard shot down its own supply truck 118 m out in the line of fire, and a
+            // T-72's HE burst on a rise short of its infantry target, beside its own anti-tank gunner.)
+            _shortBy = 0f;
+            if (!_ffBlocked && FirstImpact(v, muzzle, p, w, t.Def.Fixed ? 0f : rangeHint, dist) is var (at, along, friendHull))
+            {
+                if (friendHull) _ffBlocked = true;
+                else
+                {
+                    _shortBy = dist - along;
+                    if (!useCoax && w.Explosive && _shortBy > 3f && Friendly(v, muzzle, at, DangerClose(w))) _ffBlocked = true;
+                }
+            }
             if (_ffBlocked) HeldForFriendlies++;
         }
         if (_ffBlocked) { Note = "holding: friendlies in the way"; return; }
         if (now > _maskAt)
         {
             _maskAt = now + 0.25;
-            _masked = Masked(v, useCoax && t.CoaxMuzzle != null ? t.CoaxMuzzle.GlobalPosition : t.Muzzle.GlobalPosition, t.Forward, dist);
+            _masked = Masked(v, muzzle, t.Forward, dist);
         }
         if (_masked) { Note = "holding: gun masked"; return; }
+        // The round would come down well short of the target (a crest or buildings between): nothing to be gained
+        // by firing, and the position wants changing, as for a masked gun.
+        if (_shortBy > ShortLimit(dist))
+        {
+            v.GunMaskedAt = now;
+            Prof.Count("gun:falls short");
+            Note = $"holding: no line to the target ({_shortBy:0} m short)";
+            return;
+        }
         // Automatic weapons fire in bursts; big guns one round at a time when laid.
         if (w.Mag > 1)
         {
@@ -346,7 +445,7 @@ public sealed class CrewBrain
             if (now > _burstUntil) return;
         }
         else _nextShot = now + _rng.RandfRange(0.4f, 1.5f); // a moment to confirm the lay
-        if (v.Fire(ti, useCoax, dist)) { if (armor) ArmorShots++; else InfantryShots++; }
+        if (v.Fire(ti, useCoax, rangeHint)) { if (armor) ArmorShots++; else InfantryShots++; }
     }
 
     /// <summary>
@@ -360,12 +459,26 @@ public sealed class CrewBrain
             _areaPickAt = now + _rng.RandfRange(2f, 4f);
             _areaPoint = at + new Vector3(_rng.RandfRange(-6f, 6f), _rng.RandfRange(-0.5f, 1.5f), _rng.RandfRange(-6f, 6f));
             int heIdx = Array.FindIndex(t.Def.Ammo, a => a.Explosive);
-            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, _areaPoint, heIdx >= 0 ? DangerClose(t.Def.Ammo[heIdx]) : 0f);
+            float blast = heIdx >= 0 ? DangerClose(t.Def.Ammo[heIdx]) : 0f;
+            _ffBlocked = Friendly(v, t.Muzzle.GlobalPosition, _areaPoint, blast);
+            // Where the round really comes down, as for a laid shot (see Gun): short of the point, among our own, or
+            // into one of our hulls.
+            _shortBy = 0f;
+            bool coax = heIdx < 0 && t.Def.Coax != null;
+            var aw = heIdx >= 0 ? t.Def.Ammo[heIdx] : coax ? t.Def.Coax! : t.Weapon;
+            var am = coax && t.CoaxMuzzle != null ? t.CoaxMuzzle.GlobalPosition : t.Muzzle.GlobalPosition;
+            float ad = _areaPoint.DistanceTo(am);
+            if (!_ffBlocked && FirstImpact(v, am, _areaPoint, aw, t.Def.Fixed ? 0f : ad, ad) is var (ip, along, friendHull))
+            {
+                _shortBy = ad - along;
+                _ffBlocked = friendHull || blast > 0f && _shortBy > 3f && Friendly(v, am, ip, blast);
+            }
         }
         t.AimAt = _areaPoint;
         Note = v.FireAtWhy;
         float dist = _areaPoint.DistanceTo(t.Muzzle.GlobalPosition);
         if (dist > Reach(t.Def, false) || _ffBlocked) { Note = v.FireAtWhy + " (holding)"; return; }
+        if (_shortBy > ShortLimit(dist)) { v.GunMaskedAt = now; Note = v.FireAtWhy + " (no line to it)"; return; }
         int he = Array.FindIndex(t.Def.Ammo, a => a.Explosive);
         if (he >= 0 && he != t.AmmoIdx) v.SelectAmmo(ti, he);
         bool main = he >= 0 || t.Def.Coax == null;

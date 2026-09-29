@@ -37,6 +37,8 @@ public partial class Player : CharacterBody3D, ICombatant
     public float Health => Body.Condition;
     HitInfo? _downHit;
     ICombatant? _lastShooter;
+    /// <summary>The last enemy to hit him: a bleed-out is his (not a teammate's stray fragment, or his own grenade, that grazed him since).</summary>
+    ICombatant? _lastEnemy;
     float _giveUpT, _selfAidT;
     public float HurtFlash { get; private set; }
     public ICombatant? KilledBy { get; private set; }
@@ -249,6 +251,10 @@ public partial class Player : CharacterBody3D, ICombatant
         float dt = (float)delta;
         _t += dt;
         HurtFlash = Mathf.MoveToward(HurtFlash, 0f, dt * 1.5f);
+        // Wearing off wherever you are. (Only on foot, it stayed at full through a ride, a drone flight or lying
+        // wounded: the screen stayed dark from a fight long over.)
+        Suppression = Mathf.MoveToward(Suppression, 0f, dt * 0.3f);
+        _shake = Mathf.MoveToward(_shake, 0f, dt * 2.2f);
         if (Piloting != null) { PilotProcess(dt); if (Piloting != null) return; }
         if (Downed) { DownedView(dt); return; }
         if (Ride != null) { VehicleProcess(dt); return; }
@@ -298,9 +304,6 @@ public partial class Player : CharacterBody3D, ICombatant
 
         float stanceSway = Stance switch { StanceKind.Crouch => 0.6f, StanceKind.Prone => 0.3f, _ => 1f };
         SwayMult = stanceSway * (Moving ? 2.6f : 1f) * (1f + (1f - Stamina) * 1.6f) * (1f + Suppression * 2.2f) * breathMult * (1f + Body.AimPenalty);
-
-        Suppression = Mathf.MoveToward(Suppression, 0f, dt * 0.3f);
-        _shake = Mathf.MoveToward(_shake, 0f, dt * 2.2f);
 
         // --- head: stance height, lean, bob, shake
         float eyeTarget = Stance switch { StanceKind.Crouch => 1.12f, StanceKind.Prone => 0.38f, _ => 1.62f };
@@ -369,7 +372,7 @@ public partial class Player : CharacterBody3D, ICombatant
 
     // ================================================================ wounds
 
-    HitInfo BleedHit() => new() { Shooter = _lastShooter, Point = ChestPos, Dir = Vector3.Down, Zone = HitZone.Torso, Weapon = "blood loss" };
+    HitInfo BleedHit() => new() { Shooter = _lastEnemy ?? _lastShooter, Point = ChestPos, Dir = Vector3.Down, Zone = HitZone.Torso, Weapon = "blood loss" };
 
     void GoDown(HitInfo hit)
     {
@@ -398,6 +401,8 @@ public partial class Player : CharacterBody3D, ICombatant
     /// <summary>Down: on the ground looking up, heartbeat in your ears. Bandage, wait, or let go.</summary>
     void DownedView(float dt)
     {
+        // Out of the sights: no scope zoom on the sky.
+        Cam.Fov = Mathf.Lerp(Cam.Fov, BaseFov, 1f - MathF.Exp(-dt * 6f));
         _eye = Mathf.MoveToward(_eye, 0.3f, dt * 2f);
         Head.Position = new Vector3(0f, _eye, 0f);
         _pitch = Mathf.MoveToward(_pitch, 10f, dt * 20f);
@@ -532,6 +537,7 @@ public partial class Player : CharacterBody3D, ICombatant
         bool wasDown = Body.Down;
         var region = Body.RegionFor(this, hit.Point, hit.Dir, hit.Zone);
         if (hit.Shooter != null) _lastShooter = hit.Shooter;
+        if (hit.Shooter != null && hit.Shooter != this && hit.Shooter.Team != Team) _lastEnemy = hit.Shooter;
         var res = Body.Hit(region, hit.Damage / Combatants.ZoneMultiplier(hit.Zone) / 50f, _rng);
         HurtFlash = Mathf.Min(1f, HurtFlash + 0.35f + hit.Damage / 100f);
         Suppression = Mathf.Min(1f, Suppression + 0.4f);
@@ -566,6 +572,7 @@ public partial class Player : CharacterBody3D, ICombatant
     void DeathCam(float dt)
     {
         _deathT = Mathf.Min(1f, _deathT + dt * 1.6f);
+        Cam.Fov = Mathf.Lerp(Cam.Fov, BaseFov, 1f - MathF.Exp(-dt * 6f));
         float e = _deathT * _deathT;
         Head.Position = new Vector3(0f, Mathf.Lerp(_eye, 0.25f, e), 0f);
         Cam.RotationDegrees = new Vector3(Mathf.Lerp(0f, 25f, e), 0f, Mathf.Lerp(0f, 75f, e));

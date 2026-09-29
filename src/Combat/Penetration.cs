@@ -127,7 +127,10 @@ public static class Penetration
         float cap = p.Pen * MathF.Pow(speed / p.MuzzleSpeed, 1.2f);
         if (cost >= cap) return false;
         float left = 1f - cost / cap;
-        float v2 = speed * MathF.Sqrt(left);
+        // Out with what it had left: at the next thing it strikes, capability (which goes as speed^1.2) is cap - cost.
+        // (With v2 = speed*sqrt(left) it kept cap*left^0.6, more than it had, and went through a second car, or a
+        // car and then a wall, that it shouldn't have.)
+        float v2 = speed * MathF.Pow(left, 1f / 1.2f);
         if (v2 < 150f) return false;
         // It comes out a little off line, more the more it had to push through.
         float off = Mathf.DegToRad(1.5f + 9f * (1f - left)) * MathF.Sqrt(Random.Shared.NextSingle());

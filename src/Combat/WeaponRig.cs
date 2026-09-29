@@ -58,7 +58,7 @@ public partial class WeaponRig : Node3D
         model.Position = d.HipOffset;
         return new Slot
         {
-            Def = d, Ammo = d.MagSize + (d.MagSize > 1 ? 1 : 0), Mags = new Magazines(d.MagSize, d.Mags), Auto = d.AutoCapable,
+            Def = d, Ammo = d.MagSize + d.Chambered, Mags = new Magazines(d.MagSize, d.Mags), Auto = d.AutoCapable,
             Zero = Ballistics.ZeroAngle(d.MuzzleVel, d.Drag, d.ZeroM),
             Model = model, Muzzle = muzzle,
         };
@@ -137,7 +137,7 @@ public partial class WeaponRig : Node3D
         if ((tap || quick) && Reloading && _reloadKeep && _reloadStage == 0 && _t - _reloadPressT < 0.45f)
         {
             _reloadKeep = false;
-            if (Magazines.InMag(s.Ammo, d.MagSize) > 0)
+            if (Magazines.InMag(s.Ammo, d) > 0)
             {
                 float cut = Magazines.RetainTime * P.Body.ReloadMult;
                 _reloadT = MathF.Max(0.05f, _reloadT - cut);
@@ -145,11 +145,11 @@ public partial class WeaponRig : Node3D
             }
             Hud.Toast("Dropping the mag", 1f);
         }
-        else if ((tap || quick) && !Busy && s.Mags.Worth(s.Ammo, d.MagSize))
+        else if ((tap || quick) && !Busy && s.Mags.Worth(s.Ammo, d))
         {
             _reloadEmpty = s.Ammo == 0;
             _reloadKeep = !quick;
-            bool stow = _reloadKeep && Magazines.InMag(s.Ammo, d.MagSize) > 0;
+            bool stow = _reloadKeep && Magazines.InMag(s.Ammo, d) > 0;
             _reloadDur = ((_reloadEmpty ? d.ReloadEmpty : d.Reload) + (stow ? Magazines.RetainTime : 0f)) * P.Body.ReloadMult;
             _reloadT = _reloadDur;
             _reloadStage = 0;
@@ -169,8 +169,8 @@ public partial class WeaponRig : Node3D
             {
                 // The fullest magazine goes on; the one that came off is kept or dropped (see Magazines). A round
                 // stays chambered through a reload that isn't from empty.
-                int got = s.Mags.Swap(Magazines.InMag(s.Ammo, d.MagSize), _reloadKeep);
-                s.Ammo = _reloadEmpty || d.MagSize == 1 ? got : got + 1;
+                int got = s.Mags.Swap(Magazines.InMag(s.Ammo, d), _reloadKeep);
+                s.Ammo = _reloadEmpty || d.Chambered == 0 ? got : got + 1;
             }
             reloadTilt = Mathf.Sin(Mathf.Clamp(prog, 0f, 1f) * Mathf.Pi);
         }

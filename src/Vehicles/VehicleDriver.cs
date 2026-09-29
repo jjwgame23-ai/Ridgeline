@@ -265,7 +265,13 @@ public static class VehicleDriver
         // Stuck nose to nose: one of us (always the same one) backs off and finds another way. Against something that
         // isn't going anywhere (parked, empty, a wreck), always us. (It went by id alone, and a tank that had drawn the
         // higher id sat behind a parked truck at base, "going round" it, for the rest of the match.)
-        bool parked = blocker != null && (blocker.Destroyed || blocker.Driver == null || blocker.Goal == null || blocker.Boarding);
+        // A crewed vehicle sitting where it was sent (an idle truck on its park spot) isn't going anywhere either; and
+        // one that hasn't moved at all while we've waited a good while is as good as parked, whatever it's doing.
+        // (An idle transport truck with its driver aboard and its park spot as its goal didn't count as parked, and
+        // the logistics truck behind it, holding the higher id, waited on it for five minutes and never went out.)
+        bool parked = blocker != null && (blocker.Destroyed || blocker.Driver == null || blocker.Goal == null || blocker.Boarding
+                                          || blocker.Arrived && MathF.Abs(blocker.Speed) < 0.5f
+                                          || now - d.WaitSince > 15.0 && MathF.Abs(blocker.Speed) < 0.5f);
         if (now - d.WaitSince > 5.0 && blocker != null && (parked || v.GetInstanceId() < blocker.GetInstanceId()))
         {
             d.WaitSince = -1;

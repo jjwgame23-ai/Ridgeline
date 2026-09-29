@@ -34,9 +34,14 @@ public sealed partial class MotorPool
 
     public static bool Carrier(Vehicle v) => v.Def.Kind is VKind.IFV or VKind.APC && v.Def.Passengers >= 4;
 
-    /// <summary>Does this rifle squad have its own carrier (so the trucks leave it alone)?</summary>
+    /// <summary>
+    /// Does this rifle squad have its own carrier (so the trucks leave it alone)? Not while that carrier is sitting out
+    /// the wait for a gunner walking back to it: it can't come for them, so a truck may. (A carrier waiting ten minutes
+    /// for its gunner kept the trucks off its squad the whole time.)
+    /// </summary>
     public bool Mechanised(Squad sq) =>
-        Slots.Any(s => s.Crew?.Supports == sq && s.Live is { Destroyed: false } lv && Carrier(lv));
+        Slots.Any(s => s.Crew?.Supports == sq && s.Live is { Destroyed: false } lv && Carrier(lv)
+                       && !(s.CrewWaitSince >= 0 && Clock.Now - s.CrewWaitSince < s.CrewWaitFor));
 
     void Combat(Slot s, Vehicle v, double now)
     {
@@ -47,10 +52,35 @@ public sealed partial class MotorPool
         if (ReactToHit(s, v, inf, now)) return;
         // The whole crew aboard before setting off: no gunner, no gun. (It waited only for one within 300 m, and for
         // him for ever: a gunner walking back from further off was left behind, one stuck by the base kept it there.)
-        if (now - v.LastHit > 5.0 && CrewComing(s, v, now))
+        // With the squad aboard it carries on and puts them down first: they're what it's there for, and a man walking
+        // up from base won't catch it anyway.
+        if (now - v.LastHit > 5.0 && s.Mech != 2 && CrewComing(s, v, now, out var coming))
         {
-            v.Goal = null;
+            // Not coming for the rifle squad now: let it go, so it walks on (or takes a truck) instead of halting for a
+            // ride that's parked waiting for its gunner. (The pickup stayed claimed the whole wait, ten minutes for a
+            // man walking a kilometre, and the squad stopped every minute for it.)
+            if (s.Mech == 1)
+            {
+                if (DuelMode.Verbose && inf != null) GD.Print($"[{now:0}s] {v.Def.Name} can't pick up {inf.Name}: waiting for its gunner");
+                EndCarry(s, v, inf);
+                s.PickupRetryAt = now + 30.0;
+            }
             v.FireAt = null;
+            // A long walk for him: go and meet him on the way (he's making for us), rather than sit and wait out the
+            // whole of it. Close by, stay put for him to climb in.
+            float d = coming.FeetPos.DistanceTo(v.GlobalPosition);
+            if (d > 250f && v.Driver is Bot)
+            {
+                var toHim = (coming.FeetPos - v.GlobalPosition) with { Y = 0f };
+                v.Goal = Valley.ClosestForVehicles(coming.FeetPos - toHim.Normalized() * 20f);
+                v.ArriveRadius = 15f;
+                v.Task = $"going to meet {coming.Callsign}, the gunner";
+            }
+            else
+            {
+                v.Goal = null;
+                v.Task = "waiting for the gunner";
+            }
             return;
         }
         if (now < s.ScootUntil) { v.Goal = s.ScootTo; v.ArriveRadius = 4f; return; }
@@ -172,6 +202,7 @@ public sealed partial class MotorPool
                     v.Goal = lead.FeetPos - toLead.Normalized() * 12f;
                     v.ArriveRadius = 10f;
                     v.Boarding = false;
+                    s.BoardSince = -1;
                     if (now - s.JobSince > s.PickupTimeout)
                     {
                         // Can't get to them: they'll walk, and we'll try again later.
@@ -184,9 +215,9 @@ public sealed partial class MotorPool
                 }
                 v.Goal = null;
                 v.Boarding = true;
-                int aboard = inf.Members.Count(m => m.Alive && m.Ride == v);
-                int alive = inf.Members.Count(m => m.Alive && GodotObject.IsInstanceValid((GodotObject)m) && (m is Bot || m.FeetPos.DistanceTo(v.GlobalPosition) < 150f));
-                if (aboard >= alive || (now - s.JobSince > 45.0 && aboard * 2 >= alive) || now - s.JobSince > 80.0)
+                // Timed from when it has pulled up, as for the trucks (MotorPool.BoardingDone).
+                if (s.BoardSince < 0 && MathF.Abs(v.Speed) > 0.5f) return true;
+                if (BoardingDone(s, v, inf, now, 20.0, 80.0, out int aboard))
                 {
                     if (aboard == 0) { EndCarry(s, v, inf); return false; }
                     s.Drop = FindDismount(s.Team, obj.Center, v.GlobalPosition, v.Def.Kind == VKind.IFV ? 180f : 260f, v.Def.Kind == VKind.IFV ? 300f : 380f);
@@ -252,6 +283,7 @@ public sealed partial class MotorPool
     void EndCarry(Slot s, Vehicle v, Squad? inf)
     {
         if (inf != null && inf.Transport == v) inf.Transport = null;
+        s.BoardSince = -1;
         foreach (var o in v.Occupants.ToArray())
             if (o is Bot b && b.Squad != s.Crew && b.Squad == inf) v.Leave(b);
         v.Boarding = false;

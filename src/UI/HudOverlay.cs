@@ -65,12 +65,17 @@ public partial class HudOverlay : Control
         if (sq == null) return;
         foreach (var c in sq.Members)
         {
-            if (c is Player || !c.Alive || !GodotObject.IsInstanceValid((GodotObject)c) || c.Ride != null) continue;
+            // The downed too, in red: they're the ones to look for. (Alive is false for a man who's down, so they were
+            // never marked, and the red below was never drawn.)
+            if (c is Player || c.Dead || !GodotObject.IsInstanceValid((GodotObject)c) || c.Ride != null) continue;
             var head = c.FeetPos + Vector3.Up * 2.15f;
             if (cam.IsPositionBehind(head)) continue;
             float d = head.DistanceTo(cam.GlobalPosition);
             if (d > 600f) continue;
             var q = cam.UnprojectPosition(head);
+            // Right beside the camera the projection runs off to huge values, and the marker's triangle can't be drawn
+            // (Godot: "triangulation failed", every frame).
+            if (!float.IsFinite(q.X) || !float.IsFinite(q.Y) || !GetViewportRect().Grow(200f).HasPoint(q)) continue;
             float s = Mathf.Clamp(9f - d * 0.02f, 4f, 9f);
             var col = c.Downed ? new Color(1f, 0.4f, 0.3f, 0.9f) : c == sq.Leader ? new Color(0.6f, 1f, 0.5f, 0.95f) : new Color(0.35f, 0.95f, 0.35f, 0.85f);
             DrawColoredPolygon(new[] { q + new Vector2(-s, -s * 1.3f), q + new Vector2(s, -s * 1.3f), q }, col);

@@ -104,6 +104,11 @@ public sealed partial class Squad
 
         if (Objective == null) return Make("No orders", "Stay with the squad.");
         bool there = ((Objective.Center - me.FeetPos) with { Y = 0f }).Length() < Objective.Radius;
+        // Split up: the smaller part goes to join the rest.
+        if (_verb == "Link up with")
+            return there
+                ? Make($"Linking up with {_what}", "Nearly there: stay with the group.")
+                : Make($"Linking up with {_what}, {B(Objective.Center)}", lead ? "Take them to the rest of the squad." : "Keep your place: we join the rest of the squad there.");
         // Falling back to take on replacements.
         if (_verb == "Regroup at")
             return there || ((Objective.Center - me.FeetPos) with { Y = 0f }).Length() < 40f

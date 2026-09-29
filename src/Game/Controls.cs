@@ -243,7 +243,7 @@ public static class Controls
         }
         sb.Append("## Fixed keys\n\n");
         sb.Append("- **Esc**: let go of the mouse; close the squad command menu.\n");
-        sb.Append("- **1–8**: in the squad command menu, pick a command; while waiting to respawn, pick your role.\n");
+        sb.Append("- **1–9, 0**: in the squad command menu, pick a command; while waiting to respawn, pick your role (0 steps through the roles past 9).\n");
         sb.Append("- **1–9**: in a vehicle, change seats.\n\n");
         sb.Append("## Shared keys\n\n");
         sb.Append("Some keys do two jobs where the two can never be wanted at once (a key for a weapon on foot and a seat in a vehicle, say). ");

@@ -75,8 +75,8 @@ public sealed class Magazines
     public const float RetainTime = 0.6f;
 
     /// <summary>Rounds in the magazine on the gun, given what's in the weapon (one of them may be chambered).</summary>
-    public static int InMag(int ammo, int magSize) => magSize == 1 ? 0 : Math.Max(0, ammo - 1);
+    public static int InMag(int ammo, WeaponDef d) => d.MagSize == 1 ? 0 : Math.Max(0, ammo - d.Chambered);
 
     /// <summary>Is there a magazine worth changing to (fuller than the one on the gun)? A single-shot weapon only when it's empty.</summary>
-    public bool Worth(int ammo, int magSize) => Any && (magSize == 1 ? ammo == 0 : Best > InMag(ammo, magSize));
+    public bool Worth(int ammo, WeaponDef d) => Any && (d.MagSize == 1 ? ammo == 0 : Best > InMag(ammo, d));
 }

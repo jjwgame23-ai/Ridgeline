@@ -163,10 +163,12 @@ public partial class Player
         var v = Ride!;
         bool captured = Input.MouseMode == Input.MouseModeEnum.Captured;
         if (captured && Input.IsActionJustPressed("use")) { v.Leave(this); return; }
+        // A number that just picked a squad command isn't a seat as well. (Ordering a dismount put you in the driver's seat.)
+        bool menu = TerritoryHud.MenuOpen || Engine.GetProcessFrames() - TerritoryHud.MenuUsedFrame <= 1;
         for (int i = 0; i < Math.Min(9, v.Def.Seats.Count); i++)
         {
             bool down = captured && Input.IsPhysicalKeyPressed(Key.Key1 + i);
-            if (down && !_numWas[i] && i != SeatIdx)
+            if (down && !_numWas[i] && i != SeatIdx && !menu)
             {
                 if (v.Occupants[i] == null) v.Enter(this, i);
                 else Hud.Toast("That seat's taken", 1f);
@@ -175,6 +177,9 @@ public partial class Player
         }
         if (Ride == null) return;
         var seat = v.Def.Seats[SeatIdx];
+        // Bandaging yourself on the way (X): anywhere but at an aircraft's controls, where X is the flares. (It did
+        // nothing in any vehicle, while the screen said "[X] bandage".)
+        if (!(seat.Role == global::Ridgeline.SeatRole.Driver && v.Def.Air)) SelfAidInput(captured, dt);
         var cam = _vcam!;
         bool sight = seat.Role == global::Ridgeline.SeatRole.Gunner && !seat.Exposed;
         v.OwnView(sight);

@@ -86,7 +86,10 @@ public sealed class BotBrain
     bool _popPeek, _crouchLos = true, _proneLos, _exposedCrouched;
     /// <summary>Flat on the ground for incoming (a mortar bomb whistling down close by) until this time.</summary>
     double _hitTheDirtUntil = -1, _proneBlockedUntil = -1;
-    double _popUntil, _popAt, _losCheckAt;
+    double _popUntil, _popAt, _losCheckAt, _targetSince, _scanNextAt;
+    float _scanAngle;
+    int _strafeSide;
+    bool _nearTube;
     bool _reacted, _wasVisible, _peeking, _autoBurst, _hasWaypoint, _pausing, _preferHead, _holdFire, _checkedSpawn;
     int _burstLeft;
     float _burstPause, _partT;
@@ -185,7 +188,14 @@ public sealed class BotBrain
             if (!t.Who.Alive || (!t.Confirmed && t.Awareness < 0.35f)) continue;
             float d = _b.FeetPos.DistanceTo(t.LastKnownPos);
             double age = Now - Math.Max(t.LastSeen, t.LastHeard);
-            float score = (t.Visible ? 100f : 0f) - d * 0.3f - (float)age * 2f + (t == Target ? 15f : 0f);
+            // The man he's fighting counts as in sight through a moment behind something (a head bob, a wall he
+            // ducks behind), and the longer he's been on him the more it takes to switch; turning onto someone else
+            // costs, the further round the more. (A target hidden for half a second lost all 100, and the aim
+            // swung 60-110 degrees to someone far off and back again, several times a minute.)
+            bool current = t == Target;
+            bool seen = t.Visible || (current && Now - t.LastSeen < 1.0);
+            float score = (seen ? 100f : 0f) - d * 0.3f - (float)age * 2f
+                        + (current ? 15f + MathF.Min(20f, (float)(Now - _targetSince) * 4f) : -0.2f * Mathf.RadToDeg(_b.Aim.Dir.AngleTo(t.LastKnownPos - _b.EyePos)));
             // Infantry protect their armour: an enemy with a rocket near one of our vehicles goes first.
             if (t.Who.Role is Role.AntiTank or Role.HeavyAT && ArmourNear(t.LastKnownPos)) score += 40f;
             if (score <= bestScore) continue;
@@ -204,7 +214,9 @@ public sealed class BotBrain
             _envAt = Now + _rng.RandfRange(2.5f, 4f);
             Env = Surroundings.At(_b.GetWorld3D().DirectSpaceState, _b.FeetPos);
         }
+        var was = Target;
         Target = PickTarget();
+        if (Target != was) _targetSince = Now;
         var t = Target;
         bool vis = t is { Visible: true };
         if (t != null) _lastContact = Now;
@@ -354,6 +366,13 @@ public sealed class BotBrain
 
         // ---- Known but not visible.
         double since = Now - Math.Max(t.LastSeen, t.LastHeard);
+        // Out of sight for a moment (a head bob, a blade of grass across his line): still in the fight, on the spot
+        // where the man was. (One tick without a line flipped Engage to Hold: he stood up, stopped moving, and knelt
+        // again a fraction of a second later.)
+        if (State == BotState.Engage && Now - t.LastSeen < 0.7) return;
+        // In cover from armour close by: he stays in it while that lasts, whoever else is about. (With any infantry
+        // known of, "objective first" walked him straight back out, and six seconds later back in again.)
+        if (Now < _armorWaryUntil && State is BotState.InCover or BotState.TakeCover) return;
 
         // With an objective, don't get dragged off chasing noises: an unseen enemy that isn't
         // near the objective or right on top of us isn't worth leaving it for. (A drill's flanking
@@ -393,6 +412,7 @@ public sealed class BotBrain
             case BotState.Engage:
                 SetState(BotState.Hold, "lost sight");
                 _holdUntil = Now + HuntPatience(dist);
+                _popAt = Now + _rng.RandfRange(2f, 4f); // a real pause before the first look over the top
                 // Keep them pinned where they ducked.
                 if (Now >= _suppressUntil && Now - t.LastSeen < 1.0 && _rng.Randf() < 0.3f + _b.P.Aggression * 0.4f)
                     _suppressUntil = Now + _rng.RandfRange(1.5f, 3f);
@@ -838,7 +858,11 @@ public sealed class BotBrain
         // tube is swung round onto him, rather than shuffling round after it every time it traverses.
         var fromTube = (_b.FeetPos - v.GlobalPosition) with { Y = 0f };
         // (His post can fall just inside the tube's own footprint, and he kept pushing at it, stuck, beside the tube.)
-        bool byTube = fromTube.Length() < 2.6f && fromTube.Dot(fwd) < 0.8f;
+        // Once there, he stays unless he's well away or the tube swings onto him: the post moves a little each time the
+        // tube traverses, and a nudge from the gunner beside him put him past 2.6 m. (He got up, stepped back and knelt
+        // again every couple of seconds for as long as the tube was in action.)
+        bool byTube = fromTube.Length() < (Note == AssistantGunner ? 3.6f : 2.6f) && fromTube.Dot(fwd) < 0.8f;
+        _nearTube = fromTube.Length() < 5f;
         if (d < 0.8f || byTube)
         {
             if (Note != AssistantGunner) { _b.Stop(); _hasWaypoint = false; SetState(BotState.Advance, AssistantGunner); }
@@ -1283,6 +1307,11 @@ public sealed class BotBrain
         float reach = t != null && Now - t.LastSeen < 8.0 ? 25f : 60f;
 
         // Anyone: a bleed you can stop yourself, you stop — straight away if it's arterial.
+        // Unless it's spurting, he gets to cover first: finishes the dash, gets behind something, then sees to it. (He
+        // stopped dead wherever it came to him, mid-sprint across the open, the man who hit him still shooting.)
+        bool arterial = _b.Body.Bleeding > 0.02f;
+        if (_b.Body.NeedsSelfAid && !arterial && (State is BotState.TakeCover or BotState.Evade && !_b.Arrived
+            || Now - _lastHurt < 2.0 && t != null && !CoverFinder.Protected(_b, _b.FeetPos, ThreatEye(t), _b.Crouched))) return false;
         if (_b.Body.NeedsSelfAid)
         {
             _aidKind = 3;
@@ -1323,6 +1352,29 @@ public sealed class BotBrain
             if (best != _b) _b.MoveTo(best.FeetPos, MoveMode.Sprint);
             return true;
         }
+
+        // Buddy aid: one of ours down and bleeding, no medic coming (ours is down himself, or dead, or far off), and it's
+        // quiet: the nearest of us goes and stops the bleeding. Only a medic gets him up again. (Nobody but the medic
+        // ever went to a man who was down: with him hit too, squads walked past their own wounded, "objective first".)
+        if (Sq != null && Role is not (Role.Medic or Role.Ammo) && _b.Ride == null)
+            foreach (var c in Sq.Members)
+            {
+                if (c == _b || !c.Downed || c.Dead || c.Ride != null || !c.Body.NeedsSelfAid || c is not GodotObject go || !GodotObject.IsInstanceValid(go)) continue;
+                float d = c.FeetPos.DistanceTo(_b.FeetPos);
+                if (d > MathF.Min(40f, reach)) continue;
+                if (_claimed.TryGetValue(c, out var by) && by != _b && GodotObject.IsInstanceValid(by) && by.Alive && by.Brain.State == BotState.Aid) continue;
+                // A medic of ours on his feet and near enough is coming for him.
+                if (Sq.Members.Any(m => m is Bot { Role: Role.Medic, Alive: true } mb && mb.Medkits > 0 && mb.FeetPos.DistanceTo(c.FeetPos) < 150f)) continue;
+                // The nearest of us goes, not everyone.
+                if (Sq.Members.Any(m => m != _b && m != c && m is Bot { Alive: true } ob && ob.Role is not (Role.Medic or Role.Ammo) && ob.Ride == null && ob.FeetPos.DistanceTo(c.FeetPos) < d - 1f)) continue;
+                _patient = c;
+                _claimed[c] = _b;
+                _aidKind = 4;
+                _aidUntil = 0;
+                SetState(BotState.Aid, $"to help {c.Callsign}");
+                _b.MoveTo(c.FeetPos, MoveMode.Sprint);
+                return true;
+            }
 
         if (Role == Role.Engineer && _b.Sandbags > 0 && InZone && Objective is SiteObjective && (Sq?.Kind == SquadKind.Engineer || Sq?.Defend == true)
             && FortifySpot(out _buildAt, out _buildFacing))
@@ -1370,10 +1422,21 @@ public sealed class BotBrain
     }
 
     /// <summary>How badly someone needs a medic: down beats bleeding beats worn.</summary>
-    static float MedicNeed(ICombatant c) =>
-        c.Downed ? 120f + c.Body.Bleeding * 2000f
-        : c.Body.Bleeding > 0.001f ? 40f + c.Body.Bleeding * 2000f
-        : c.Hp < 70f ? 70f - c.Hp : 0f;
+    /// <summary>
+    /// What a medic can still do for him: get him up, dress open wounds, top up lost blood. Not tissue damage (a
+    /// medkit doesn't mend that), nor a dressed wound still bleeding inside (that's surgery). (Both used to count, so a
+    /// man a medic had just treated still "needed" him: the medic treated him over and over, a kit every few
+    /// seconds, until he had none left for the next man down.)
+    /// </summary>
+    static float MedicNeed(ICombatant c)
+    {
+        var body = c.Body;
+        if (c.Downed) return 120f + body.Bleeding * 2000f;
+        float open = 0f;
+        foreach (var w in body.Wounds) if (!w.Treated) open += w.Bleed;
+        if (open > 0.001f) return 40f + open * 2000f;
+        return body.Blood < 0.7f ? (0.7f - body.Blood) * 200f : 0f;
+    }
 
     bool ContinueAid(Threat? t, bool vis)
     {
@@ -1416,7 +1479,7 @@ public sealed class BotBrain
         }
         var who = _patient;
         if (who == null || who.Dead || !GodotObject.IsInstanceValid((GodotObject)who)
-            || (_aidKind == 0 ? MedicNeed(who) <= 0f : Carried(who) >= 0.99f || !who.Alive))
+            || (_aidKind == 0 ? MedicNeed(who) <= 0f : _aidKind == 4 ? !who.Downed || !who.Body.NeedsSelfAid : Carried(who) >= 0.99f || !who.Alive))
         {
             SetState(BotState.Advance, "done");
             _hasWaypoint = false;
@@ -1432,13 +1495,14 @@ public sealed class BotBrain
         _b.Stop();
         if (_aidUntil == 0)
         {
-            _aidUntil = Now + (_aidKind == 0 ? (who.Downed ? 6.0 : 3.0) : 1.2);
-            if (who is Player) Hud.Toast(_aidKind == 0 ? $"{_b.Callsign} is patching you up" : $"{_b.Callsign} is handing you ammo", 2f);
-            Say(_aidKind == 0 ? (who == _b ? "Patching myself up." : who.Downed ? "Stay with me! I've got you!" : "Hold still, I've got you!") : "Here, take these mags!");
+            _aidUntil = Now + (_aidKind == 0 ? (who.Downed ? 6.0 : 3.0) : _aidKind == 4 ? 5.0 : 1.2);
+            if (who is Player) Hud.Toast(_aidKind == 0 ? $"{_b.Callsign} is patching you up" : _aidKind == 4 ? $"{_b.Callsign} is stopping your bleeding" : $"{_b.Callsign} is handing you ammo", 2f);
+            Say(_aidKind == 0 ? (who == _b ? "Patching myself up." : who.Downed ? "Stay with me! I've got you!" : "Hold still, I've got you!") : _aidKind == 4 ? "Hang on, I've got the bleeding! Medic!" : "Here, take these mags!");
             SoundWorld.I.Emit(Snd.Bag, _b.EyePos, 0f, _b);
         }
         if (Now < _aidUntil) return true;
         if (_aidKind == 0) { if (who.Downed) Revives++; who.Heal(55f); _b.Medkits--; Heals++; }
+        else if (_aidKind == 4) { who.Body.SelfAid(); Prof.Count("aid:buddy aid"); }
         else if (who.Resupply()) Resupplies++;
         _aidUntil = 0;
         _nextAidCheck = Now; // look for the next one straight away
@@ -1598,7 +1662,15 @@ public sealed class BotBrain
                 _exposedCrouched = true;
                 break;
             case BotState.TakeCover:
-                if (_b.Arrived)
+                if (_b.Arrived && Cover == null && Note.StartsWith("incoming"))
+                {
+                    // Off the impact area with nothing picked to get behind: flat where he is for a few seconds. (He
+                    // was "in cover" behind nothing, then straight up and walking about in the open while rounds fell.)
+                    _hitTheDirtUntil = Now + _rng.RandfRange(4f, 8f);
+                    SetState(BotState.Hold, "down, off the impact area");
+                    _holdUntil = _hitTheDirtUntil;
+                }
+                else if (_b.Arrived)
                 {
                     SetState(BotState.InCover, "in cover");
                     _hideUntil = Now + _rng.RandfRange(0.15f, 0.6f);
@@ -1609,10 +1681,14 @@ public sealed class BotBrain
             case BotState.Aid: ActAid(); break;
             case BotState.Hold:
                 _b.Stop();
-                if (!vis && Now > _popAt)
+                // Up for a look now and then, when there's someone to look for: a few seconds scanning, then down for
+                // a while. Not with nobody about, nor for a man flying a drone or dressing his own wound. (Every 1.5-3 s,
+                // whatever: men holding with no enemy for a kilometre, drone operators at their screens, bobbed up and
+                // down like targets on a range.)
+                if (!vis && t != null && Now > _popAt && !Note.Contains("drone"))
                 {
-                    _popUntil = Now + _rng.RandfRange(0.6f, 1.2f);
-                    _popAt = Now + _rng.RandfRange(1.5f, 3f);
+                    _popUntil = Now + _rng.RandfRange(2f, 4f);
+                    _popAt = _popUntil + _rng.RandfRange(6f, 12f);
                 }
                 break;
         }
@@ -1644,6 +1720,10 @@ public sealed class BotBrain
 
     void ActAdvance()
     {
+        // Heading for a vehicle (ours, or the ride come for us), or shuffling round the tube: that's where he's going, and
+        // Board steers him. (The march, the crossing and the wait for the squad below re-ordered or stopped him every
+        // frame: a squad leader crawled at 0.4 m/s beside his helicopter, and it left without him.)
+        if (Note is "to the transport" or "to the vehicle" or ToTheTube) return;
         // Our ride's on its way: wait for it here (the squad holds round the leader) rather than walk away from it.
         // However far off it is (the pickup was only started because it's worth the wait), but only while it's
         // actually getting closer: a ride that's stuck, or busy elsewhere, gets 25 s to show it's coming, then the
@@ -1938,13 +2018,17 @@ public sealed class BotBrain
             _buddyHold = true; // moving: the buddy's doing the shooting
         }
         // Up close people don't stand still: short strafes, and the aggressive ones close the distance.
+        // One side, kept for a second or three (the other way only when he's stuck or has been at it a while). (A
+        // fresh coin toss every 0.3-0.9 s had him reversing before he'd got anywhere: a video-game dodge.)
+        if (_strafe != Vector3.Zero && Now > _strafeUntil - 1.0 && _b.Vel.LengthSquared() < 0.1f) { _strafeSide = -_strafeSide; _strafeUntil = Now; }
         if (Now > _strafeUntil)
         {
-            _strafeUntil = Now + _rng.RandfRange(0.3f, 0.9f);
+            _strafeUntil = Now + _rng.RandfRange(1.5f, 3f);
             var to = t.Who.FeetPos - _b.FeetPos;
             to.Y = 0f;
             to = to.Normalized();
-            var perp = new Vector3(-to.Z, 0f, to.X) * (_rng.Randf() < 0.5f ? -1f : 1f);
+            if (_strafeSide == 0 || _rng.Randf() < 0.25f) _strafeSide = _rng.Randf() < 0.5f ? -1 : 1;
+            var perp = new Vector3(-to.Z, 0f, to.X) * _strafeSide;
             float push = d > 7f ? _b.P.Aggression - 0.25f : -0.3f;
             _strafe = _rng.Randf() < 0.12f ? Vector3.Zero : (perp + to * push).Normalized();
         }
@@ -1985,8 +2069,8 @@ public sealed class BotBrain
             case BotState.Evade:
                 // Down behind it; or, with nothing to get behind, flat, as low as can be, till it goes off.
                 return !_b.Arrived ? Posture.Stand : Note.EndsWith("cover") ? Posture.Crouch : Posture.Prone;
-            case BotState.Advance when Note == AssistantGunner:
-                return Posture.Crouch; // kneeling at the tube
+            case BotState.Advance when Note == AssistantGunner || Note == ToTheTube && _nearTube:
+                return Posture.Crouch; // kneeling at the tube, and shuffling round it on a knee
             case BotState.Advance:
                 // At an observation post, stay low: a head on a ridgeline is what gets seen first.
                 return Overwatch && InZone && _pausing ? (mayLie ? Posture.Prone : Posture.Crouch) : Posture.Stand;
@@ -2061,19 +2145,19 @@ public sealed class BotBrain
                 var wd = w - _b.FeetPos;
                 wd.Y = 0f;
                 if (wd.LengthSquared() > 1f) enemy = wd.Normalized();
-                aim.Goal = _b.EyePos + enemy.Rotated(Vector3.Up, MathF.Sin((float)Now * 0.3f + _b.Team) * 0.45f) * 40f + Vector3.Down * 2f;
+                aim.Goal = _b.EyePos + enemy.Rotated(Vector3.Up, Scan(0.45f)) * 40f + Vector3.Down * 2f;
                 return;
             }
             if ((_b.LookOut is not Vector3 lo0 || !InZone) && Sq?.SectorFor(_b, InZone) is Vector3 sec)
             {
                 // My sector: a slow sweep either side of it.
-                aim.Goal = _b.EyePos + sec.Rotated(Vector3.Up, MathF.Sin((float)Now * 0.4f + _b.GetInstanceId() % 7) * 0.35f) * 25f + Vector3.Down * 1f;
+                aim.Goal = _b.EyePos + sec.Rotated(Vector3.Up, Scan(0.35f)) * 25f + Vector3.Down * 1f;
                 return;
             }
             if (_b.LookOut is Vector3 lo && InZone && lo.LengthSquared() > 0.01f)
             {
                 // At a window or on a roof: watch out of it.
-                aim.Goal = _b.EyePos + lo.Normalized().Rotated(Vector3.Up, MathF.Sin((float)Now * 0.4f + _b.Team) * 0.5f) * 30f + Vector3.Down * 1.5f;
+                aim.Goal = _b.EyePos + lo.Normalized().Rotated(Vector3.Up, Scan(0.5f)) * 30f + Vector3.Down * 1.5f;
                 return;
             }
             if (Objective != null)
@@ -2083,11 +2167,26 @@ public sealed class BotBrain
                 d.Y = 0f;
                 if (d.LengthSquared() > 1f) enemy = d.Normalized();
             }
-            float a = Sweeping ? (float)(Now - _pauseStart) * 1.2f : MathF.Sin((float)Now * 0.5f + _b.Team) * 1.1f;
+            float a = Sweeping ? (float)(Now - _pauseStart) * 1.2f : Scan(1.1f);
             aim.Goal = _b.EyePos + enemy.Rotated(Vector3.Up, a) * 20f;
             return;
         }
         aim.Goal = _b.LookAheadPoint();
+    }
+
+    /// <summary>
+    /// Keeping watch, as an angle off the way he's watching (within +/-range): he looks somewhere for a few seconds,
+    /// then somewhere else, each man on his own time. (Everyone on a side swept to the same sine wave: thirty men
+    /// turning left and right together, in step.)
+    /// </summary>
+    float Scan(float range)
+    {
+        if (Now > _scanNextAt)
+        {
+            _scanNextAt = Now + _rng.RandfRange(1.5f, 4.5f);
+            _scanAngle = _rng.RandfRange(-1f, 1f);
+        }
+        return _scanAngle * range;
     }
 
     void TryShoot(Threat? t, bool vis)

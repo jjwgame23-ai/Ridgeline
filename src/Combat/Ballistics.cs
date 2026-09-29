@@ -75,7 +75,7 @@ public partial class Ballistics : Node3D
                      Rid ignore = default, bool silent = false, float intendedDist = 0f, string tag = "", bool explosive = false, float armM = 0f,
                      float pen = -1f, float vehDamage = -1f, float crater = 0.65f, float fragR = 7f, float power = 1f, bool rocket = false,
                      bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false, uint mask = 0xFFFFFFFF,
-                     bool dropped = false, Vehicle? guidedBy = null)
+                     bool dropped = false, Vehicle? guidedBy = null, bool burst = false)
     {
         var p = new Projectile
         {
@@ -122,7 +122,7 @@ public partial class Ballistics : Node3D
             p.Visual.GlobalPosition = origin;
         }
         if (ignore.IsValid) p.Exclude.Add(ignore);
-        else if (shooter is not GodotObject gone || GodotObject.IsInstanceValid(gone)) { if (shooter != null) p.Exclude.Add(shooter.BodyRid); }
+        else if (!burst && (shooter is not GodotObject gone || GodotObject.IsInstanceValid(gone))) { if (shooter != null) p.Exclude.Add(shooter.BodyRid); }
         if (tag != "") ShotTags[tag] = ShotTags.GetValueOrDefault(tag) + 1;
         Prof.Count(silent ? "proj:fragments" : "proj:rounds");
         _live.Add(p);
@@ -427,8 +427,8 @@ public partial class Ballistics : Node3D
                 // Not armed yet: a dud that thumps into whatever it hit.
                 Effects.I.Impact(pos, normal, false, Surfaces.Of(collider, hit["shape"].AsInt32(), pos, normal));
                 SoundWorld.I.Emit(Snd.Impact, pos, 2f);
-                if (collider is ICombatant v && !v.Dead)
-                    v.TakeHit(new HitInfo { Shooter = p.Shooter, Point = pos, Dir = p.Vel.Normalized(), Damage = 60f, Zone = Combatants.ZoneFor(v, pos), Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon, From = p.Origin });
+                if (collider is ICombatant v && !v.Dead && Combatants.ZoneFor(v, pos) is var dz)
+                    v.TakeHit(new HitInfo { Shooter = p.Shooter, Point = pos, Dir = p.Vel.Normalized(), Damage = 60f * Combatants.ZoneMultiplier(dz), Zone = dz, Distance = pos.DistanceTo(p.Origin), Weapon = p.Weapon, From = p.Origin });
             }
             return true;
         }
@@ -526,6 +526,57 @@ public partial class Ballistics : Node3D
         if (graze > 0.34f || Random.Shared.NextDouble() > 0.6 * (1f - graze / 0.34f) + 0.2) return;
         var away = (d - 2f * d.Dot(normal) * normal).Normalized();
         SoundWorld.I.Emit(Snd.Ricochet, pos + away * 1.5f, Mathf.Clamp((p.Vel.Length() - 300f) / 100f, -6f, 2f));
+    }
+
+    /// <summary>
+    /// A fire-control solution: the direction to launch a round so that it passes through <paramref name="delta"/>
+    /// (the point relative to the muzzle), whatever the angle up or down, and how long it takes to get there. The
+    /// round is flown the way a live one is (the same drag, gravity and step as the projectile update), so the drag
+    /// that slows it and the drop that bends it are both accounted for, once. (An anti-aircraft gun used to lead by
+    /// distance over muzzle speed, which a 35 mm round slowed by drag doesn't make, and to add the drop on top of the
+    /// gun's own superelevation: its bursts went off metres high and short of the aircraft.)
+    /// </summary>
+    public static Vector3 Launch(float speed, float drag, Vector3 delta, out float tof)
+    {
+        float dist = delta.Length();
+        tof = 0f;
+        if (dist < 1f || speed <= 0f) return dist < 1e-3f ? Vector3.Forward : delta / dist;
+        // In the vertical plane through the target: x along the ground towards it, y up.
+        var flat = delta with { Y = 0f };
+        float fx = flat.Length();
+        var h = fx > 1e-3f ? flat / fx : Vector3.Forward;
+        var los = new Vector2(fx, delta.Y) / dist;
+        float angle = MathF.Atan2(delta.Y, fx);
+        const float dt = 1f / 60f;
+        var g = new Vector2(0f, -9.81f);
+        for (int iter = 0; iter < 3; iter++)
+        {
+            var pos = Vector2.Zero;
+            var vel = new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * speed;
+            float t = 0f, along = 0f;
+            var crossAt = pos;
+            for (int k = 0; k < 900; k++)
+            {
+                float sp = vel.Length();
+                var nv = vel + (g - vel * (sp * drag)) * dt;
+                var next = pos + (vel + nv) * (0.5f * dt);
+                float nextAlong = next.Dot(los);
+                if (nextAlong >= dist)
+                {
+                    float f = (dist - along) / MathF.Max(nextAlong - along, 1e-4f);
+                    crossAt = pos.Lerp(next, f);
+                    t += dt * f;
+                    break;
+                }
+                pos = next; vel = nv; along = nextAlong; t += dt;
+                crossAt = pos;
+            }
+            tof = t;
+            // How far off the line to the target it went, square to it (+ = above): lay that much lower.
+            float miss = los.X * crossAt.Y - los.Y * crossAt.X;
+            angle -= MathF.Atan2(miss, dist);
+        }
+        return (h * MathF.Cos(angle) + Vector3.Up * MathF.Sin(angle)).Normalized();
     }
 
     /// <summary>Launch angle (radians, above the sight line) that puts the bullet back on the line at <paramref name="range"/>.</summary>

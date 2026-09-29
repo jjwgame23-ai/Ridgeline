@@ -630,10 +630,56 @@ From an 84-minute Al Hamra match played as a rifleman in ALPHA-1:
 
   In a 20-minute Valley run, 21 of 22 regroups got their men 4–130 s after the order. Wiped-out squads came back whole, and about 84 of 99 men were on the field on average, where before nearly everyone was. Smoke went on 28 of 67 crossings in that fighting, against about 60% of crossings before. On Al Hamra it was 2 of 36.
 - **You come back with your squad.** You wait with its other men, watching one of them. The dead screen says why you're waiting and how long before you're sent up anyway. A spawn you click on the map sends you there on your own, for that one time only: the pick used to stick, and every later death put you back there.
+- **Split squads.** When most of a rifle squad is down (two or more waiting, at least as many as are still up), and the rest haven't got anywhere they can take them on within 90 s, the dead come back anyway, fighting or not, as a detachment of their own (ALPHA-1B, under the senior man among them) at the spawn nearest the squad. The smaller of the two goes to link up with the larger; the larger keeps the job, or takes it over if it's the detachment. They're one squad again once their leaders are within 40 m, or as soon as either has nobody left on his feet. You come up with the detachment if you're waiting too.
+- **Back near the fight.** A squad wiped out comes back near where it last was, not at the spawn nearest its objective. A FOB counts as 150 m nearer than the points when a spawn is picked: it's what one's built for.
 - **Pause** (P). The game stops, its clock with it. F10 still goes to the main menu. There was no pause before.
+
+### Fourth round: looking and playing right (built)
+
+Six auditors looked at the player's own systems, the wound model, the data from three long runs, and how bots look to someone watching them. What they found, fixed:
+
+- **Bots that look like soldiers**
+  - **Legs follow the feet.** The legs turn toward where he's going at a human rate (240°/s, slower crouched), while the torso and rifle stay on the aim, up to 80° of twist. Moving against his facing he's physically slower: 1.8 m/s sideways and 1.2 m/s backwards (before, 3.4 and 2.4 m/s with a forward stride, so men crab-ran and moonwalked). Crouched, he walks bent-legged instead of sliding along on a knee.
+  - **Stance changes move the body, eyes and hitbox together.** Getting down or up takes the time it takes, for being seen and hit too. Prone and back goes by way of the knee.
+  - **No more standing up to die.** A prone man who's hit stays face down. A standing man falls the way he was running, or away from the shot, instead of a coin toss (half of prone men used to swing up through standing and fall over backwards).
+  - **No walking through each other.** A man can't move closer to another than their bodies allow. On a shared route he slows to the man ahead and follows 0.9 m behind, and he steps round a man who's standing or coming the other way. Overlapping pairs fell from about 70 to about 5 per 10-minute run.
+  - **Looking about.** A man keeping watch looks one way for a few seconds, then another, on his own time. Every man on a side used to sweep to the same sine wave, in step.
+  - **Holding.** He comes up for a look every 6–12 s, and only when there's someone to look for. Men holding with no enemy anywhere bobbed up and down every 2–4 s, drone operators included: 22 stand/kneel flickers a minute before, 0.9 after.
+  - **The mortar's assistant gunner** stays kneeling at the tube, and shuffles round it on a knee. He got up and knelt again every 2 s: 25 flickers a minute before, none after.
+  - **Close quarters.** A man moves deliberately to one side for 1.5–3 s, and only turns back when he's stuck. He used to switch sides every 0.3–0.9 s, like a video-game dodge.
+- **Decisions**
+  - **Staying on his man.** The man he's fighting counts as seen through a moment behind cover, and the longer he's been on him, the more it takes to switch. Turning onto someone else costs, more the further round. Switches straight back (A to B to A within 3 s) fell from 15 to 0.9 a minute.
+  - **A moment out of sight** (0.7 s) no longer ends the fight: he stays on the spot where the man was, and doesn't stand up.
+  - **Bandaging.** Unless a wound is spurting, a man gets to cover before he dresses it, instead of stopping dead mid-sprint in the open.
+  - **Cover from armour** is kept while the armour is about, even with infantry known too. Before, he walked back out and in again every 6 s.
+  - **Off a mortar's impact area** with nothing to get behind, he goes flat for a few seconds. He used to be "in cover" behind nothing, then walk about in the open.
+  - **Buddy aid.** When no medic is coming for a downed squadmate (the medic is hit, dead or far off) and it's quiet, the nearest man goes and stops the bleeding. Only a medic gets him up again.
+  - **Medics.** A medic treats what he can actually help: getting a man up, dressing open wounds, lost blood. Tissue damage and a dressed wound still bleeding inside counted too, so a medic re-treated the same man until his kits were gone. Revives went from 10 in 20 minutes to 22 in 15.
+- **Squads**
+  - **Boarding.** A man heading for his vehicle is steered only by boarding. The march and the wait for the squad kept stopping and re-routing him, so a squad leader crawled beside his helicopter at 0.4 m/s and it left without him.
+  - **No danger-area drills** while a ride is on its way or boarding.
+  - **The formation turns with the leader** at a walking pace, with a dead band. It used to snap to his heading at every corner, and the flank men ran across behind him.
+  - **Followers keep their own place.** On the leader's route a follower cuts it at the point nearest his own place in the formation. He used to take the leader's destination too, run past him, and turn back.
+  - **No more freezing after a ride.** A route marked "plan the rest at the end" stayed marked when the rest turned out to be a straight walk. So at its end he planned again every frame, which reset the stuck timer and the clock the brain waits on for a new route. In a playtest, men who'd just got out of a vehicle stood where the shared stretch ended for minutes while their squad walked off. Frozen followers in 6 minutes of Al Hamra went from 11 to 0.
+- **The player**
+  - **The squad goes back to its own leader's judgement** when you go down or are killed. Before, your last order held it for 5 minutes, through regrouping too.
+  - **Bandaging (X) works in vehicles**, except at an aircraft's controls where X is flares.
+  - **Squad commands from a vehicle** aim where you're looking. Their number keys no longer also move you to another seat.
+  - **Visual fixes.** Suppression's darkening fades in vehicles, on a drone and while down. There's no floating rifle after going down at a drone's controls, and no scope zoom stuck on the sky while downed.
+  - **Roles past 9** can be picked when dead (0 steps through them). Prompts show your own key bindings.
+- **Combat**
+  - **Bleed-outs go to the enemy who drew the blood**, not to a teammate's stray fragment or your own grenade that grazed you later. No kill is counted for killing yourself or a teammate.
+  - **Fragments come from the burst:** 40 mm, rockets and shells no longer spare the man who fired them (hand grenades never did).
+  - **Hits built by hand take the zone into account:** through a car door and spall inside a vehicle. A head hit there could never kill, and leg hits were too strong.
+  - **After going through something,** a round keeps only what it had left, instead of getting through two cars, or a car and then a wall.
+  - **The M249** fires from an open bolt: its belt holds 100, not 101.
 
 ### Not done
 
+- **Crews stuck on the way to their vehicle.** Now and then a crew walking to its vehicle (a mortar that's moved, a logistics truck) hits a snag on its route 90–220 m out. It gets stuck there, re-plans the same route, and gets stuck again for minutes. That's up to 100 stuck events in a 10-minute run, and anywhere from 4 to 96 depending on the match. Squadmates keeping formation get stuck about 12 times a minute too. Neither has been traced yet.
+- **Tracers** (asked for in playtest). Rounds fly unseen: nothing is drawn for them. Real belts carry a tracer every fourth or fifth round (machine guns, vehicle guns, 35 mm air defence), and riflemen mostly don't. The projectiles are already simulated one by one, so this is drawing only: a streak for each tracer round, batched (MultiMesh) so thousands in the air stay cheap.
+- **Night.** It would show the tracers best. But it isn't just lighting: bots would need to see as people do at night (short ranges by eye, night sights, muzzle flashes and tracers giving positions away, illumination flares).
+- A prone man's hitbox is still an upright capsule 0.62 m tall: no head or leg hits on him, and seen from the side he's about a third of his real length. Laying it along the body is its own piece of work.
 - Hit rates at 100–300 m are still high: about 15% of aimed rounds hit, mostly men standing or crouched in cover or running to it. Real combat runs far lower, and much of the gap is how much bots expose themselves.
 - Suppressive fire is still a modest share, about 15% of rifle and machine-gun rounds. When a bot means to suppress it is often moving, has its own cover in the way, or isn't yet aimed at the spot. The `supp:*` counters count the windows and why none opened.
 - Transport helicopters have one pilot seat. When he's hit, nobody can take over and the aircraft comes down (a real UH-60 has two pilots). Gunships' front-seaters do take over.

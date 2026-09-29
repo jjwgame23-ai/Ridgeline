@@ -21,6 +21,10 @@ public sealed class WeaponDef
     public bool Rocket;      // visible, smoking, with a backblast
     public bool Guided;      // an infrared missile: lock an aircraft first
     public int MagSize, Mags;
+    /// <summary>Fires from an open bolt (a belt-fed machine gun): nothing waits in the chamber, so a full load is the belt, and a belt change gives the belt.</summary>
+    public bool OpenBolt;
+    /// <summary>The round in the chamber on top of the magazine: one, for a closed-bolt weapon with a magazine.</summary>
+    public int Chambered => MagSize > 1 && !OpenBolt ? 1 : 0;
 
     // Recoil: VertKick/HorizKick move your view and you have to pull them back down;
     // RecoverFrac of that returns on its own. Punch is the weapon jumping in your
@@ -52,7 +56,7 @@ public sealed class WeaponDef
     public static readonly WeaponDef Lmg = new()
     {
         Name = "M249 LMG · iron sights", Sound = Snd.Rifle556,
-        MuzzleVel = 915f, Drag = 0.00085f, Rpm = 780f, Damage = 50f, AutoCapable = true, MagSize = 100, Mags = 6, // 600 rounds: a gunner's load
+        MuzzleVel = 915f, Drag = 0.00085f, Rpm = 780f, Damage = 50f, AutoCapable = true, MagSize = 100, Mags = 6, OpenBolt = true, // 600 rounds: a gunner's load
         VertKickDeg = 0.42f, HorizKickDeg = 0.3f, PunchDeg = 1.3f, RecoverFrac = 0.5f,
         AdsFov = 62f, AdsTime = 0.42f, SpreadAdsDeg = 0.09f, SpreadHipDeg = 3.4f, SwayDeg = 0.42f,
         Reload = 5.8f, ReloadEmpty = 6.6f, ZeroM = 100f,

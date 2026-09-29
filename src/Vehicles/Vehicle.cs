@@ -566,7 +566,9 @@ public partial class Vehicle : CharacterBody3D
             if (inside.Count > 0 && _rng.Randf() < 0.35f)
             {
                 var o = inside[_rng.RandiRange(0, inside.Count - 1)]!;
-                o.TakeHit(new HitInfo { Shooter = by, Point = o.ChestPos, Dir = Vector3.Down, Damage = bulletDamage * 0.7f, Zone = _rng.Randf() < 0.15f ? HitZone.Head : HitZone.Torso, Weapon = "through the door" });
+                // (With the zone's multiplier, as Ballistics gives every round: without it a head hit here could never kill.)
+                var z = _rng.Randf() < 0.15f ? HitZone.Head : HitZone.Torso;
+                o.TakeHit(new HitInfo { Shooter = by, Point = o.ChestPos, Dir = Vector3.Down, Damage = bulletDamage * 0.7f * Combatants.ZoneMultiplier(z), Zone = z, Weapon = "through the door" });
             }
             return;
         }
@@ -581,7 +583,8 @@ public partial class Vehicle : CharacterBody3D
         foreach (var o in Occupants)
         {
             if (o == null || o.Dead || _rng.Randf() > MathF.Min(0.8f, dmg / 320f + 0.12f)) continue;
-            o.TakeHit(new HitInfo { Shooter = by, Point = o.ChestPos, Dir = Vector3.Down, Damage = 25f + dmg * 0.08f, Zone = _rng.Randf() < 0.1f ? HitZone.Head : _rng.Randf() < 0.3f ? HitZone.Legs : HitZone.Torso, Weapon = "spall" });
+            var sz = _rng.Randf() < 0.1f ? HitZone.Head : _rng.Randf() < 0.3f ? HitZone.Legs : HitZone.Torso;
+            o.TakeHit(new HitInfo { Shooter = by, Point = o.ChestPos, Dir = Vector3.Down, Damage = (25f + dmg * 0.08f) * Combatants.ZoneMultiplier(sz), Zone = sz, Weapon = "spall" });
         }
     }
 

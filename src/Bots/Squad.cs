@@ -64,7 +64,14 @@ public sealed partial class Squad
 {
     public int Team, Number;
     public SquadKind Kind = SquadKind.Rifle;
-    public string Name => $"{KothMode.TeamNames[Team]}-{Number}";
+    public string Name => $"{KothMode.TeamNames[Team]}-{Number}{Suffix}";
+    /// <summary>
+    /// A squad split in two (see TerritoryMode.Reinforce): the detachment is "B", and knows the squad it came from;
+    /// whichever of the two is smaller has LinkUpWith set to the other, and goes to join it. They merge again when
+    /// they meet.
+    /// </summary>
+    public string Suffix = "";
+    public Squad? DetachedFrom, LinkUpWith;
     public string KindName => Roles.Name(Kind);
     /// <summary>Which way the enemy is, from the objective, as the commander sees it (for engineers digging in).</summary>
     public Vector3 ThreatAxis;
@@ -259,6 +266,29 @@ public sealed partial class Squad
         return null;
     }
 
+    Vector3 _formFwd;
+    double _formAt;
+
+    /// <summary>
+    /// Which way the formation faces: where the leader's going, swung round at about a walking man's pace, with a dead
+    /// band so small wanders of his path don't move anyone. (It snapped to his velocity at every corner of his path, and
+    /// the wedge swung about him: flank men ran 10 m across behind him to the other side, and back at the next corner.)
+    /// </summary>
+    Vector3 FormationFwd(ICombatant lead)
+    {
+        var want = lead.Vel with { Y = 0f };
+        if (want.LengthSquared() < 0.25f && Objective != null) want = (Objective.Center - lead.FeetPos) with { Y = 0f };
+        if (want.LengthSquared() < 0.01f) want = Vector3.Forward;
+        want = want.Normalized();
+        double now = Clock.Now;
+        float dt = (float)Math.Clamp(now - _formAt, 0.0, 1.0);
+        _formAt = now;
+        if (_formFwd.LengthSquared() < 0.5f) return _formFwd = want;
+        float ang = _formFwd.SignedAngleTo(want, Vector3.Up);
+        if (MathF.Abs(ang) > 0.25f) _formFwd = _formFwd.Rotated(Vector3.Up, Mathf.Clamp(ang, -dt, dt)).Normalized();
+        return _formFwd;
+    }
+
     public Vector3? SlotFor(ICombatant b)
     {
         var lead = Leader;
@@ -270,10 +300,7 @@ public sealed partial class Squad
             if (m == b) break;
             i++;
         }
-        var fwd = lead.Vel with { Y = 0f };
-        if (fwd.LengthSquared() < 0.25f && Objective != null) fwd = (Objective.Center - lead.FeetPos) with { Y = 0f };
-        if (fwd.LengthSquared() < 0.01f) fwd = Vector3.Forward;
-        fwd = fwd.Normalized();
+        var fwd = FormationFwd(lead);
         var right = fwd.Cross(Vector3.Up);
         // March order and the attack's phases first; otherwise the ground decides the shape.
         if ((lead is not Player || PlayerMarch != null) && OrderSlot(b, lead, i, fwd, right) is Vector3 os) return os;

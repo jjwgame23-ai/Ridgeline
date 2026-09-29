@@ -11,6 +11,8 @@ public partial class TerritoryHud : CanvasLayer
     RichTextLabel _score = null!, _points = null!, _feed = null!, _comms = null!, _roster = null!, _brief = null!, _menu = null!;
     /// <summary>The squad leader's command menu is open (the number keys pick a command, not a weapon).</summary>
     public static bool MenuOpen;
+    /// <summary>The frame a number key last picked a squad command (so the same press isn't also taken as a seat).</summary>
+    public static ulong MenuUsedFrame;
 
     public static readonly string[] Commands =
     {
@@ -140,18 +142,34 @@ public partial class TerritoryHud : CanvasLayer
         if (MenuOpen && k.PhysicalKeycode >= Key.Key1 && k.PhysicalKeycode < Key.Key1 + Commands.Length)
         {
             MenuOpen = false;
+            MenuUsedFrame = Engine.GetProcessFrames();
             Mode.SquadCommand((int)(k.PhysicalKeycode - Key.Key1));
             GetViewport().SetInputAsHandled();
         }
         else if (MenuOpen && k.PhysicalKeycode == Key.Escape) MenuOpen = false;
-        else if (Mode.PlayerRespawnAt > 0 && k.PhysicalKeycode >= Key.Key1 && k.PhysicalKeycode < Key.Key1 + TerritoryMode.PlayerRoles.Length)
+        else if (Mode.PlayerRespawnAt > 0 && RoleKey(k.PhysicalKeycode) is int ri)
         {
             // Dead: pick what to respawn as.
-            Settings.PlayerRole = TerritoryMode.PlayerRoles[(int)(k.PhysicalKeycode - Key.Key1)];
+            Settings.PlayerRole = TerritoryMode.PlayerRoles[ri];
             Settings.Save();
             Center($"Respawning as {Roles.Name(Settings.PlayerRole)}", 2f);
         }
     }
+
+    /// <summary>
+    /// While dead: 1-9 pick the first nine roles, and 0 steps through the rest. (There are more roles than number
+    /// keys: 10-13 were read as the keycodes after 9, ':' ';' '<' '=', so Heavy AT couldn't be picked at all.)
+    /// </summary>
+    static int? RoleKey(Key key)
+    {
+        var roles = TerritoryMode.PlayerRoles;
+        if (key >= Key.Key1 && key <= Key.Key9 && key - Key.Key1 < roles.Length) return (int)(key - Key.Key1);
+        if (key != Key.Key0 || roles.Length <= 9) return null;
+        int cur = Array.IndexOf(roles, Settings.PlayerRole);
+        return cur >= 9 && cur + 1 < roles.Length ? cur + 1 : 9;
+    }
+
+    static string RoleKeyName(int i) => i < 9 ? $"{i + 1}" : "0";
 
     string PointsLine()
     {
@@ -217,7 +235,7 @@ public partial class TerritoryHud : CanvasLayer
             {
                 float d = ride.GlobalPosition.DistanceTo(at);
                 _nav.Text += ride.Boarding
-                    ? $"\n▶ MOUNT UP: your squad's {ride.Def.Name} is waiting, {d:0} m {Comms.Bearing(at, ride.GlobalPosition)} — [F] to get in"
+                    ? $"\n▶ MOUNT UP: your squad's {ride.Def.Name} is waiting, {d:0} m {Comms.Bearing(at, ride.GlobalPosition)} — [{Controls.Keys("use")}] to get in"
                     : $"\n▶ A {ride.Def.Name} is coming to pick your squad up ({d:0} m {Comms.Bearing(at, ride.GlobalPosition)})";
                 HudOverlay.Marker = ride.GlobalPosition;
             }
@@ -238,7 +256,7 @@ public partial class TerritoryHud : CanvasLayer
             lines.Add($"[color=#b8ffb0]▶ {br.Task}[/color]");
             foreach (var sv in sq.Support)
                 lines.Add($"[color=#d8c890]{sv.Def.Name}: {(sv.Task != "" ? sv.Task : "with you")}{(sv.FireAt != null && Clock.Now < sv.FireAtUntil ? $" — {sv.FireAtWhy}" : "")}[/color]");
-            if (m.PlayerLeads) lines.Add($"[color=#888]march: {(sq.PlayerMarch?.ToString() ?? "auto")} · N: squad commands · B: on me · M: map[/color]");
+            if (m.PlayerLeads) lines.Add($"[color=#888]march: {(sq.PlayerMarch?.ToString() ?? "auto")} · {Controls.Keys("squad_menu")}: squad commands · {Controls.Keys("squad_follow")}: on me · {Controls.Keys("map")}: map[/color]");
             _brief.Text = string.Join("\n", lines);
             HudOverlay.Spot = br.Spot;
             HudOverlay.Sector = br.Sector;
@@ -263,7 +281,7 @@ public partial class TerritoryHud : CanvasLayer
             string chosen = m.PlayerSpawn < 0 ? "with your squad"
                 : m.PlayerSpawn == 0 ? "base (vehicles are parked there)"
                 : opts.FirstOrDefault(o => o.Point == m.PlayerSpawn - 1).Name ?? "nearest (your pick was lost)";
-            string roles = string.Join("  ", TerritoryMode.PlayerRoles.Select((r, i) => r == Settings.PlayerRole ? $"[{i + 1}] {Roles.Short(r)}◂" : $"[{i + 1}] {Roles.Short(r)}"));
+            string roles = string.Join("  ", TerritoryMode.PlayerRoles.Select((r, i) => r == Settings.PlayerRole ? $"[{RoleKeyName(i)}] {Roles.Short(r)}◂" : $"[{RoleKeyName(i)}] {Roles.Short(r)}"));
             respawn = (m.PlayerWait != "" && m.PlayerSpawn < 0
                           ? $"Waiting to rejoin your squad as {Roles.Name(Settings.PlayerRole)}: {m.PlayerWait}. Map (M): click a spawn to go on your own\n"
                           : $"Respawning in {Math.Max(0, m.PlayerRespawnAt - now):0}s at {chosen} as {Roles.Name(Settings.PlayerRole)} — map (M): click a spawn\n") +

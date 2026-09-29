@@ -22,6 +22,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     public float Health => Body.Condition;
     HitInfo? _downHit;
     ICombatant? _lastShooter;
+    /// <summary>The last enemy to hit him: a bleed-out is his (not a teammate's stray fragment, or his own grenade, that grazed him since).</summary>
+    ICombatant? _lastEnemy;
     double _moanAt;
     public float Suppression;
     /// <summary>Same wind as the player: about 14 s of flat-out sprint, then you have to walk it off.</summary>
@@ -101,8 +103,11 @@ public partial class Bot : CharacterBody3D, ICombatant
     public bool Dead => Body.Dead;
     Body ICombatant.Body => Body;
     public Vector3 FeetPos => GlobalPosition;
-    public Vector3 EyePos => GlobalPosition + Vector3.Up * (Stance switch { Posture.Prone => 0.38f, Posture.Crouch => 1.17f, _ => 1.62f } - MathF.Abs(_lean) * 0.06f) + Right * (_lean * 0.38f);
-    public Vector3 ChestPos => GlobalPosition + Vector3.Up * Stance switch { Posture.Prone => 0.3f, Posture.Crouch => 0.85f, _ => 1.25f } + Right * (_lean * 0.2f);
+    /// <summary>Eyes and chest where the body actually is: they follow the figure down and up (see Pose), not the
+    /// stance he has decided on. (They used to jump to the new stance's height at once, so a man standing up
+    /// from prone saw, and could be hit, over a wall a second before his body rose above it.)</summary>
+    public Vector3 EyePos => GlobalPosition + Vector3.Up * (_eyeH - MathF.Abs(_lean) * 0.06f) + Right * (_lean * 0.38f);
+    public Vector3 ChestPos => GlobalPosition + Vector3.Up * _chestH + Right * (_lean * 0.2f);
     Vector3 Right => BotAim.DirFrom(Aim.Yaw, 0f).Cross(Vector3.Up);
     public Vector3 Vel => Velocity;
     public float BodyHeight => _capsule.Height;
@@ -113,7 +118,13 @@ public partial class Bot : CharacterBody3D, ICombatant
     readonly RandomNumberGenerator _rng = new();
     CapsuleShape3D _capsule = null!;
     CollisionShape3D _col = null!;
-    Node3D _visual = null!, _torso = null!, _head = null!, _arms = null!, _hipL = null!, _hipR = null!, _muzzle = null!;
+    Node3D _visual = null!, _pelvis = null!, _torso = null!, _head = null!, _arms = null!, _hipL = null!, _hipR = null!, _muzzle = null!;
+    /// <summary>Which way his hips and legs point (degrees, like Aim.Yaw): toward where he's going, while the
+    /// shoulders and rifle stay on the aim, within what a spine can twist.</summary>
+    float _legYaw;
+    /// <summary>Crouched and on the move: up off the knee into a bent-legged walk (0..1).</summary>
+    float _crouchWalkT;
+    float _eyeH = 1.62f, _chestH = 1.25f;
     Vector3[] _path = Array.Empty<Vector3>();
     int _pathIdx;
     Vector3 _goal, _rawGoal, _lastProgressPos;
@@ -141,7 +152,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         _col = new CollisionShape3D { Shape = _capsule, Position = new Vector3(0, 0.9f, 0) };
         AddChild(_col);
 
-        Ammo = Def.MagSize + 1;
+        Ammo = Def.MagSize + (Def.OpenBolt ? 0 : 1);
         Mags = new Magazines(Def.MagSize, Def.Mags);
         Stock();
         Aim = new BotAim(this, _rng.Randf() * 10f);
@@ -257,6 +268,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         _rawGoal = goal;
         _goal = goal;
         _hasGoal = true;
+        _partial = false; // a new goal: whatever leg the last one was on is over
         // Long paths are expensive on a big map: at most one every 0.6 s. Keep walking
         // the old path meanwhile; Move() repaths when the timer runs out.
         double since = Clock.Now - _lastRepath;
@@ -300,6 +312,43 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (from < 0) return false;
         Mode = mode;
         StrafeDir = null;
+        // Where he's going is his own place in the formation, not the leader's destination: share the leader's
+        // route only as far as the point on it nearest that place, then plan the last bit from there. (He used
+        // to take the leader's goal along with the route, so he ran on along it for the objective, past the
+        // leader, until the next re-aim at his slot turned him round and sent him back.)
+        if (Squad?.Leader == other && Squad.SlotFor(this) is Vector3 slot)
+        {
+            int seg = from;
+            var cut = pts[from];
+            float best = Flat(cut - slot).LengthSquared();
+            for (int j = from; j + 1 < pts.Length; j++)
+            {
+                var a = pts[j];
+                var ab = pts[j + 1] - a;
+                float len2 = Flat(ab).LengthSquared();
+                float t = len2 > 1e-4f ? Mathf.Clamp(Flat(slot - a).Dot(Flat(ab)) / len2, 0f, 1f) : 0f;
+                var p = a + ab * t;
+                float d2 = Flat(p - slot).LengthSquared();
+                if (d2 < best) { best = d2; cut = p; seg = j; }
+            }
+            // Nowhere along it gets him any nearer his place than he already is: the leader's route is no use
+            // to him (following it would only take him the wrong way and back again every time he re-aims).
+            if (MathF.Sqrt(best) > Flat(GlobalPosition - slot).Length() - 1f) return false;
+            var leg = new Vector3[seg - from + 2];
+            Array.Copy(pts, from, leg, 0, seg - from + 1);
+            leg[^1] = cut;
+            _path = leg;
+            _pathIdx = 0;
+            _rawGoal = slot;
+            _goal = cut;
+            // The slot is off the route: at the end of the shared stretch, plan the rest (see Move).
+            _partial = Flat(cut - slot).Length() > 1f;
+            _hasGoal = true;
+            _repathT = 0f;
+            _stuckT = 0f;
+            _lastProgressPos = GlobalPosition;
+            return true;
+        }
         _path = pts[from..];
         _pathIdx = 0;
         _rawGoal = other._rawGoal;
@@ -350,6 +399,11 @@ public partial class Bot : CharacterBody3D, ICombatant
         _lastRepath = Clock.Now;
         if (DirectClear(_rawGoal))
         {
+            // Straight there: the whole way, not a leg of it. (Left marked partial, reaching the end of this one-point
+            // path planned again, the next frame and every frame after, each time resetting the stuck timer and the
+            // repath clock the brain waits on: a man given the first stretch of his leader's route stood where it
+            // ended for minutes, "following" a squad 300 m away.)
+            _partial = false;
             _path = new[] { _rawGoal };
             _goal = _rawGoal;
             _pathIdx = 0;
@@ -431,10 +485,47 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (s == Posture.Prone || Stance == Posture.Prone) _stanceT = s == Posture.Prone ? 0.8f : 1.0f;
         if (s == Posture.Prone) Prof.Count($"prone:{Brain.State}");
         Stance = s;
-        float h = s switch { Posture.Prone => 0.62f, Posture.Crouch => 1.25f, _ => 1.8f };
-        _capsule.Height = h;
-        _col.Position = new Vector3(_lean * 0.22f, h / 2f, 0);
+        // The hitbox and eyes follow the body as it goes down or comes up (Pose, from Animate): getting flat takes
+        // the time it takes, for being seen and hit as much as for seeing.
     }
+
+    /// <summary>
+    /// Collider, eyes and chest from the same eased pose the figure is drawn with: _crouchT lowers the hips,
+    /// _crouchWalkT lifts them again into a bent-legged walk, and _proneT tips the whole body over onto the
+    /// ground about the feet (so a height is the upright one times the cosine of the tilt, never lower than
+    /// lying flat). (The capsule and eyes used to snap to the new stance the moment it was chosen, while the
+    /// figure took 0.2-0.8 s to follow.)
+    /// </summary>
+    void Pose()
+    {
+        float tilt = MathF.Cos(_proneT * Mathf.Pi * 0.5f), lift = 0.12f * _proneT;
+        float Up(float stand, float kneel, float crouchWalk, float flat) =>
+            MathF.Max(flat, Mathf.Lerp(stand, Mathf.Lerp(kneel, crouchWalk, _crouchWalkT), _crouchT) * tilt + lift);
+        float h = Up(1.8f, 1.25f, 1.4f, 0.62f);
+        _eyeH = Up(1.62f, 1.17f, 1.32f, 0.38f);
+        _chestH = Up(1.25f, 0.85f, 0.97f, 0.3f);
+        if (MathF.Abs(_capsule.Height - h) > 0.005f) _capsule.Height = h;
+        _col.Position = new Vector3(_lean * 0.22f, _capsule.Height / 2f, 0f);
+    }
+
+    /// <summary>Straight into whatever stance he's in now, with no transition (boarding a vehicle).</summary>
+    void SnapPose()
+    {
+        _crouchT = Crouched ? 1f : 0f;
+        _crouchWalkT = 0f;
+        _proneT = Prone ? 1f : 0f;
+        _legYaw = Aim.Yaw;
+        _visual.Rotation = new Vector3(-_proneT * Mathf.Pi * 0.5f, 0f, 0f);
+        _visual.Position = new Vector3(0f, 0.12f * _proneT, 0.85f * _proneT);
+        Pose();
+    }
+
+    /// <summary>Top speeds with the rifle kept pointing well off the way he's going: sideways, and straight back.</summary>
+    const float CrabSpeed = 1.8f, BackpedalSpeed = 1.2f;
+    /// <summary>Two bodies (0.3 m capsules) shoulder to shoulder; and how close the man in front has to be before he's in the way.</summary>
+    const float BodyGap = 0.6f, GiveWayRange = 1.2f;
+    /// <summary>How long he's been held up by someone in his way (not by the world): queueing isn't being stuck.</summary>
+    float _heldT;
 
     void Move(float dt)
     {
@@ -481,7 +572,10 @@ public partial class Bot : CharacterBody3D, ICombatant
             _stuckT += dt;
             if (_stuckT > 1.2f)
             {
-                if (pos.DistanceTo(_lastProgressPos) < 0.3f && _hasGoal) { Stuck(); if (_hasGoal) Repath(); }
+                // Held up behind one of ours (in file, or in a doorway) isn't stuck: he waits his turn, then squeezes
+                // past (below). (Counted as stuck, he side-stepped at random or dropped his goal: stuck reports doubled
+                // once men stopped walking through each other.) Held up that long, though, something else is wrong.
+                if (pos.DistanceTo(_lastProgressPos) < 0.3f && _hasGoal && (_heldT <= 0f || _heldT > 5f)) { Stuck(); if (_hasGoal) Repath(); }
                 else _stuckCount = 0;
                 _stuckT = 0f;
                 _lastProgressPos = pos;
@@ -502,27 +596,80 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (Prone) speed = Mathf.Min(speed, 0.6f); // crawling
         if (ChangingStance) speed = Mathf.Min(speed, 0.3f);
         if (Brain.WantsAds) speed = Mathf.Min(speed, 2.2f);
-        if (Mode == MoveMode.Sprint && wish.Dot(BotAim.DirFrom(Aim.Yaw, 0f)) < 0.5f) speed = MathF.Min(speed, 3.4f * Body.SpeedMult); // can't sprint sideways
-        if (wish.Dot(BotAim.DirFrom(Aim.Yaw, 0f)) < -0.3f) speed *= 0.7f;
+        var dirWish = wish.LengthSquared() > 0.01f ? wish.Normalized() : Vector3.Zero;
+        if (dirWish != Vector3.Zero && !Prone)
+        {
+            // Going somewhere other than where he's looking (keeping his rifle on the enemy on the way into cover,
+            // say): the hips only turn so far from the shoulders (see Animate), so past about 45 degrees it's a
+            // crab-walk, and past 90 a backpedal, and nobody does either at a run. (He used to run sideways at the
+            // full 3.4 m/s and backwards at 2.4.)
+            float face = dirWish.Dot(BotAim.DirFrom(Aim.Yaw, 0f));
+            if (Mode == MoveMode.Sprint && face < 0.5f) speed = MathF.Min(speed, 3.4f * Body.SpeedMult); // can't sprint sideways
+            if (face < 0.7f)
+            {
+                float cap = face >= 0f ? Mathf.Lerp(CrabSpeed, 3.4f, face / 0.7f) : Mathf.Lerp(CrabSpeed, BackpedalSpeed, -face);
+                speed = MathF.Min(speed, cap * Body.SpeedMult * (Crouched ? 0.75f : 1f));
+            }
+        }
 
-        // Don't walk through each other.
+        // Don't walk through each other. A soft push keeps people a little apart; closer than shoulder to shoulder
+        // he can't move any further into the other man at all; and one walking into the back of another going the
+        // same way falls in behind him at his pace, while one who's standing, or coming the other way, gets
+        // stepped round. (The push alone let two men sharing a route settle 0.3-0.4 m apart, one body inside the
+        // other, for seconds on end.)
         BuildGrid();
         var cell = CellOf(pos);
+        Span<Vector3> blocked = stackalloc Vector3[6];
+        int nBlocked = 0;
+        bool heldUp = false;
+        var push = Vector3.Zero;
         for (int gz = -1; gz <= 1; gz++)
         for (int gx = -1; gx <= 1; gx++)
         {
             if (!_grid.TryGetValue((cell.Item1 + gx, cell.Item2 + gz), out var near)) continue;
             foreach (var c in near)
             {
-                if (c == this) continue;
+                if (c == this || c is Bot { Ride: not null }) continue;
+                // Someone on the floor above or below isn't in the way.
+                if (MathF.Abs(c.FeetPos.Y - pos.Y) > 1.6f) continue;
                 var away = Flat(pos - c.FeetPos);
                 float d = away.Length();
-                if (d < 0.8f && d > 0.001f) wish += away / d * (0.8f - d) * 2f;
+                if (d > GiveWayRange || d < 0.001f) continue;
+                var toward = -away / d;
+                if (d < 0.8f) push += away / d * (0.8f - d) * 2f;
+                if (d < BodyGap && nBlocked < blocked.Length) blocked[nBlocked++] = toward;
+                if (d < BodyGap && dirWish != Vector3.Zero && dirWish.Dot(toward) > 0.3f) heldUp = true;
+                if (dirWish == Vector3.Zero || dirWish.Dot(toward) < 0.8f) continue;
+                // He's right in front, on my line.
+                float along = Flat(c.Vel).Dot(dirWish);
+                if (along > 0.3f)
+                {
+                    speed = MathF.Min(speed, MathF.Max(0f, along + (d - 0.9f) * 2f)); // in file: his pace, a pace behind
+                    if (speed < 0.3f) heldUp = true;
+                }
+                else
+                {
+                    // Round him: to whichever side he isn't already on (the right, if dead ahead).
+                    var right = dirWish.Cross(Vector3.Up);
+                    push += right * (right.Dot(toward) > 0.05f ? -1f : 1f) * (GiveWayRange - d) * 1.5f;
+                }
             }
         }
+        wish += push;
         if (wish.LengthSquared() > 1f) wish = wish.Normalized();
 
         var hv = new Vector2(Velocity.X, Velocity.Z).MoveToward(new Vector2(wish.X, wish.Z) * speed, 10f * dt);
+        _heldT = heldUp ? _heldT + dt : 0f;
+        // Held up a second and a half by a man who won't move (a doorway, a narrow stair, two men face to face):
+        // he squeezes past, shoulder to shoulder, slowly, the way people do. (Blocked outright, men jammed in
+        // doorways until the stuck handling tore their routes up.)
+        bool squeeze = _heldT > 1.5f;
+        if (squeeze) hv = hv.LimitLength(1.2f);
+        for (int k = 0; k < nBlocked && !squeeze; k++)
+        {
+            float into = hv.X * blocked[k].X + hv.Y * blocked[k].Z;
+            if (into > 0f) hv -= new Vector2(blocked[k].X, blocked[k].Z) * into;
+        }
         bool floor = IsOnFloor();
         // Standing still on firm ground with nothing pushing: there's nothing for the physics to move (someone
         // walking into us shows up in the wish above, and gets the full treatment).
@@ -793,10 +940,10 @@ public partial class Bot : CharacterBody3D, ICombatant
     /// <param name="keep">Put the magazine coming off back in a pouch (slower) rather than drop it (see Magazines).</param>
     public void StartReload(bool keep = true)
     {
-        if (Reloading || !Mags.Worth(Ammo, Def.MagSize)) return;
+        if (Reloading || !Mags.Worth(Ammo, Def)) return;
         _reloadEmpty = Ammo == 0;
         _reloadKeep = keep;
-        bool stow = keep && Magazines.InMag(Ammo, Def.MagSize) > 0;
+        bool stow = keep && Magazines.InMag(Ammo, Def) > 0;
         _reloadDur = ((_reloadEmpty ? Def.ReloadEmpty : Def.Reload) + (stow ? Magazines.RetainTime : 0f)) * _rng.RandfRange(0.95f, 1.2f);
         _reloadT = _reloadDur;
         _reloadStage = 0;
@@ -815,8 +962,8 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (_reloadT <= 0f)
         {
             // A round stays chambered through a reload that isn't from empty.
-            int got = Mags.Swap(Magazines.InMag(Ammo, Def.MagSize), _reloadKeep);
-            Ammo = _reloadEmpty || Def.MagSize == 1 ? got : got + 1;
+            int got = Mags.Swap(Magazines.InMag(Ammo, Def), _reloadKeep);
+            Ammo = _reloadEmpty || Def.Chambered == 0 ? got : got + 1;
         }
     }
 
@@ -828,6 +975,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         bool wasDown = Body.Down;
         var region = Body.RegionFor(this, hit.Point, hit.Dir, hit.Zone);
         if (hit.Shooter != null) _lastShooter = hit.Shooter;
+        if (hit.Shooter != null && hit.Shooter != this && hit.Shooter.Team != Team) _lastEnemy = hit.Shooter;
         var res = Body.Hit(region, hit.Damage / Combatants.ZoneMultiplier(hit.Zone) / 50f, _rng);
         if (hit.Shooter is Bot shooter && !wasDown) shooter.HitsLanded++;
         if (res == HitResult.Dead) { Die(hit); return; }
@@ -839,7 +987,7 @@ public partial class Bot : CharacterBody3D, ICombatant
     }
 
     /// <summary>Kill credit for a bleed-out goes to whoever caused it (if we know).</summary>
-    HitInfo BleedHit() => new() { Shooter = _lastShooter, Point = ChestPos, Dir = Vector3.Down, Damage = 0f, Zone = HitZone.Torso, Weapon = "blood loss" };
+    HitInfo BleedHit() => new() { Shooter = _lastEnemy ?? _lastShooter, Point = ChestPos, Dir = Vector3.Down, Damage = 0f, Zone = HitZone.Torso, Weapon = "blood loss" };
 
     /// <summary>Hit badly enough to collapse: on the ground, out of the fight, bleeding.</summary>
     void GoDown(HitInfo hit)
@@ -847,23 +995,56 @@ public partial class Bot : CharacterBody3D, ICombatant
         // Dragged out, or tumbles out; but not from a helicopter in flight (see Vehicle.CasualtyAboard).
         if (Ride is { Def.Air: true, Landed: false } air) air.CasualtyAboard(this);
         else Ride?.Leave(this);
+        var vel = Velocity; // which way his weight is going, for the fall
         _downHit = hit;
         Velocity = Vector3.Zero;
         Stop();
         LeanTarget = 0f;
+        Collapse(hit, vel, 0.45f, 0.14f, 0.4f, 0.6f);
         SetCrouch(true);
         _proneT = 0f;
         _stanceT = 0f;
+        _eyeH = 0.38f;
+        _chestH = 0.3f;
         _capsule.Height = 0.7f;
         _col.Position = new Vector3(0f, 0.35f, 0f);
         Combatants.ReportDowned(this, hit);
         Comms.Say(this, _rng.Randf() < 0.5f ? "I'm down! Medic!" : "I'm hit, I'm hit! I can't get up!");
         _moanAt = Clock.Now + _rng.RandfRange(10f, 18f);
-        float dir = _rng.Randf() < 0.5f ? -1f : 1f;
+    }
+
+    /// <summary>
+    /// The body goes down. Lying (or most of the way there) he stays where he lies, face down, and just slumps.
+    /// On his feet he falls the way his weight is already going: forward when running, back when backing off,
+    /// otherwise away from the hit, and when there's nothing to go by (bleeding out) whichever way he sags.
+    /// (A prone man used to be tipped over by a coin flip too: half the time the tween swung him from face down
+    /// through upright onto his back, so a man shot lying down stood up before he fell.)
+    /// </summary>
+    void Collapse(HitInfo hit, Vector3 vel, float tip, float y, float roll, float dur)
+    {
         var tw = CreateTween().SetParallel();
-        tw.TweenProperty(_visual, "rotation", new Vector3(dir * Mathf.Pi * 0.45f, 0f, _rng.RandfRange(-0.4f, 0.4f)), 0.6f)
+        tw.TweenProperty(_pelvis, "rotation", Vector3.Zero, dur); // the hips come round square with the shoulders
+        if (_proneT > 0.5f)
+        {
+            tw.TweenProperty(_visual, "rotation", new Vector3(-Mathf.Pi * 0.5f, 0f, _rng.RandfRange(-0.25f, 0.25f)), dur * 0.6f);
+            tw.TweenProperty(_visual, "position", new Vector3(0f, 0.1f, 0.85f), dur * 0.6f);
+            return;
+        }
+        var fwd = BotAim.DirFrom(Aim.Yaw, 0f);
+        var right = fwd.Cross(Vector3.Up);
+        float moving = Flat(vel).Dot(fwd), shot = Flat(hit.Dir).Dot(fwd);
+        // Rotation about X: positive tips him onto his back, negative onto his face. A body part way down to
+        // prone carries on the way it was going.
+        float dir = _proneT > 0f ? -1f
+            : MathF.Abs(moving) > 1.5f ? -MathF.Sign(moving)
+            : MathF.Abs(shot) > 0.3f ? MathF.Sign(-shot)
+            : _rng.Randf() < 0.5f ? -1f : 1f;
+        // Hit from the side, he twists away from it as he goes.
+        float side = Flat(hit.Dir).Dot(right);
+        float z = Mathf.Clamp(-side * roll + _rng.RandfRange(-roll, roll) * 0.5f, -roll, roll);
+        tw.TweenProperty(_visual, "rotation", new Vector3(dir * Mathf.Pi * tip, 0f, z), dur)
           .SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
-        tw.TweenProperty(_visual, "position", new Vector3(0f, 0.14f, 0f), 0.6f);
+        tw.TweenProperty(_visual, "position", new Vector3(0f, y, 0f), dur);
     }
 
     /// <summary>Lying there: bleeding, calling for a medic, maybe patching themselves up.</summary>
@@ -899,6 +1080,8 @@ public partial class Bot : CharacterBody3D, ICombatant
         SetBodyVisible(s.Exposed);
         Senses.IgnoreBody(v.GetRid(), true);
         SetCrouch(false);
+        // Seated (and not animated while aboard): the body is in the seat now, not halfway up off the ground.
+        if (!Body.Down) SnapPose();
     }
 
     /// <summary>Moved to another seat of the same vehicle as a casualty (see Vehicle.TakeControls).</summary>
@@ -965,18 +1148,15 @@ public partial class Bot : CharacterBody3D, ICombatant
         // the vehicle drives off. (One killed inside stays inside, out of sight: the vehicle frees the seat.)
         if (Ride is { } v && SeatIdx >= 0 && v.Def.Seats[SeatIdx].Exposed) v.Leave(this);
         bool wasDown = _downHit != null && !Alive;
+        var vel = Velocity;
         CollisionLayer = 0;
         Velocity = Vector3.Zero;
-        if (hit.Shooter is Bot killer) killer.Kills++;
+        if (hit.Shooter is Bot killer && killer != this && killer.Team != Team) killer.Kills++;
         Combatants.ReportKill(this, hit);
         if (wasDown) return; // already on the ground
 
-        // Crumple: tip over at the feet, forward or back.
-        float dir = _rng.Randf() < 0.5f ? -1f : 1f;
-        var tw = CreateTween().SetParallel();
-        tw.TweenProperty(_visual, "rotation", new Vector3(dir * Mathf.Pi * 0.48f, 0f, _rng.RandfRange(-0.3f, 0.3f)), 0.55f)
-          .SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.In);
-        tw.TweenProperty(_visual, "position", new Vector3(0f, 0.12f, 0f), 0.55f);
+        // Crumple: tip over at the feet, forward or back (or, lying, go still where he lies).
+        Collapse(hit, vel, 0.48f, 0.12f, 0.3f, 0.55f);
     }
 
     // ================================================================ body
@@ -1008,8 +1188,10 @@ public partial class Bot : CharacterBody3D, ICombatant
         var boots = Mat(new Color(0.12f, 0.1f, 0.08f));
 
         _visual = Pivot(this, Vector3.Zero);
-        _hipL = Pivot(_visual, new Vector3(-0.11f, 0.9f, 0f));
-        _hipR = Pivot(_visual, new Vector3(0.11f, 0.9f, 0f));
+        // The legs hang from a pelvis of their own that can turn under the torso (see Animate).
+        _pelvis = Pivot(_visual, Vector3.Zero);
+        _hipL = Pivot(_pelvis, new Vector3(-0.11f, 0.9f, 0f));
+        _hipR = Pivot(_pelvis, new Vector3(0.11f, 0.9f, 0f));
         foreach (var hip in new[] { _hipL, _hipR })
         {
             Part(hip, new BoxMesh { Size = new Vector3(0.15f, 0.86f, 0.17f) }, new Vector3(0f, -0.43f, 0f), cloth);
@@ -1061,8 +1243,13 @@ public partial class Bot : CharacterBody3D, ICombatant
 
     void Animate(float dt)
     {
-        float spd = new Vector2(Velocity.X, Velocity.Z).Length();
-        _crouchT = Mathf.MoveToward(_crouchT, Crouched ? 1f : 0f, dt * 5f);
+        var hv = new Vector3(Velocity.X, 0f, Velocity.Z);
+        float spd = hv.Length();
+        // Getting down to prone, and up from it, goes by way of the knees: he drops to a knee, then goes forward
+        // onto the ground, and the legs straighten out behind once he's flat.
+        bool kneeling = Crouched || (_proneT > 0.05f && (!Prone || _proneT < 0.95f));
+        _crouchT = Mathf.MoveToward(_crouchT, kneeling ? 1f : 0f, dt * 5f);
+        _crouchWalkT = Mathf.MoveToward(_crouchWalkT, Crouched && spd > 0.5f && _proneT <= 0f ? 1f : 0f, dt * 4f);
         // Prone: the whole body lies along the ground, head forward, rifle out in front of him. (Left
         // alone when upright, so the tweens of going down and being helped up play out.)
         if (Prone || _proneT > 0f)
@@ -1071,19 +1258,49 @@ public partial class Bot : CharacterBody3D, ICombatant
             _visual.Rotation = new Vector3(-_proneT * Mathf.Pi * 0.5f, 0f, 0f);
             _visual.Position = new Vector3(0f, 0.12f * _proneT, 0.85f * _proneT);
         }
+        Pose();
+
+        // The hips go where he's going, the shoulders and rifle where he's looking, and the spine between them
+        // twists only so far. Going backwards he stays square to the front and steps back, rather than turning
+        // his hips round. Lying down there's nothing to twist: the body turns as one. (The whole figure, legs
+        // and all, used to turn with the aim, so a man running one way while he watched another ran sideways,
+        // or backwards, with a forward stride.)
+        const float MaxTwist = 80f;
+        float lieFlat = 1f - _proneT;
+        float legGoal = Aim.Yaw;
+        if (spd > 0.4f && lieFlat > 0.5f)
+        {
+            float rel = BotAim.Wrap(Mathf.RadToDeg(MathF.Atan2(-hv.X, -hv.Z)) - Aim.Yaw);
+            if (MathF.Abs(rel) > 110f) rel = BotAim.Wrap(rel + 180f);
+            legGoal = Aim.Yaw + Mathf.Clamp(rel, -MaxTwist, MaxTwist);
+        }
+        // Feet turn at a walking pace's worth of steps, not at the speed a man can swing a rifle.
+        float legRate = (Crouched ? 160f : 240f) * dt;
+        float off = BotAim.Wrap(legGoal - _legYaw);
+        _legYaw = BotAim.Wrap(_legYaw + Mathf.Clamp(off, -legRate, legRate));
+        // Swung round past what the spine allows, the shoulders drag the hips with them.
+        float twist = Mathf.Clamp(BotAim.Wrap(_legYaw - Aim.Yaw), -MaxTwist * lieFlat, MaxTwist * lieFlat);
+        _legYaw = BotAim.Wrap(Aim.Yaw + twist);
+        _pelvis.Rotation = new Vector3(0f, Mathf.DegToRad(twist), 0f);
+
+        // The stride goes along the way the legs point; what's left over sideways is a side-step.
+        var legFwd = BotAim.DirFrom(_legYaw, 0f);
+        float fore = spd > 0.05f ? hv.Dot(legFwd) / spd : 1f, across = spd > 0.05f ? hv.Dot(legFwd.Cross(Vector3.Up)) / spd : 0f;
         _walkPhase += spd * dt * 2.4f;
-        float swing = MathF.Sin(_walkPhase) * Mathf.Clamp(spd / 3.4f, 0f, 1f) * 0.55f;
-        float hipY = Mathf.Lerp(0.9f, 0.45f, _crouchT);
+        float swing = MathF.Sin(_walkPhase) * Mathf.Clamp(spd / 3.4f, 0f, 1f) * 0.55f * fore;
+        float spread = MathF.Abs(across) * Mathf.Clamp(spd / 1.8f, 0f, 1f) * 0.22f * (0.5f + 0.5f * MathF.Sin(_walkPhase));
+        // Crouched and walking he's up off the knee, bent at the hips, both legs working.
+        float hipY = Mathf.Lerp(0.9f, Mathf.Lerp(0.45f, 0.7f, _crouchWalkT), _crouchT);
         float kneel = _crouchT * 1.2f;
+        float bendL = Mathf.Lerp(kneel * 0.5f, _crouchT * 0.6f, _crouchWalkT), bendR = Mathf.Lerp(kneel, _crouchT * 0.6f, _crouchWalkT);
 
         Rotation = new Vector3(0f, Mathf.DegToRad(Aim.Yaw), 0f);
-        _torso.Position = new Vector3(0f, hipY, 0f);
         _torso.Position = new Vector3(_lean * 0.1f, hipY, 0f);
-        _torso.Rotation = new Vector3(-_crouchT * 0.2f + (Reloading ? 0.12f : 0f), 0f, -_lean * 0.35f);
+        _torso.Rotation = new Vector3(-_crouchT * (0.2f + 0.25f * _crouchWalkT) + (Reloading ? 0.12f : 0f), 0f, -_lean * 0.35f);
         _hipL.Position = new Vector3(-0.11f, hipY, 0f);
         _hipR.Position = new Vector3(0.11f, hipY, 0f);
-        _hipL.Rotation = new Vector3(kneel * 0.5f + swing, 0f, 0f);
-        _hipR.Rotation = new Vector3(kneel - swing, 0f, 0f);
+        _hipL.Rotation = new Vector3(bendL + swing, 0f, -spread);
+        _hipR.Rotation = new Vector3(bendR - swing, 0f, spread);
         _arms.Rotation = new Vector3(Mathf.DegToRad(Aim.Pitch) + (Reloading ? -0.5f : 0f) + _proneT * Mathf.Pi * 0.5f, 0f, 0f);
         // Leaning: the rifle comes out past the corner with the head, not just the eyes.
         _arms.Position = new Vector3(_lean * 0.2f, 0.56f, 0f);
