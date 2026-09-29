@@ -25,6 +25,9 @@ public sealed class Threat
     /// three (a burst goes where we think they are) and then our picture of them changes.</summary>
     public Vector2 TleDir;
     public double TleRedraw;
+    /// <summary>At night: is he against the sky from where we are (checked now and then, not every look).</summary>
+    public bool Skylined;
+    public double SkyCheck = -99;
 }
 
 /// <summary>What one bot knows about one enemy vehicle.</summary>
@@ -52,6 +55,7 @@ public sealed class BotSenses
     readonly Godot.Collections.Array<Rid> _selfOnly = new();
     double _lastTick = -1;
     int _tick;
+    static double _nextConditionsLog;
 
     public readonly List<Threat> Threats = new();
     public readonly List<VehicleThreat> Vehicles = new();
@@ -96,6 +100,13 @@ public sealed class BotSenses
         if (_lastTick < 0) _lastTick = now - dt;
         if (_selfOnly.Count == 0) _selfOnly.Add(_b.GetRid());
         _tick++;
+        if (DuelMode.Verbose && (now >= _nextConditionsLog || now < _nextConditionsLog - 120.0))
+        {
+            _nextConditionsLog = now + 60.0;
+            GD.Print($"[{now:0}s] conditions: {Conditions.Clock} {Conditions.Weather}, {Conditions.Lux:0.####} lux (light {Conditions.Light:0.00}), " +
+                     $"sun {Conditions.SunElevation:0}°, moon {Conditions.MoonLit * 100f:0}% lit at {Conditions.MoonElevation:0}°, visibility {Conditions.VisibilityM:0} m, " +
+                     $"noise +{Conditions.NoiseDb:0} dB, night kit {(NightGear.NightKitOn ? "on" : "off")}");
+        }
         using (Prof.Time("look")) Look(dt, now);
         if (_tick % 3 == 0) using (Prof.Time("look:vehicles")) LookForVehicles(now);
         using (Prof.Time("listen")) Listen(now);
@@ -127,15 +138,33 @@ public sealed class BotSenses
             // By eye, a vehicle is spotted out to ~600 m (further if it's moving or firing);
             // a crew's optics ~900 m; recon with binoculars ~1500 m.
             float range = _b.Squad?.Kind == SquadKind.Recon ? 1500f : _b.Ride != null ? 900f : 600f;
+            bool gunSight = false;
             // Up in an aircraft, with the ground laid out below: out to 1.5 km, and in a gunship's sight (magnified,
             // day and thermal) out to 3 km ahead.
             if (_b.Ride is { Def.Air: true, Landed: false } mine)
-                range = mine.Def.Kind == VKind.AH && Mathf.RadToDeg((mine.Forward with { Y = 0f }).AngleTo((c - eye) with { Y = 0f })) < 60f ? 3000f : 1500f;
-            if (v.Speed * v.Speed > 4f || Clock.Now - v.LastFired < 3.0) range *= 1.3f;
+            {
+                gunSight = mine.Def.Kind == VKind.AH && Mathf.RadToDeg((mine.Forward with { Y = 0f }).AngleTo((c - eye) with { Y = 0f })) < 60f;
+                range = gunSight ? 3000f : 1500f;
+            }
+            bool fired = Clock.Now - v.LastFired < 3.0;
+            if (v.Speed * v.Speed > 4f || fired) range *= 1.3f;
             // A helicopter against the sky, and you hear it long before: no need to be looking its way.
             bool flying = v.Def.Air && !v.Landed;
             if (flying) range = MathF.Max(range, 2200f);
-            // An air defence vehicle's search radar: any aircraft in the open within reach of its guns.
+            // The dark and the weather: by night a vehicle is a dark mass seen as far as the light (or the goggles, or a
+            // thermal sight, to which a running engine glows) allows, or by its gun flashes; against the sky, a helicopter
+            // shows further. Through haze, rain or fog, only so far as there's contrast left: about 0.8 of the visibility
+            // for a hull (Koschmieder, for an object of half a black body's contrast), three times that in the thermal.
+            // (Broad daylight in clear air: as it always was.)
+            if (NightGear.NightKitOn || Conditions.VisibilityM < 12000f)
+            {
+                var gear = gunSight ? _gear | NightOptic.Thermal : _gear;
+                float ang = IsGunner || gunSight ? 0f : Mathf.RadToDeg(look.AngleTo(c - eye));
+                var s = NightGear.See(gear, ang, d, NightGear.LightOf(Conditions.LuxAt(c)), _eyeL, flying, fired);
+                float clear = Conditions.VisibilityM * (s.By == NightOptic.Thermal ? 2.4f : s.Flash ? 1.2f : 0.8f);
+                range = MathF.Min(range * (s.Flash ? 1f : s.Reach), clear);
+            }
+            // An air defence vehicle's search radar: any aircraft in the open within reach of its guns, day or night.
             if (flying && _b.Ride is { Def.Kind: VKind.SPAA }) range = MathF.Max(range, 3000f);
             if (d < range && (_b.Ride != null || flying || Mathf.RadToDeg(look.AngleTo(c - eye)) < 110f))
                 // Hull-down, only the turret may show: check it too, and remember which part we saw.
@@ -151,7 +180,10 @@ public sealed class BotSenses
                 // Out of sight isn't out of mind: an armoured vehicle moving close by is heard
                 // (engine, tracks), and where it's heard is where it is.
                 bool loud = MathF.Abs(v.Speed) > 1f || Clock.Now - v.LastFired < 2.0;
-                if (loud && d < (v.Def.Heavy ? 220f : 140f) && !flying)
+                // Rain's noise masks it: every 9 dB more background costs half the distance (spreading plus the ground's
+                // and the air's losses over the last few hundred metres come to about that per doubling).
+                float hear = (v.Def.Heavy ? 220f : 140f) * MathF.Pow(2f, -Conditions.NoiseDb / 9f);
+                if (loud && d < hear && !flying)
                 {
                     if (known == null) { known = new VehicleThreat { Who = v, LastKnownPos = c }; Vehicles.Add(known); }
                     known.LastHeard = now;
@@ -188,11 +220,17 @@ public sealed class BotSenses
         return hit.Count == 0 || hit["collider"].AsGodotObject() == c;
     }
 
+    /// <summary>This look's night kit (goggles, sights) and the light round our own eyes (which sets a goggle's gain).</summary>
+    NightOptic _gear;
+    float _eyeL = 1f;
+
     void Look(float dt, double now)
     {
         var space = _b.GetWorld3D().DirectSpaceState;
         var eye = _b.EyePos;
         var look = _b.Aim.Dir;
+        _gear = NightGear.Of(_b);
+        _eyeL = NightGear.LightOf(Conditions.LuxAt(eye));
 
         foreach (var c in Combatants.All)
         {
@@ -243,22 +281,31 @@ public sealed class BotSenses
             t.ChestVisible = chest;
             t.HipVisible = hip;
 
-            if (now - t.LastSeen < 1.5) t.Awareness = 1f; // still tracking someone we just had eyes on
-            else
+            // The light on him and the air between, and what we're looking with (see NightGear).
+            var env = EnvOf(c);
+            bool fired = now - c.LastShotTime < FlashFor(c);
+            float targetL = LightOn(c, env);
+            bool sky = targetL < 0.75f && Skylined(t, c, eye, d, now);
+            var sight = NightGear.See(_gear, IsGunner ? 0f : ang, d, targetL, _eyeL, sky, fired);
+            // Undergrowth and shade in a wood, the dark inside a room seen from out in the light: a man
+            // there is much harder to pick out. (A thermal sight sees through most of it.)
+            float hidden = Concealment(c, env);
+            if (IsGunner || sight.By == NightOptic.Thermal) hidden = MathF.Sqrt(hidden);
+
+            bool tracking = now - t.LastSeen < 1.5; // still tracking someone we just had eyes on
+            // In the dark (or thick weather) a man can be picked out by his flash and then lost again the moment he stops
+            // firing: past the range at which he could be made out afresh, there's nothing to follow but the spot the
+            // flash was (below the "something moved there" level, so it isn't followed as he moves off). By day, once
+            // seen, a man in view is kept in view.
+            if (tracking && !fired && (sight.Reach < 0.95f || sight.Trans < 0.5f)
+                && SpotRate(c, n, ang, d, hidden, sight, false) < HoldRate)
             {
-                float angle = ang < 20f ? 1f : ang < 50f ? 0.7f : 0.35f;
-                float scale = EyesReach();
-                float dist = 1f / (1f + (d / scale) * (d / scale)) * (d < 15f ? 2f : 1f);
-                float stance = c.BodyHeight < 1.0f ? 0.35f : c.BodyHeight < 1.5f ? 0.7f : 1f;
-                float motion = 1f + c.Vel.Length() / 2.5f;
-                float firing = now - c.LastShotTime < 1.0 ? 4f : 1f;
-                // Undergrowth and shade in a wood, the dark inside a room seen from out in the light: a man
-                // there is much harder to pick out. (A gunner's thermal sight sees through most of it.)
-                float hidden = Concealment(c);
-                if (IsGunner) hidden = MathF.Sqrt(hidden);
-                float rate = 2f * _b.P.SpotRate * (n / 4f) * angle * dist * stance * motion * firing * hidden * (1f - _b.Suppression * 0.5f);
-                t.Awareness = Mathf.Min(1f, t.Awareness + rate * dt);
+                tracking = false;
+                if (t.Visible) Prof.Count("sight:lost in the dark");
+                t.Awareness = MathF.Min(t.Awareness, 0.3f);
             }
+            if (tracking) t.Awareness = 1f;
+            else t.Awareness = Mathf.Min(1f, t.Awareness + SpotRate(c, n, ang, d, hidden, sight, fired) * dt);
 
             if (t.Awareness >= 1f)
             {
@@ -269,7 +316,8 @@ public sealed class BotSenses
                     t.VisibleSince = now;
                     t.TleRedraw = now; // a new sighting: a new picture of them
                 }
-                t.Tle = LocationError(c, d, n, now - t.VisibleSince);
+                t.Tle = LocationError(d, n, now - t.VisibleSince, hidden, sight);
+                if (freshContact) CountContact(d, sight);
                 if (now >= t.TleRedraw)
                 {
                     t.TleDir = new Vector2(_rng.Randfn(0f, 1f), _rng.Randfn(0f, 0.7f)); // the ground they're on pins the height down a little
@@ -307,13 +355,95 @@ public sealed class BotSenses
     /// watching; more among trees or in a dark room; more when we're being shot at; much less through a
     /// magnified sight.
     /// </summary>
-    float LocationError(ICombatant c, float d, int parts, double watched)
+    float LocationError(float d, int parts, double watched, float hidden, in Sight sight)
     {
-        float hidden = Concealment(c);
-        if (IsGunner) hidden = MathF.Sqrt(hidden);
         float optic = IsGunner ? 3f : _b.Def.Scoped ? 2.5f : 1f;
-        float mrad = (1f + (4 - parts) * 0.5f) * (1f + 2f * MathF.Exp(-(float)watched / 2.5f)) * (1f + _b.Suppression) / (hidden * optic);
+        // A dim shape in the dark or through rain, or only a flash: where exactly the man is, is a rougher guess (up to
+        // two and a half times as rough as in daylight, for a figure only just made out).
+        float dim = 1f + 1.5f * (1f - Mathf.Clamp(sight.Reach * MathF.Sqrt(sight.Trans), 0f, 1f));
+        float mrad = (1f + (4 - parts) * 0.5f) * (1f + 2f * MathF.Exp(-(float)watched / 2.5f)) * (1f + _b.Suppression) * dim / (hidden * optic);
         return d * 0.001f * mrad;
+    }
+
+    /// <summary>
+    /// How fast someone is being picked out (awareness per second): close, central, standing, moving and firing make it
+    /// quicker; distance (how far our eyes carry, in this light), the dark and the air between, cover and being shot at
+    /// make it slower.
+    /// </summary>
+    float SpotRate(ICombatant c, int n, float ang, float d, float hidden, in Sight sight, bool fired)
+    {
+        bool flash = fired && sight.Flash;
+        float angle = ang < 20f ? 1f : ang < 50f ? 0.7f : 0.35f;
+        // A flash in the dark catches the eye from the side (the rods at the edge of the eye are the ones that see at night).
+        if (flash) angle = MathF.Max(angle, 0.7f);
+        float scale = EyesReach() * (flash ? 1f : sight.Reach);
+        float dist = 1f / (1f + (d / scale) * (d / scale)) * (d < 15f ? 2f : 1f);
+        float stance = c.BodyHeight < 1.0f ? 0.35f : c.BodyHeight < 1.5f ? 0.7f : 1f;
+        float motion = 1f + c.Vel.Length() / 2.5f;
+        float firing = fired ? 4f : 1f;
+        float contrast = (flash ? 1f : sight.Rate) * sight.Trans;
+        return 2f * _b.P.SpotRate * (n / 4f) * angle * dist * stance * motion * firing * hidden * contrast * (1f - _b.Suppression * 0.5f);
+    }
+
+    /// <summary>Below this (about 25 s to pick him out afresh) a man can't be followed by eye once his flash is gone.</summary>
+    const float HoldRate = 0.04f;
+
+    /// <summary>
+    /// How long after a shot the shooter stays conspicuous: a second of muzzle flash (and the crack and thump); at
+    /// night a machine gun's tracers (one round in four or five in a belt) draw a line back to it for a couple of seconds.
+    /// </summary>
+    static double FlashFor(ICombatant c)
+    {
+        if (!NightGear.NightKitOn) return 1.0;
+        var def = c is Bot b ? b.Def : c is Player p ? p.Weapon?.Def : null;
+        return def is { OpenBolt: true } ? 2.5 : 1.0;
+    }
+
+    static EnvKind EnvOf(ICombatant c) => c is Bot b ? b.Brain.Env : Surroundings.At(null, c.FeetPos);
+
+    /// <summary>
+    /// The light on someone (0..1 as Conditions.Light): the sky's, flares' and fires'; under a canopy only a sixth or so of
+    /// it reaches the ground (forest-floor measurements put it at 5-20%), and inside a building a few percent (a room's
+    /// daylight factor).
+    /// </summary>
+    static float LightOn(ICombatant c, EnvKind env)
+    {
+        float lux = Conditions.LuxAt(c.ChestPos);
+        if (env == EnvKind.Forest) lux *= 0.15f;
+        else if (env == EnvKind.Interior) lux *= 0.03f;
+        return NightGear.LightOf(lux);
+    }
+
+    /// <summary>
+    /// Is he against the sky from here: the line from our eye past his head meets no ground for the next 800 m. Checked
+    /// once a second per man (a height-grid walk, only at night).
+    /// </summary>
+    bool Skylined(Threat t, ICombatant c, Vector3 eye, float d, double now)
+    {
+        if (d < 20f || Terrain.Main is not { } ground) return false;
+        if (now - t.SkyCheck < 1.0) return t.Skylined;
+        t.SkyCheck = now;
+        var head = Combatants.PointOn(c, Combatants.Part.Head);
+        var dir = (head - eye) / MathF.Max(0.1f, d);
+        t.Skylined = !ground.Blocks(head + dir * 2f, head + dir * 800f, out _);
+        return t.Skylined;
+    }
+
+    /// <summary>For measuring: at what range contacts are first made, and with what (count sight:*, printed by DevShot).</summary>
+    static void CountContact(float d, in Sight s)
+    {
+        Prof.Count(d < 50f ? "sight:contact 0-50 m" : d < 100f ? "sight:contact 50-100 m" : d < 200f ? "sight:contact 100-200 m" : d < 400f ? "sight:contact 200-400 m" : "sight:contact 400+ m");
+        Prof.Count("sight:contact n");
+        Prof.Count("sight:contact sum m", (long)d);
+        var (by, sum) = s.Flash ? ("sight:contact by flash", "sight:contact by flash sum m") : s.By switch
+        {
+            NightOptic.Goggles => ("sight:contact by goggles", "sight:contact by goggles sum m"),
+            NightOptic.SightI2 => ("sight:contact by I2 sight", "sight:contact by I2 sight sum m"),
+            NightOptic.Thermal => ("sight:contact by thermal", "sight:contact by thermal sum m"),
+            _ => ("sight:contact by eye", "sight:contact by eye sum m"),
+        };
+        Prof.Count(by);
+        Prof.Count(sum, (long)d);
     }
 
     /// <summary>Beyond this nobody is picked out at all (and rays aren't cast).</summary>
@@ -337,10 +467,9 @@ public sealed class BotSenses
     }
 
     /// <summary>How well someone's surroundings hide them (1 = in plain view): woods, or inside a building seen from outside it.</summary>
-    float Concealment(ICombatant c)
+    float Concealment(ICombatant c, EnvKind env)
     {
         if (c.Ride != null) return 1f; // up on a vehicle: in plain view
-        var env = c is Bot b ? b.Brain.Env : Surroundings.At(null, c.FeetPos);
         if (env == EnvKind.Forest) return 0.55f;
         if (env == EnvKind.Interior && _b.Brain.Env != EnvKind.Interior) return 0.5f;
         return 1f;
@@ -364,7 +493,13 @@ public sealed class BotSenses
             if (!e.Source.Alive || !Combatants.Contains(e.Source)) continue;
             // Footsteps are mixed quiet for the player's ears, but an alert soldier listens for them.
             float level = SoundWorld.I.LevelAt(e.Kind, d, e.GainDb) + (e.Kind == Snd.Footstep ? 8f : 0f);
-            if (level < -44f) continue;
+            // Rain on everything raises the noise floor, and a sound has to stand out of it to be heard (masking):
+            // footsteps and movement go under long before gunfire does.
+            if (level < -44f + Conditions.NoiseDb)
+            {
+                if (level >= -44f) Prof.Count(e.Kind == Snd.Footstep ? "hear:footstep lost in the rain" : "hear:lost in the rain");
+                continue;
+            }
 
             var t = Get(e.Source);
             if (t.Visible) continue;

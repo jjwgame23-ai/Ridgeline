@@ -58,6 +58,7 @@ public static class Controls
         new("drone_fpv", "Fly an FPV drone", "Actions", Where.OnFoot, new[] { "key:J" }),
         new("drone_fpv_at", "Fly an anti-tank FPV", "Actions", Where.OnFoot, new[] { "key:K" }),
         new("free_look", "Look around (hold)", "Actions", Where.Vehicle, new[] { "key:Alt" }),
+        new("nvg", "Night vision goggles", "Actions", Where.OnFoot | Where.Vehicle, new[] { "key:L" }, "Up or down, if your side issues them to your role"),
 
         new("map", "Map", "Squad", Where.Anywhere, new[] { "key:M" }, "Pick a spawn there when dead; as squad leader, click to send the squad"),
         new("squad_follow", "Squad: on me", "Squad", Where.Anywhere, new[] { "key:B" }, "Squad leader"),
