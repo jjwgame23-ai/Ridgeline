@@ -4,6 +4,10 @@ namespace Ridgeline;
 
 public partial class MainMenu : Control
 {
+    static readonly double[] StartHours = { 5.0, 8.0, 12.0, 16.0, 18.5, 22.0, -1.0 };
+    static readonly string[] Weathers = { "Clear", "Overcast", "Rain", "Fog", "Random" };
+    static readonly float[] TimeScales = { 0f, 1f, 4f, 12f };
+
     public override void _Ready()
     {
         Input.MouseMode = Input.MouseModeEnum.Visible;
@@ -67,6 +71,31 @@ public partial class MainMenu : Control
         len.ItemSelected += i => { Settings.MatchMinutes = Settings.MatchLengths[i]; Settings.Save(); };
         mrow.AddChild(len);
         mrow.AddChild(blurb);
+        // The time of day, the weather and how fast the clock runs: a three-hour match at 4x goes from noon
+        // through dusk into the night.
+        var crow = new HBoxContainer();
+        crow.AddThemeConstantOverride("separation", 12);
+        box.AddChild(crow);
+        crow.AddChild(new Label { Text = "Conditions:" });
+        OptionButton Cond(string tip, string[] items, int selected, Action<int> set)
+        {
+            var o = new OptionButton { TooltipText = tip, CustomMinimumSize = new Vector2(150, 0) };
+            foreach (var it in items) o.AddItem(it);
+            o.Selected = Math.Clamp(selected, 0, items.Length - 1);
+            o.ItemSelected += i => { set((int)i); Settings.Save(); };
+            crow.AddChild(o);
+            return o;
+        }
+        int hourAt = Array.FindIndex(StartHours, h => Math.Abs(h - Settings.StartHour) < 0.01);
+        Cond("When the match starts. Night is dark: a full moon lets you see, a moonless or overcast night hardly at all.",
+            new[] { "Dawn 05:00", "Morning 08:00", "Noon 12:00", "Afternoon 16:00", "Dusk 18:30", "Night 22:00", "Random time" },
+            hourAt >= 0 ? hourAt : Settings.StartHour < 0 ? StartHours.Length - 1 : 2, i => Settings.StartHour = StartHours[i]);
+        int wxAt = Array.FindIndex(Weathers, x => x.Equals(Settings.Weather, StringComparison.OrdinalIgnoreCase));
+        Cond("The weather, fixed for the match. Rain and fog cut how far anyone can see; rain covers sound.",
+            new[] { "Clear", "Overcast", "Rain", "Fog", "Random weather" }, wxAt >= 0 ? wxAt : Weathers.Length - 1, i => Settings.Weather = Weathers[i]);
+        Cond("How fast the time of day runs against the match.",
+            new[] { "Clock stopped", "Real time", "4x time", "12x time" },
+            Math.Max(0, Array.FindIndex(TimeScales, t => MathF.Abs(t - Settings.TimeScale) < 0.01f)), i => Settings.TimeScale = TimeScales[i]);
         box.AddChild(new Label { Text = "A map's first launch bakes its navigation (up to a minute on the 5 km maps); it's cached after that.", Modulate = new Color(1, 1, 1, 0.4f), AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(440, 0) });
         box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 6) });
 

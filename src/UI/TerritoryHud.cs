@@ -211,6 +211,9 @@ public partial class TerritoryHud : CanvasLayer
         return string.Join("\n", lines);
     }
 
+    // The weather is the match's, set before the HUD is made.
+    readonly string _weatherName = Conditions.Weather.ToString().ToLowerInvariant();
+
     public override void _Process(double delta)
     {
         double now = Clock.Now;
@@ -218,7 +221,8 @@ public partial class TerritoryHud : CanvasLayer
         _roster.Text = RosterText();
         _score.Text = string.Join("     ", Enumerable.Range(0, 3).Select(t =>
             $"{TeamTag(t)} {m.Tickets[t]}{(m.Out[t] ? " [color=#888888](out)[/color]" : m.Spent(t) ? " [color=#ff5040](last stand)[/color]" : "")} [color=#aaaaaa]· {m.Owned(t)} pts[/color]"
-            + (!m.Out[t] && m.HQHold[t] < 0.999f ? $" [color=#ff5040]HQ {m.HQHold[t] * 100:0}%[/color]" : "")));
+            + (!m.Out[t] && m.HQHold[t] < 0.999f ? $" [color=#ff5040]HQ {m.HQHold[t] * 100:0}%[/color]" : "")))
+            + $"     [color=#bbbbbb]{Conditions.Clock} · {_weatherName}[/color]";
         _points.Text = PointsLine();
 
         var sq = m.PlayerSquad;

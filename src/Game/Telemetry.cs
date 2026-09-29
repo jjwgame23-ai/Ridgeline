@@ -10,7 +10,7 @@ namespace Ridgeline;
 /// and measures them). A folder (record.cmd passes one) gets a new file for each match, named for the map and
 /// the time it started.
 /// - The first line is the map: terrain heights, buildings, trees, the points and the bases, so a plot
-///   can draw the ground under it.
+///   can draw the ground under it; and the conditions (start hour, weather, clock speed, moon, visibility).
 /// - Twice a second, everyone: where they are, what they're doing (state, stance, target, suppression,
 ///   health, ammo) and every vehicle and drone.
 /// - As they happen: every shot (from, towards, at whom, how), hit, casualty, explosion, change of
@@ -124,6 +124,12 @@ public static class Telemetry
         _sb.Append("{\"k\":\"map\",\"id\":").Append(S(map.Spec.Id)).Append(",\"name\":").Append(S(map.Spec.Name))
            .Append(",\"size\":").Append(F(map.Size)).Append(",\"seed\":").Append(map.Seed)
            .Append(",\"teams\":[\"ALPHA\",\"BRAVO\",\"CHARLIE\"]");
+        // The conditions the match was fought in: the hour it began, the weather, how fast the clock ran,
+        // the moon (fraction lit) and the visibility.
+        _sb.Append(",\"cond\":{\"hour\":").Append(Conditions.StartHour.ToString("0.##", Inv)).Append(",\"weather\":").Append(S(Conditions.Weather.ToString()))
+           .Append(",\"timescale\":").Append(F2(Conditions.TimeScale)).Append(",\"moon\":{\"phase\":").Append(F2(Conditions.MoonPhase))
+           .Append(",\"lit\":").Append(F2(Conditions.MoonLit)).Append("},\"vis\":").Append(F(Conditions.VisibilityM))
+           .Append(",\"rain\":").Append(F(SkyView.RainRate)).Append('}');
         _sb.Append(",\"hm\":{\"n\":").Append(n).Append(",\"step\":").Append(F(step * t.Spacing)).Append(",\"origin\":").Append(F(-t.Extent))
            .Append(",\"lo\":").Append(F(lo)).Append(",\"hi\":").Append(F(hi)).Append(",\"data\":\"").Append(Convert.ToBase64String(hb)).Append("\"}");
         _sb.Append(",\"buildings\":{\"cell\":4,\"data\":\"").Append(Convert.ToBase64String(cb)).Append("\"}");
@@ -218,12 +224,13 @@ public static class Telemetry
         }
         _sb.Append("]}");
         Line(_sb.ToString());
-        // Every 5 s, the state of the match: tickets, who's out, who holds each point, and each headquarters' hold.
+        // Every 5 s, the state of the match: tickets, who's out, who holds each point, each headquarters' hold,
+        // and the hour and the light (lux on open ground).
         // (Recordings had none of it: the ticket race had to be rebuilt from the kills and the capture notes.)
         if (Clock.Now >= _nextScore)
         {
             _nextScore = Clock.Now + 5.0;
-            Line($"{{\"k\":\"score\",\"t\":{T},\"tickets\":[{m.Tickets[0]},{m.Tickets[1]},{m.Tickets[2]}],\"out\":[{(m.Out[0] ? 1 : 0)},{(m.Out[1] ? 1 : 0)},{(m.Out[2] ? 1 : 0)}],\"owner\":[{string.Join(",", m.Owner)}],\"hq\":[{F2(m.HQHold[0])},{F2(m.HQHold[1])},{F2(m.HQHold[2])}]}}");
+            Line($"{{\"k\":\"score\",\"t\":{T},\"tickets\":[{m.Tickets[0]},{m.Tickets[1]},{m.Tickets[2]}],\"out\":[{(m.Out[0] ? 1 : 0)},{(m.Out[1] ? 1 : 0)},{(m.Out[2] ? 1 : 0)}],\"owner\":[{string.Join(",", m.Owner)}],\"hq\":[{F2(m.HQHold[0])},{F2(m.HQHold[1])},{F2(m.HQHold[2])}],\"hour\":{Conditions.Hour.ToString("0.00", Inv)},\"lux\":{Conditions.Lux.ToString("G3", Inv)}}}");
         }
         if (Clock.Now > _nextFlush) { _nextFlush = Clock.Now + 5.0; _w.Flush(); }
     }
