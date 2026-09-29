@@ -655,12 +655,15 @@ public partial class Vehicle : CharacterBody3D
         var c = Center;
         Grenade.Detonate(c, Vector3.Up, by, Def.Heavy ? 15f : 8f, 0f, Def.Heavy ? 6f : 2f, Def.Name + " cook-off", power: Def.Heavy ? 12f : 3f);
         // In the air the fire goes with the wreck (FallWreck); on the ground it burns here.
-        if (airborne) _trail ??= Effects.I.Burn(c, 45f);
+        // The light it burns with, for everyone's eyes: a car fire about 20 000 cd; an armoured vehicle's fuel, ammunition
+        // and rubber burn about four times as hard (heat release in the tunnel fire tests: a car ~5 MW, a heavy vehicle ~20+).
+        float candela = Def.Heavy ? 80000f : 20000f;
+        if (airborne) _trail ??= Effects.I.Burn(c, 45f, candela);
         else
         {
             _trail?.MoveTo(c);
             _trail = null;
-            Effects.I.Burn(c + Vector3.Up * 0.5f, Def.Heavy ? 90f : 45f);
+            Effects.I.Burn(c + Vector3.Up * 0.5f, Def.Heavy ? 90f : 45f, candela);
         }
         // The crew: some make it out.
         for (int i = 0; i < Occupants.Length; i++)
