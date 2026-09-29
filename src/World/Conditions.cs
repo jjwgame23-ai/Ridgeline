@@ -53,7 +53,8 @@ public static class Conditions
     /// Set up for a match. <paramref name="hour"/> below 0: a random hour; <paramref name="weather"/> null: random weather
     /// (clear more often than not).
     /// </summary>
-    public static void Start(double hour, WeatherKind? weather, float timeScale, int seed)
+    /// <param name="moonPhase">The moon's age (0 new, 0.5 full); below 0, random.</param>
+    public static void Start(double hour, WeatherKind? weather, float timeScale, int seed, float moonPhase = -1f)
     {
         var rng = new System.Random(seed);
         StartHour = hour >= 0 ? hour % 24.0 : rng.NextDouble() * 24.0;
@@ -61,6 +62,7 @@ public static class Conditions
         double r = rng.NextDouble();
         Weather = weather ?? (r < 0.5 ? WeatherKind.Clear : r < 0.72 ? WeatherKind.Overcast : r < 0.88 ? WeatherKind.Rain : WeatherKind.Fog);
         MoonPhase = (float)rng.NextDouble();
+        if (moonPhase >= 0f) MoonPhase = moonPhase % 1f;
         ClearLights();
         Declination = 5f + (float)rng.NextDouble() * 18f;
         // A fog's thickness varies from one morning to the next; so does rain.

@@ -17,6 +17,8 @@ public sealed class GameSetup
     public string Weather = "";
     /// <summary>World seconds per match second; below 0, the menu's choice.</summary>
     public float TimeScale = -1;
+    /// <summary>The moon's age, 0 new .. 0.5 full; below 0, random (test runs pin it).</summary>
+    public float Moon = -1;
 }
 
 /// <summary>

@@ -50,7 +50,7 @@ public partial class Main : Node3D
         double hour = setup.Hour >= -1 ? setup.Hour : Settings.StartHour;
         string wx = setup.Weather != "" ? setup.Weather : Settings.Weather;
         WeatherKind? weather = Enum.TryParse<WeatherKind>(wx, true, out var wk) ? wk : null; // "Random" and anything else: random
-        Conditions.Start(hour, weather, setup.TimeScale >= 0 ? setup.TimeScale : Settings.TimeScale, setup.Seed ^ (int)Time.GetTicksMsec());
+        Conditions.Start(hour, weather, setup.TimeScale >= 0 ? setup.TimeScale : Settings.TimeScale, setup.Seed ^ (int)Time.GetTicksMsec(), setup.Moon);
 
         // Order matters: systems first, since everything after emits sounds and effects. The air
         // and ground of the map go into how every sound is made, so they're set before.

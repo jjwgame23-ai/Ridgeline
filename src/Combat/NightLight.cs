@@ -15,7 +15,13 @@ public static class NightLight
     /// <summary>The renderer's light energy that stands for full daylight (the sun's, see Main.BuildEnvironment).</summary>
     public const float DayEnergy = 1.3f;
 
-    static float Seen(float lux) => MathF.Pow(Mathf.Clamp((MathF.Log10(MathF.Max(lux, 1e-6f)) + 3.5f) / 6.5f, 0f, 1f), 2.2f);
+    /// <summary>
+    /// How bright ground lit to <paramref name="lux"/> is drawn: the same adaptation curve the sky and the sun and moon are
+    /// drawn by (SkyView.Level), so a flare or a fire sits in the scene as the eye would see it. (Each side of the night
+    /// work had its own curve: flares came out about 80 times brighter than the starlit ground round them, where the eye
+    /// sees them about six times brighter.)
+    /// </summary>
+    static float Seen(float lux) => SkyView.Level(lux);
 
     /// <summary>
     /// The energy and falloff exponent for a source of <paramref name="candela"/> between <paramref name="near"/> and
@@ -53,9 +59,7 @@ public static class NightLight
         return w * MathF.Pow(MathF.Max(height, 2f) / 10f, 1f / 7f);
     }
 
-    // SoundWorld owns the wind (which way it blows and how hard, gusts included) but doesn't share it: read it here.
-    static readonly System.Reflection.FieldInfo? _windField =
-        typeof(SoundWorld).GetField("_wind", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+    // SoundWorld owns the wind (which way it blows and how hard, gusts included).
     static double _windAt = -1.0;
     static Vector3 _wind;
 
@@ -63,7 +67,7 @@ public static class NightLight
     {
         if (_windAt >= 0.0 && Clock.Now >= _windAt && Clock.Now - _windAt < 1.0) return _wind; // (a new match starts the clock again)
         _windAt = Clock.Now;
-        _wind = SoundWorld.I != null && _windField?.GetValue(SoundWorld.I) is Vector3 w ? w : new Vector3(Acoustics.WindMean, 0f, 0f);
+        _wind = SoundWorld.I?.Wind ?? new Vector3(Acoustics.WindMean, 0f, 0f);
         return _wind;
     }
 }

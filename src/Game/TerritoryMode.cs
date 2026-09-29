@@ -317,7 +317,7 @@ public partial class TerritoryMode : Node, IMatch
         SmokeScreen.Clear();
         PerchClaims.Clear();
         MotorPool.ResetCounters();
-        CrewBrain.AreaRounds = CrewBrain.HeldForFriendlies = 0;
+        CrewBrain.AreaRounds = CrewBrain.HeldForFriendlies = CrewBrain.IllumRounds = 0;
         Drone.Log = Log;
         Bot.StuckEvents = Bot.StuckNearVehicle = Bot.StuckBoarding = Bot.StuckWaiting = 0;
         CrewBrain.MortarRounds = 0;

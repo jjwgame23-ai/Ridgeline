@@ -74,6 +74,7 @@ public partial class DevShot : Node
         // hour=23.5 (or -1 random), weather=rain|fog|overcast|clear|random, timescale=4
         if (a.TryGetValue("hour", out var hr) && double.TryParse(hr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hour)) setup.Hour = hour;
         if (a.TryGetValue("weather", out var wx)) setup.Weather = wx;
+        if (a.TryGetValue("moon", out var mo) && float.TryParse(mo, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var moon)) setup.Moon = moon;
         if (a.TryGetValue("timescale", out var ts) && float.TryParse(ts, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tsv)) setup.TimeScale = tsv;
         if (a.TryGetValue("tickets", out var tk) && int.TryParse(tk, out var tix)) TerritoryMode.TicketsOverride = tix;
         return setup;
