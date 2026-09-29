@@ -76,9 +76,19 @@ public sealed class CrewBrain
             _mission = tg;
             _lay = _mission + Sheaf();
             _roundsLeft = _rng.RandiRange(5, 7);
+            _illumShots = 0;
+            _illumUntil = 0.0;
+            _illumNext = false;
             Comms.Say(_b, $"Fire mission, {Comms.Bearing(v.GlobalPosition, tg)}, {v.GlobalPosition.DistanceTo(tg):0} meters. Rounds out!");
         }
         if (now < _nextRound) return;
+        // At night, light it first: an illumination round over the target (and another if the mission outlasts the
+        // candle), unless something's already lighting it.
+        if (!_illumNext && _illumShots < 2 && now > _illumUntil && Conditions.Dark && Conditions.LuxAt(_mission) < 1f && IllumIdx(t) >= 0)
+        {
+            _illumNext = true;
+            _illumLay = IllumPoint(t);
+        }
         // Check fire: our own people have moved into the target area since the mission was called (an
         // assault going in, a squad passing through). Every round is cleared before it goes, not just the first.
         if (Combatants.All.Any(f => f.Team == _b.Team && !f.Dead && f.FeetPos.DistanceTo(_mission) < 70f))
@@ -92,22 +102,50 @@ public sealed class CrewBrain
         // Each bomb laid a little off the last: the sheaf spreads them over the target. The point is picked once per
         // bomb and the tube laid on it. (It used to be re-picked every tick, so the lay chased a point that jumped
         // about by 20 m, and the bomb went wherever the tube happened to be when it counted as laid.)
-        t.AimAt = _lay;
+        bool illum = _illumNext && IllumIdx(t) >= 0;
+        _illumNext = illum;
+        Load(v, ti, illum ? IllumIdx(t) : 0);
+        var lay = illum ? _illumLay : _lay;
+        t.AimAt = lay;
         bool loader = Loader(v) != null;
-        if (t.LaidAt == _lay && t.OutOfRange)
+        if (t.LaidAt == lay && t.OutOfRange)
         {
+            // Can't put the candle that high that far off: the HE goes without it.
+            if (illum) { _illumNext = false; _illumShots = 2; return; }
             _roundsLeft = 0;
             _nextMission = now + 4.0;
             Note = "target out of range";
             return;
         }
-        Note = $"fire mission: {_roundsLeft} to go{(loader ? "" : ", loading himself")}";
+        Note = illum ? "fire mission: illumination" : $"fire mission: {_roundsLeft} to go{(loader ? "" : ", loading himself")}";
         // Laid on this bomb's point, not still on the last one's.
-        if (!t.Laid || t.LaidAt != _lay || t.Reloading || t.Cool > 0f) return;
+        if (!t.Laid || t.LaidAt != lay || t.Reloading || t.Cool > 0f) return;
+        float fuze = 0f;
+        if (illum)
+        {
+            // The fuze is set for the time of flight to the burst point: with no drag to speak of on a bomb this slow,
+            // the horizontal distance over the horizontal speed it leaves the tube with.
+            var fwd = t.Forward;
+            float flatV = t.Weapon.Speed * t.Charge * new Vector2(fwd.X, fwd.Z).Length();
+            fuze = ((lay - t.Muzzle.GlobalPosition) with { Y = 0f }).Length() / MathF.Max(flatV, 1f);
+            Illumination.SetFuze(v, fuze);
+        }
+        float burnS = t.Weapon.IllumS;
         if (v.Fire(ti, false))
         {
             MortarRounds++;
             if (loader) MortarLoaded++;
+            if (illum)
+            {
+                IllumRounds++;
+                Prof.Count("illum:rounds fired");
+                _illumNext = false;
+                _illumShots++;
+                _illumUntil = now + fuze + burnS;
+                Comms.Say(_b, "Illumination out.");
+                _nextRound = now + (loader ? _rng.RandfRange(3.5f, 5f) : _rng.RandfRange(7f, 9.5f));
+                return;
+            }
             _roundsLeft--;
             _lay = _mission + Sheaf();
             // A crew of two: one lays, the other hangs the bomb, 3.5-5 s a round. One man alone has to take up a
@@ -119,6 +157,44 @@ public sealed class CrewBrain
 
     /// <summary>Where in the target area the next bomb is laid: within ~20 m of the centre of the sightings.</summary>
     Vector3 Sheaf() => new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * 22f;
+
+    public static int IllumRounds;
+    bool _illumNext;
+    int _illumShots;
+    double _illumUntil;
+    Vector3 _illumLay;
+    /// <summary>Height of burst for mortar illumination over the target (81 mm: 600 m).</summary>
+    const float IllumHob = 600f;
+
+    /// <summary>The tube's illumination rounds, if it has any left: -1 if not.</summary>
+    static int IllumIdx(Vehicle.TurretState t)
+    {
+        for (int i = 0; i < t.Def.Ammo.Length; i++)
+            if (t.Def.Ammo[i].IllumCd > 0f && t.Loaded[i] + t.Stock[i] > 0) return i;
+        return -1;
+    }
+
+    /// <summary>
+    /// Where the illumination round should burst: 600 m over the target and upwind of it by half the drift over the
+    /// candle's burn, so that it drifts across the target and is over it mid-burn.
+    /// </summary>
+    Vector3 IllumPoint(Vehicle.TurretState t)
+    {
+        int i = IllumIdx(t);
+        float burn = i >= 0 ? t.Def.Ammo[i].IllumS : 60f;
+        var wind = NightLight.WindAt(IllumHob - 5f * burn * 0.5f); // at its height half way down
+        return _mission + Vector3.Up * IllumHob - wind * (burn * 0.5f);
+    }
+
+    /// <summary>Have this round in hand: a mortar's bombs come out of the rack one at a time, so the one set down goes back in it.</summary>
+    static void Load(Vehicle v, int ti, int idx)
+    {
+        var t = v.Turrets[ti];
+        if (t.AmmoIdx == idx) return;
+        int had = t.Loaded[idx];
+        v.SelectAmmo(ti, idx);
+        t.Stock[idx] += had;
+    }
 
     /// <summary>The assistant gunner: one of the team at the tube, on his feet, loading (see BotBrain.Board).</summary>
     Bot? Loader(Vehicle v)

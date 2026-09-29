@@ -30,6 +30,14 @@ public sealed class VWeapon
     public bool FireAndForget;
     /// <summary>How far a guided missile reaches (m).</summary>
     public float Range;
+    /// <summary>Tracer rounds: one in every <c>TracerEvery</c> (0: none; 1: every round), burning out at <c>TraceM</c> in normal flight (see Tracers).</summary>
+    public int TracerEvery;
+    public float TraceM;
+    /// <summary>
+    /// An illumination round: a candle of <c>IllumCd</c> candela that burns <c>IllumS</c> seconds under its parachute,
+    /// thrown out by a time fuze over the target (see Illumination).
+    /// </summary>
+    public float IllumCd, IllumS;
     public bool AntiArmor => Pen >= 40f;
 }
 
@@ -103,38 +111,50 @@ public sealed class VehicleDef
     {
         Name = "12.7mm HMG", Sound = Snd.Hmg, Speed = 890f, Drag = 0.0003f, Damage = 95f, VehDamage = 7f, Pen = 25f,
         Rpm = 550f, Mag = 100, Mags = 6, Reload = 7f, SpreadDeg = 0.22f, Kick = 0.03f, Flash = 1.4f,
+        // Linked 4 ball : 1 tracer (M33 / M17); the M17's trace reaches about 1 450 m (TM 9-1005-213-10).
+        TracerEvery = 5, TraceM = 1450f,
     };
 
     public static VWeapon Coax() => new()
     {
         Name = "7.62mm coax", Sound = Snd.Rifle762, Speed = 850f, Drag = 0.0005f, Damage = 62f, VehDamage = 1f, Pen = 8f,
         Rpm = 700f, Mag = 250, Mags = 6, Reload = 6f, SpreadDeg = 0.15f, Kick = 0f, Flash = 0.9f,
+        // 4 ball : 1 tracer; 7.62 mm tracer (M62, T-46) burns out at about 900 m.
+        TracerEvery = 5, TraceM = 900f,
     };
 
     public static VWeapon[] Autocannon() => new[]
     {
         new VWeapon { Name = "30mm AP", Sound = Snd.Autocannon, Speed = 1100f, Drag = 0.00018f, Damage = 140f, VehDamage = 32f, Pen = 60f,
-                      Rpm = 200f, Mag = 70, Mags = 3, Reload = 5f, SpreadDeg = 0.12f, Kick = 0.08f, Flash = 1.8f },
+                      Rpm = 200f, Mag = 70, Mags = 3, Reload = 5f, SpreadDeg = 0.12f, Kick = 0.08f, Flash = 1.8f,
+                      // Every cannon round carries its own tracer (APDS-T, AP-T), traced out past the gun's battle range.
+                      TracerEvery = 1, TraceM = 2500f },
         new VWeapon { Name = "30mm HE", Sound = Snd.Autocannon, Speed = 1000f, Drag = 0.00022f, Damage = 140f, VehDamage = 10f, Pen = 10f,
-                      Explosive = true, Crater = 0.4f, FragR = 3.5f, Power = 0.25f, Rpm = 200f, Mag = 90, Mags = 3, Reload = 5f, SpreadDeg = 0.15f, Kick = 0.08f, Flash = 1.8f },
+                      Explosive = true, Crater = 0.4f, FragR = 3.5f, Power = 0.25f, Rpm = 200f, Mag = 90, Mags = 3, Reload = 5f, SpreadDeg = 0.15f, Kick = 0.08f, Flash = 1.8f,
+                      TracerEvery = 1, TraceM = 2000f }, // HEI-T: traced to about 2 km (the 25 mm M792's tracer)
     };
 
     public static VWeapon[] Cannon(float cal) => new[]
     {
         new VWeapon { Name = $"{cal:0}mm APFSDS", Sound = Snd.Cannon, Speed = cal > 110 ? 1650f : 1500f, Drag = 0.00006f, Damage = 400f,
                       VehDamage = cal > 110 ? 480f : 380f, Pen = cal > 110 ? 560f : 420f, Rpm = cal > 110 ? 7.5f : 9f, Mag = 1,
-                      Mags = 22, Reload = 0f, SpreadDeg = 0.03f, Kick = 0.45f, Flash = 4f },
+                      Mags = 22, Reload = 0f, SpreadDeg = 0.03f, Kick = 0.45f, Flash = 4f,
+                      // A tank round's tracer is how the commander sees where it went and calls the correction.
+                      TracerEvery = 1, TraceM = 3000f },
         new VWeapon { Name = $"{cal:0}mm HE", Sound = Snd.Cannon, Speed = 900f, Drag = 0.00012f, Damage = 400f, VehDamage = 120f, Pen = 60f,
                       Explosive = true, Crater = cal > 110 ? 1.6f : 1.3f, FragR = cal > 110 ? 30f : 25f, Power = cal > 110 ? 12f : 9f, Rpm = cal > 110 ? 7.5f : 9f, Mag = 1,
-                      Mags = 16, Reload = 0f, SpreadDeg = 0.05f, Kick = 0.45f, Flash = 4f },
+                      Mags = 16, Reload = 0f, SpreadDeg = 0.05f, Kick = 0.45f, Flash = 4f,
+                      TracerEvery = 1, TraceM = 2500f }, // HE-T / HEAT-MP-T
     };
 
     public static VWeapon DoorGun() => new()
     {
         Name = "7.62mm door gun", Sound = Snd.Rifle762, Speed = 850f, Drag = 0.0005f, Damage = 62f, VehDamage = 2f, Pen = 9f,
         Rpm = 750f, Mag = 200, Mags = 5, Reload = 6f, SpreadDeg = 0.35f, Kick = 0f, Flash = 1f,
+        TracerEvery = 5, TraceM = 900f,
     };
 
+    // The chin gun's 30x113 mm HEDP (M789) carries no tracer: the gunner walks his bursts on by where they burst.
     public static VWeapon ChinGun() => new()
     {
         Name = "30mm chain gun", Sound = Snd.Autocannon, Speed = 800f, Drag = 0.00035f, Damage = 140f, VehDamage = 26f, Pen = 50f,
@@ -171,15 +191,28 @@ public sealed class VehicleDef
     public static VWeapon[] AaGun() => new[]
     {
         new VWeapon { Name = "35mm HEI prox", Sound = Snd.Autocannon, Speed = 1175f, Drag = 0.00015f, Damage = 140f, VehDamage = 70f, Pen = 20f,
-                      Explosive = true, Crater = 0.3f, FragR = 4f, Power = 0.4f, Prox = true, Rpm = 1100f, Mag = 320, Mags = 2, Reload = 10f, SpreadDeg = 0.2f, Kick = 0.05f, Flash = 1.8f },
+                      Explosive = true, Crater = 0.3f, FragR = 4f, Power = 0.4f, Prox = true, Rpm = 1100f, Mag = 320, Mags = 2, Reload = 10f, SpreadDeg = 0.2f, Kick = 0.05f, Flash = 1.8f,
+                      TracerEvery = 1, TraceM = 3500f }, // HEI-T: an anti-aircraft gunner needs his tracer out to the gun's reach
         new VWeapon { Name = "35mm AP", Sound = Snd.Autocannon, Speed = 1175f, Drag = 0.00015f, Damage = 140f, VehDamage = 30f, Pen = 55f,
-                      Rpm = 1100f, Mag = 40, Mags = 2, Reload = 6f, SpreadDeg = 0.15f, Kick = 0.05f, Flash = 1.8f },
+                      Rpm = 1100f, Mag = 40, Mags = 2, Reload = 6f, SpreadDeg = 0.15f, Kick = 0.05f, Flash = 1.8f,
+                      TracerEvery = 1, TraceM = 3000f }, // FAPDS-T
     };
 
     public static VWeapon MortarHe() => new()
     {
         Name = "81mm HE", Sound = Snd.MortarFire, Speed = 185f, Drag = 0f, Damage = 300f, VehDamage = 60f, Pen = 20f,
         Explosive = true, Crater = 1.6f, FragR = 25f, Power = 4f, Rpm = 18f, Mag = 1, Mags = 40, Reload = 0f, SpreadDeg = 0.5f, Kick = 0.15f, Flash = 1.5f,
+    };
+
+    /// <summary>
+    /// 81 mm illumination (M853A1): a time fuze throws out a 600 000 cd candle on a parachute about 600 m over the
+    /// target, which burns for about a minute as it comes down. It flies to the HE's firing table, so the tube is laid
+    /// for it the same way; a section carries a few for a night's work. What goes on to the ground is the empty shell body.
+    /// </summary>
+    public static VWeapon MortarIllum() => new()
+    {
+        Name = "81mm illumination", Sound = Snd.MortarFire, Speed = 185f, Drag = 0f, Damage = 300f, VehDamage = 5f, Pen = 5f,
+        Rpm = 18f, Mag = 1, Mags = 6, Reload = 0f, SpreadDeg = 0.5f, Kick = 0.15f, Flash = 1.5f, IllumCd = 600000f, IllumS = 60f,
     };
 
     // ---------------------------------------------------------------- the catalogue
@@ -302,11 +335,16 @@ public sealed class VehicleDef
                 d.Hull = new Vector3(1.2f, 0.5f, 1.2f); d.GroundClear = 0f; d.MaxSpeed = 0f; d.Reverse = 0f; d.Accel = 1f; d.TurnRate = 0f;
                 d.ArmorFront = d.ArmorSide = d.ArmorRear = d.ArmorTop = 2f; d.Hp = 120f; d.Tickets = 1; d.Respawn = 90f;
                 d.Turrets.Add(new TurretDef { Mount = new Vector3(0f, 0.2f, 0f), Indirect = true, YawSpeed = 40f, PitchSpeed = 25f, PitchMin = 45f, PitchMax = 85f,
-                    Size = new Vector3(0.3f, 0.1f, 0.3f), BarrelLen = 1.2f, BarrelRadius = 0.05f, Exposed = true, Ammo = new[] { MortarHe() } });
+                    Size = new Vector3(0.3f, 0.1f, 0.3f), BarrelLen = 1.2f, BarrelRadius = 0.05f, Exposed = true, Ammo = new[] { MortarHe(), MortarIllum() } });
                 d.Seats.Add(new SeatDef { Role = SeatRole.Gunner, Pos = new Vector3(0.6f, 1.2f, 0.6f), Turret = 0, Exposed = true });
                 break;
         }
         if (f == 1) d.TurnRate *= 1.1f;
+        foreach (var t in d.Turrets)
+        {
+            foreach (var w in t.Ammo) Tracers.Register(w);
+            if (t.Coax != null) Tracers.Register(t.Coax);
+        }
         return d;
     }
 }

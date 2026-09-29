@@ -25,6 +25,13 @@ public sealed class WeaponDef
     public bool OpenBolt;
     /// <summary>The round in the chamber on top of the magazine: one, for a closed-bolt weapon with a magazine.</summary>
     public int Chambered => MagSize > 1 && !OpenBolt ? 1 : 0;
+    /// <summary>
+    /// Tracer rounds in the load (see <see cref="Tracers"/>): one in every <c>TracerEvery</c> (0: ball only), and how far
+    /// the tracer burns in normal flight (the published trace range: the compound burns for a fixed time, so a round
+    /// fired straight up burns as long, and goes less far).
+    /// </summary>
+    public int TracerEvery;
+    public float TraceM;
 
     // Recoil: VertKick/HorizKick move your view and you have to pull them back down;
     // RecoverFrac of that returns on its own. Punch is the weapon jumping in your
@@ -57,6 +64,8 @@ public sealed class WeaponDef
     {
         Name = "M249 LMG · iron sights", Sound = Snd.Rifle556,
         MuzzleVel = 915f, Drag = 0.00085f, Rpm = 780f, Damage = 50f, AutoCapable = true, MagSize = 100, Mags = 6, OpenBolt = true, // 600 rounds: a gunner's load
+        // Linked 4 ball (M855) : 1 tracer (M856), whose trace burns out at about 800 m (TM 9-1005-201-10).
+        TracerEvery = 5, TraceM = 800f,
         VertKickDeg = 0.42f, HorizKickDeg = 0.3f, PunchDeg = 1.3f, RecoverFrac = 0.5f,
         AdsFov = 62f, AdsTime = 0.42f, SpreadAdsDeg = 0.09f, SpreadHipDeg = 3.4f, SwayDeg = 0.42f,
         Reload = 5.8f, ReloadEmpty = 6.6f, ZeroM = 100f,
@@ -129,4 +138,8 @@ public sealed class WeaponDef
         HipOffset = new Vector3(0.15f, -0.15f, -0.04f), AdsOffset = new Vector3(0f, 0f, 0.02f),
         Build = WeaponModels.Marksman,
     };
+
+    // The rifles and the marksman's rifle are loaded with ball only: many units load the last two or three rounds of a
+    // magazine with tracer to tell the firer he's nearly empty, but that's a unit's choice, not the standard load.
+    public static readonly WeaponDef[] All = { Carbine, Lmg, Launcher, Lat, Hat, Manpad, Marksman };
 }
