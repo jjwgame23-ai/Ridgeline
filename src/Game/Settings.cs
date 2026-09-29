@@ -15,6 +15,12 @@ public static class Settings
     public static bool FrontLine = true;
     /// <summary>Territory: how long before the match is decided on ground held, if no side has lost by then (0: no limit).</summary>
     public static int MatchMinutes = 180;
+    /// <summary>The hour a match starts at; -1 random (see Conditions).</summary>
+    public static double StartHour = 12.0;
+    /// <summary>"Clear", "Overcast", "Rain", "Fog", or "Random".</summary>
+    public static string Weather = "Clear";
+    /// <summary>World seconds per match second: 0 stops the clock, 1 is real time.</summary>
+    public static float TimeScale = 4f;
     public static readonly int[] MatchLengths = { 60, 120, 180, 0 };
 
     // ---- graphics
@@ -46,6 +52,9 @@ public static class Settings
         Map = cfg.GetValue("game", "map", "valley").AsString();
         FrontLine = cfg.GetValue("game", "front", true).AsBool();
         MatchMinutes = cfg.GetValue("game", "match_minutes", 180).AsInt32();
+        StartHour = cfg.GetValue("game", "start_hour", 12.0).AsDouble();
+        Weather = cfg.GetValue("game", "weather", "Clear").AsString();
+        TimeScale = (float)cfg.GetValue("game", "time_scale", 4.0).AsDouble();
         Display = (DisplayMode)cfg.GetValue("graphics", "display", 0).AsInt32();
         VSync = cfg.GetValue("graphics", "vsync", true).AsBool();
         MaxFps = cfg.GetValue("graphics", "max_fps", 0).AsInt32();
@@ -63,6 +72,9 @@ public static class Settings
         cfg.SetValue("game", "map", Map);
         cfg.SetValue("game", "front", FrontLine);
         cfg.SetValue("game", "match_minutes", MatchMinutes);
+        cfg.SetValue("game", "start_hour", StartHour);
+        cfg.SetValue("game", "weather", Weather);
+        cfg.SetValue("game", "time_scale", TimeScale);
         cfg.SetValue("graphics", "display", (int)Display);
         cfg.SetValue("graphics", "vsync", VSync);
         cfg.SetValue("graphics", "max_fps", MaxFps);

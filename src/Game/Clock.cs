@@ -19,6 +19,10 @@ public partial class Clock : Node
     }
 
     public override void _EnterTree() => Now = PhysicsNow = 0;
-    public override void _Process(double delta) => Now += delta;
+    public override void _Process(double delta)
+    {
+        Now += delta;
+        Conditions.Tick(Now);
+    }
     public override void _PhysicsProcess(double delta) => PhysicsNow += delta;
 }
