@@ -22,7 +22,9 @@ public partial class Vehicle
     public bool HoverAssist;
 
     Vector3 _vel;
-    float _pitchA, _rollA, _rotorSpin, _spin;
+    float _pitchA, _rollA, _rotorSpin;
+    /// <summary>The yaw rate nothing at the controls is asking for (deg/s): what the main rotor's torque turns the fuselage at with the tail rotor gone (see <see cref="SpinUp"/>).</summary>
+    float _spin;
     bool _landed = true, _doomed;
     float _wedged; // a falling wreck caught where it can neither rest nor fall on (see FallWreck)
     ICombatant? _doomBy;
@@ -99,16 +101,18 @@ public partial class Vehicle
             CyclicPitch = CyclicRoll = Pedal = 0f;
         }
         if (_doomed) { Collective = 0.35f; _spin = 150f; }
+        else SpinUp(dt, power);
 
         float pitchT = _landed ? 0f : CyclicPitch * 32f;
         float rollT = _landed ? 0f : CyclicRoll * 40f;
         _pitchA = Mathf.MoveToward(_pitchA, pitchT, 60f * dt);
         _rollA = Mathf.MoveToward(_rollA, rollT, 80f * dt);
 
-        // Yaw: pedals, plus the turn a bank makes at speed; a shot-out tail rotor spins it.
-        float yawRate = _landed ? 0f : Pedal * 65f + (AirSpeed > 12f ? -_rollA * 0.9f : 0f);
-        if (Immobile && !_landed) _spin = MathF.Max(_spin, 110f);
-        yawRate += _spin;
+        // Yaw: pedals (which do nothing with the tail rotor gone: there's nothing for them to pitch), plus the turn a
+        // bank makes at speed, plus whatever the rotor's torque is turning it at. (_spin used to be set when the tail
+        // rotor was lost, and never taken off again: landed, unpiloted, the airframe spun on the ground for good.)
+        float yawRate = _landed ? 0f : (Immobile ? 0f : Pedal * 65f) + (AirSpeed > 12f ? -_rollA * 0.9f : 0f);
+        if (!_landed) yawRate += _spin; // (on the ground the skids hold it: see Grounded for what it cost to put it down turning)
         _yaw += Mathf.DegToRad(yawRate) * dt;
 
         var basis = Basis.FromEuler(new Vector3(Mathf.DegToRad(-_pitchA), _yaw, Mathf.DegToRad(-_rollA)));
@@ -151,9 +155,8 @@ public partial class Vehicle
         // for good.)
         if (Agl < Def.GroundClear + 0.35f && _vel.Y < 0.5f && _vel.Y > -3.5f && AirSpeed < 4f && MathF.Abs(_pitchA) < 12f && MathF.Abs(_rollA) < 12f && thrust < 9.81f * 1.1f)
         {
-            _landed = true;
-            _vel = Vector3.Zero;
             _pitchA = _rollA = 0f;
+            Grounded();
         }
         _rotorSpin += dt * 25f;
         SpinRotors();
@@ -174,6 +177,49 @@ public partial class Vehicle
             SalvoLeft--;
             _salvoNext = Clock.Now + 0.15;
         }
+    }
+
+    /// <summary>
+    /// With the tail rotor gone nothing balances the main rotor's torque, and the fuselage turns the other way at a
+    /// rate that follows the power being delivered: about 110 deg/s at the power that holds a hover (reports of
+    /// tail-rotor losses in a hover give a turn of a few seconds a rev, faster with more power), less as the pilot
+    /// reduces power (autorotation is the drill: it takes the torque away), and less again with airspeed as the fin
+    /// starts to weathercock it: near enough held straight from about 25 m/s (~50 kt), which is why the drill is a run-on
+    /// landing. The turn builds and dies away over a few seconds (the fuselage's inertia), quicker on the ground,
+    /// where the skids drag, and with nobody at the controls (rotor idling, engine shut down) there's no torque at all.
+    /// </summary>
+    void SpinUp(float dt, float power)
+    {
+        float target = 0f;
+        if (Immobile && !_landed)
+        {
+            float hover = 9.81f / (Def.Lift * power);
+            float fin = 1f - 0.9f * Mathf.Clamp((AirSpeed - 8f) / 17f, 0f, 1f);
+            target = 110f * Mathf.Clamp(Collective / hover, 0f, 1.3f) * fin;
+        }
+        _spin = Mathf.MoveToward(_spin, target, dt * (target > _spin ? 60f : _landed ? 240f : 90f));
+    }
+
+    /// <summary>
+    /// Onto the skids. Turning as it does it, the skids dig in: sideways at the speed the skids are going round (the
+    /// yaw rate at their distance from the mast, about a quarter of its length). That's a hard landing that damages it,
+    /// and above a few m/s a roll-over, ever more likely the faster (dynamic rollover starts with a skid that catches
+    /// while the fuselage is still moving sideways): the rotor hits the ground and it's a wreck. So a helicopter with
+    /// its tail rotor gone that's put down at power, in a hover, mostly comes down damaged or crashes; one that's landed
+    /// with the power off or a little speed on it walks away.
+    /// </summary>
+    void Grounded()
+    {
+        _landed = true;
+        _vel = Vector3.Zero;
+        float sideways = MathF.Abs(Mathf.DegToRad(_spin)) * Def.Hull.Z * 0.25f;
+        _spin = 0f;
+        if (Immobile) Collective = 0f; // (the pilot rolls the power off on a landing like that, rather than leave it to bounce off the skids and turn again)
+        if (sideways < 1.5f || _doomed) return; // (a doomed one is already coming down as a wreck: see FlyTick)
+        bool rolls = _rng.Randf() < Mathf.Clamp((sideways - 3f) / 4f, 0f, 1f);
+        if (DuelMode.Verbose) GD.Print($"[{Clock.Now:0}s] HARD LANDING {Def.Name} turning, skids at {sideways:0.0} m/s sideways{(rolls ? ", rolled over" : "")}");
+        Prof.Count("heli:landed turning");
+        Damage(rolls ? 99999f : sideways * sideways * 5f + 40f, Clock.Now - LastHit < 30.0 ? LastHitBy : null);
     }
 
     /// <summary>Contact with the ground or something solid: a landing, a bump, or a crash.</summary>
@@ -200,8 +246,7 @@ public partial class Vehicle
         }
         if (soft)
         {
-            _landed = n.Y > 0.7f;
-            _vel = Vector3.Zero;
+            Grounded();
             return;
         }
         // Rotor or airframe into something at speed.

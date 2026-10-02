@@ -801,7 +801,8 @@ public sealed partial class MotorPool
     {
         // Out of bombs: more are carried up from the FOB's cache or from base (the pit is always by one).
         var tube = v.Turrets[0];
-        if (tube.Loaded.Sum() + tube.Stock.Sum() == 0)
+        // (The HE's what counts: a pit with a few illumination rounds left and no HE is out of bombs.)
+        if (tube.Loaded[0] + tube.Stock[0] == 0)
         {
             if (s.RearmAt < 0) s.RearmAt = now + 90.0;
             else if (now >= s.RearmAt) { v.Restock(); s.RearmAt = -1; Rearms++; }

@@ -104,6 +104,13 @@ public partial class Player : CharacterBody3D, ICombatant
             Stock(r);
         }
         Cam.AddChild(Weapon);
+        // Under the HUD's layer, so the goggles' picture has the HUD (and the wounds' effects) drawn over it.
+        var nvgLayer = new CanvasLayer { Layer = 0 };
+        AddChild(nvgLayer);
+        _nvg = new NightVision { Cam = Cam };
+        nvgLayer.AddChild(_nvg);
+        // Dev arg "nvg": start with them down (for screenshots).
+        if (OS.GetCmdlineUserArgs().Contains("nvg") && HasGoggles) _nvg.Down = true;
 
         Input.MouseMode = Input.MouseModeEnum.Captured;
         Hud.CapturedAtMs = Time.GetTicksMsec();
@@ -255,6 +262,7 @@ public partial class Player : CharacterBody3D, ICombatant
         // wounded: the screen stayed dark from a fight long over.)
         Suppression = Mathf.MoveToward(Suppression, 0f, dt * 0.3f);
         _shake = Mathf.MoveToward(_shake, 0f, dt * 2.2f);
+        GogglesInput();
         if (Piloting != null) { PilotProcess(dt); if (Piloting != null) return; }
         if (Downed) { DownedView(dt); return; }
         if (Ride != null) { VehicleProcess(dt); return; }
@@ -346,6 +354,40 @@ public partial class Player : CharacterBody3D, ICombatant
         SelfAidInput(captured, dt);
         if (Kit == Role.Ammo) SupplyAround(dt);
         if (captured && Input.IsActionJustPressed("check_ammo")) Hud.Toast(Weapon.Describe(), 3f);
+    }
+
+    // ================================================================ night vision
+
+    NightVision _nvg = null!;
+    bool _nvgHinted;
+
+    /// <summary>Goggles down.</summary>
+    public bool Goggles => _nvg.Down;
+
+    /// <summary>Does your side issue goggles to your role (see NightGear)?</summary>
+    public bool HasGoggles => (NightGear.Issue(TeamId, Kit ?? Role.Rifleman, TerritoryMode.I?.PlayerSquad?.Kind) & NightOptic.Goggles) != 0;
+
+    /// <summary>The goggles key; a word about them the first time it gets dark; off when you're dead, or flying a drone.</summary>
+    void GogglesInput()
+    {
+        if (Dead || Piloting != null) { _nvg.Down = false; return; }
+        bool captured = Input.MouseMode == Input.MouseModeEnum.Captured;
+        if (captured && Alive && Input.IsActionJustPressed("nvg"))
+        {
+            if (!HasGoggles)
+                Hud.Toast($"No night vision goggles: {KothMode.TeamNames[Math.Clamp(TeamId, 0, 2)]} issues them only to squad leaders, recon, marksmen and crews", 3f);
+            else
+            {
+                _nvg.Down = !_nvg.Down;
+                SoundWorld.I.Emit(Snd.Click, EyePos, -8f, this); // the mount clicking over
+                if (_nvg.Down && !NightGear.NightKitOn) Hud.Toast("Goggles down in daylight: you can barely see through them", 2f);
+            }
+        }
+        if (!_nvgHinted && Conditions.Dark && HasGoggles && !_nvg.Down && Alive)
+        {
+            _nvgHinted = true;
+            Hud.Toast(Controls.Fill("It's getting dark — {nvg}: night vision goggles"), 4f);
+        }
     }
 
     // ================================================================ role kit

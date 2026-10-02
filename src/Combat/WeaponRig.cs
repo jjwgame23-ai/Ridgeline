@@ -243,7 +243,7 @@ public partial class WeaponRig : Node3D
         LockProgress = 0f;
         if (d.Rocket) Effects.I.MuzzleDust(P.GlobalPosition - AimDir * 2f, -AimDir); // backblast
         SoundWorld.I.Emit(d.Sound, MuzzlePos, 0f, P, facing: dir);
-        Effects.I.MuzzleFlash(MuzzlePos, AimDir);
+        Effects.I.MuzzleFlash(MuzzlePos, AimDir, ownView: !d.Rocket); // (a rocket has no flash hider: its motor lights the shooter up as it is)
         Telemetry.Shot(P, origin, eye + aim * 300f, d.Name, "player", null);
 
         float m = P.RecoilMult;

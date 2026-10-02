@@ -196,7 +196,7 @@ public sealed partial class Squad
         AssaultOn = null;
         _bowWaiting = false;
         CancelCrossing();
-        if (Phase != AssaultPhase.None) SetPhase(AssaultPhase.None);
+        if (Phase != AssaultPhase.None) SetPhase(AssaultPhase.None, "re-ordered");
         foreach (var m in Members)
             if (m is Bot { Alive: true } b && GodotObject.IsInstanceValid(b)) b.Brain.ObjectiveChanged();
     }

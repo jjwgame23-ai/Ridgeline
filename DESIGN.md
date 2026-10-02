@@ -677,8 +677,7 @@ Six auditors looked at the player's own systems, the wound model, the data from 
 ### Not done
 
 - **Crews stuck on the way to their vehicle.** Now and then a crew walking to its vehicle (a mortar that's moved, a logistics truck) hits a snag on its route 90–220 m out. It gets stuck there, re-plans the same route, and gets stuck again for minutes. That's up to 100 stuck events in a 10-minute run, and anywhere from 4 to 96 depending on the match. Squadmates keeping formation get stuck about 12 times a minute too. Neither has been traced yet.
-- **Tracers** (asked for in playtest). Rounds fly unseen: nothing is drawn for them. Real belts carry a tracer every fourth or fifth round (machine guns, vehicle guns, 35 mm air defence), and riflemen mostly don't. The projectiles are already simulated one by one, so this is drawing only: a streak for each tracer round, batched (MultiMesh) so thousands in the air stay cheap.
-- **Night.** It would show the tracers best. But it isn't just lighting: bots would need to see as people do at night (short ranges by eye, night sights, muzzle flashes and tracers giving positions away, illumination flares).
+- **No thermal sight for the player.** The player only has goggles, even in a vehicle's gunner seat or in the roles whose bots carry thermal sights. That would need a white-hot thermal view rendered from body heat.
 - A prone man's hitbox is still an upright capsule 0.62 m tall: no head or leg hits on him, and seen from the side he's about a third of his real length. Laying it along the body is its own piece of work.
 - Hit rates at 100–300 m are still high: about 15% of aimed rounds hit, mostly men standing or crouched in cover or running to it. Real combat runs far lower, and much of the gap is how much bots expose themselves.
 - Suppressive fire is still a modest share, about 15% of rifle and machine-gun rounds. When a bot means to suppress it is often moving, has its own cover in the way, or isn't yet aimed at the spot. The `supp:*` counters count the windows and why none opened.
@@ -686,6 +685,118 @@ Six auditors looked at the player's own systems, the wound model, the data from 
 - A downed man in a ground vehicle is still pulled out on the spot.
 - Every anti-aircraft vehicle is a radar-laid gun. None carries missiles (the real Stormer carries Starstreak), so beyond about 3 km a helicopter is safe from them.
 - Vehicles still run over their own infantry now and then, 1–3 times in a 6-minute match. Drivers stop for anyone in a corridor straight ahead. How the rest happen (people stepping in from the side, a turn, reversing) hasn't been traced yet.
+
+## Night, weather and tracers (built)
+
+The lighting, the soldiers' eyes and ears, and the sound all read one model of the time and the weather (`src/World/Conditions.cs`).
+
+- **The clock.** A match starts at the hour picked in the menu: dawn, morning, noon, afternoon, dusk, night or random. The clock then runs at the chosen rate (stopped, real time, 4× or 12×). At 4× a three-hour match goes through twelve hours: into the night and out again.
+- **Sun and moon.** Both are placed by the hour at 38° N, with the moon's age random for each match (`moon=` pins it for tests). Light on open ground is modelled in lux:
+  - about 50 000 at midday;
+  - 400 at sunset;
+  - 3 at the end of civil twilight;
+  - 0.25 under a full moon;
+  - 0.001 by starlight.
+
+  Cloud, rain and fog cut it.
+- **Weather** is picked per match (clear, overcast, rain, fog or random) and fixed for the match.
+  - Fog brings visibility down to 180–500 m, rain to 1.5–4 km.
+  - Contrast fades with distance, reaching the 2% threshold at the visibility range (Koschmieder).
+  - Rain raises the background noise by about 14 dB.
+
+**What you see** (`SkyView.cs`)
+- **Brightness follows the eye's adaptation.** Noon is 1, a full moon about 0.11, starlight 0.04. Night is dark, readable by moonlight, and near-black under cloud. Tracers, flashes and flares keep their own brightness, so they stand out the way they do to dark-adapted eyes.
+- **Sun and sky.** The sun's colour comes from air mass: gold, then red, as it sets.
+- **Moon and stars.** Moonlight is blue-tinted, and the moon casts shadows. About 6 000 stars turn about the pole and fade as the sky brightens.
+- **Overcast** skies are grey, with flat, shadowless light.
+- **Fog** density is set from the visibility.
+- **Rain** is streaks around the camera, drifting with the wind, with a synthesised rain sound that is muffled indoors.
+- **HUD and telemetry.** The HUD shows the time and the weather. Telemetry records the conditions, with the hour and the light level on each score line.
+
+**Tracers** (`Tracers.cs`, `TracerDraw.cs`)
+- **Which rounds are tracers.** Belt-fed guns (M249, coax, door guns, HMG) fire one in five. Cannon (30 mm, 35 mm, tank rounds) are all tracers, except the Apache's 30 mm, which has none. Rifles fire ball only.
+- **Colour:** red-orange for ALPHA and CHARLIE, green for BRAVO.
+- **Burn-out** is taken from each round's published trace range: 5.56 about 800 m, 7.62 about 900 m, .50 about 1 450 m, 35 mm 3 500 m. After that the round flies on unseen.
+- **Drawing.** All tracers are drawn as camera-facing streaks in one batch: 0.015 ms a frame.
+- **Ricochets** now fly on, with the tracer if it has one: flatter, slower, and off line. Before, the round stopped where it glanced. How shallow the strike has to be depends on the surface:
+  - steel and rock throw a round off up to about 20–25°;
+  - masonry, concrete and paving only below about 12°.
+
+**Light at night** (`Illumination.cs`, `NightLight.cs`, `Effects.cs`)
+- **Muzzle-flash lights** (up to 8, nearest first) are drawn only when it's dark.
+- **Illumination rounds.** Mortars fire an 81 mm round (600 000 cd, 60 s under a parachute, falling at about 5 m/s from about 600 m) over a target area that's still dark, before the HE.
+- **Fires.** Burning wrecks light their surroundings (20 000–80 000 cd, flickering).
+- **Registration and scale.** Each source registers with `Conditions`, so the soldiers see by it, and it's drawn on the same brightness scale as the sky.
+
+**Seeing and hearing** (`NightGear.cs`, `BotSenses.cs`)
+- **The naked eye.** How fast a man is picked out follows the light on him, including flares and fires. By starlight the eye alone finds almost nothing past about 100 m. Everything also fades with the weather's contrast loss. That loss is measured against clear air, so a clear day sees exactly as before. A player indoors at night counts as lit like any other indoor spot, not as if standing in the open.
+- **Night vision kit** (by side and role):
+  - ALPHA and CHARLIE issue goggles to all infantry, and thermal sights to marksmen, recon, heavy anti-tank and weapons-team gunners.
+  - BRAVO issues goggles to leaders, every fire team's machine gunner, recon, marksmen and crewmen; image-intensifier sights on some weapons; and thermal only to recon. Every team has someone who can see at night, but BRAVO is still the weakest side in the dark.
+  - Armoured vehicles' gunners have thermal sights.
+- **Goggles** amplify about 1 300× over a 40° field of view, and a flare nearby washes them out.
+- **Thermal** doesn't care about the dark, and it's also used by day whenever the air is thick. How much further than the eye it sees depends on the weather:
+  - about 3 times through haze;
+  - about 1.5 times through fog;
+  - no further through rain, since the drops stop both alike.
+- **Muzzle flashes.** At night a flash gives the firer away at daylight ranges. Machine guns' tracers show them for longer. A man seen only by his flash is lost when he stops firing.
+- **Rain** masks footsteps and quiet sounds.
+- **The player's goggles** (L) show a green phosphor image with grain, bloom and the tube's real 40° circle (about 43% of the screen's height with the naked eye's field of view, more through a scope). They lift the exposure of whichever camera you're looking through, on foot, in a vehicle or on a drone.
+- **Test runs are repeatable.** A run started from the command line gets the same moon, fog, rain and season for its seed. A game from the menu draws them fresh.
+
+Measured, 33 a side on the Valley, median range of the first shot at each target:
+
+| Conditions | Range |
+|---|---|
+| Noon | 259 m |
+| Starlight | 144 m |
+| Overcast night | 124 m |
+| Fog at night | 84 m |
+
+At night, fights are started by thermals and goggles, then fought at the flashes.
+
+### From playing at night (built)
+
+- **Shadows from local light.** Illumination flares and burning wrecks cast shadows from buildings and terrain. Cube-map shadows are expensive, so only the 2 or 4 lights putting the most light on the camera's ground get them (by the Shadows setting), and none by day. A burning wreck's light sits inside the flame, 2.5 m up.
+- **Your own muzzle flash.** A flash hider's job is to keep the shooter's night vision. So at night your own first-person flash shrinks to about a third of its size and opacity, with a much smaller light. Other people's flashes are unchanged.
+- **Losing the tail rotor.** The main rotor's torque spins the helicopter, up to about 110°/s at hover power, less with forward speed. The pedals do nothing. It touches down skidding sideways, and above 3–7 m/s it rolls over. A landed helicopter with nobody at the controls no longer spins.
+
+### Getting out of the way (built)
+
+- **Reading where it will land.** A man who hears a shell or bomb whistling in (its last 2–3 s), sees a quad overhead (its grenade takes 2–4 s to fall) or sees an FPV diving judges where it will go off. Depending on the time he has, he:
+  - gets behind something solid, if there's cover close;
+  - sprints clear of the spot, if there's time;
+  - otherwise drops flat where he is.
+
+  He stays down 1.5–3 s after a round, or 5–9 s under repeated fire.
+- **Shelter.** Under repeated shelling, or with a quad about, men go to a ground-floor room away from windows and doors, or under a roof or trees. The spot has to be reachable and actually indoors. They stay 12–22 s after the last round, at most 90 s for shelling or 30 s for a drone. They don't walk off to shelter with an enemy seen close in the last few seconds.
+- **Shooting at drones.** Riflemen now actually fire at drones that threaten them: FPVs first, quads near enough, not a high recon drone. At range only the machine gunner and half the others engage. (They used to "engage" without firing, because their ordinary aim overwrote the drone aim a frame later.)
+- **Air defence and drones.** Real SPAA does shoot drones (the Gepard over Ukraine). So it takes aircraft, and drones that are attacking, closing, large or close, but leaves small quads beyond 150 m to small arms.
+- **The drone's camera.** Military quads carry thermal (Mavic 3T class), so darkness costs them little, but fog and rain cost them range, as for a thermal sight.
+
+### Assaults (built)
+
+- **The rally point (ORP)** is picked out of sight of the objective, checked by raycast at eye height.
+- **The support-by-fire position** is chosen from sampled spots on the near flank, plus windows and rooftops. They're scored by the share of the objective's fighting positions actually in sight from them, standing and kneeling, then range (best at 100–170 m), angle to the assault, cover and height. The chosen spot must be a real walk from the rally point.
+- **The line of departure** is reachable, and hidden if possible.
+- **Area fire** only goes at points the firer has a line to, and lifts off points with our men within 15 m.
+- **Contact.**
+  - At the rally point, contact means no forming up: straight to the deployment.
+  - Only an enemy right on the rally point (within 60 m), or a man lost, compromises it. The squad then fights a hasty attack, and may form up again after a lull.
+  - Deploying under contact, the assault goes in once most of the support is firing on the objective. Only a different enemy on the flank within 80 m, or a third of the squad lost, calls the deployment off.
+  - In the assault, only heavy losses stop it.
+
+  (Contact anywhere within 120 m of the rally point used to end the plan. With three sides moving about, nearly every attack was broken up before it deployed.)
+
+### Your own squad (built)
+
+- **"Your squad" in the menu:** join ALPHA-1 as before, or lead your own squad of 0, 1, 2, 3 or 5 bots (ALPHA-0).
+  - It follows you, and the commander never gives it orders.
+  - It uses the side's spawns and the usual reinforcement rules.
+  - With 0, you're a lone soldier who comes back at the spawn nearest where you fell.
+  - When you die it falls back to the nearest spawn, so you rejoin it quickly: about 20 s instead of 3 minutes.
+  - The other two sides each get an extra bot squad of the same size, so the headcounts stay level.
+- **Not waiting on you.** In a bot-led squad, its leader no longer holds everyone up while you wander. Between 60 and 150 m behind, he calls "close up", waits 12 s, then carries on (not again for 90 s). Further off, or ahead of him, you're on your own.
 
 ## Big-map notes (3a)
 

@@ -86,6 +86,16 @@ public sealed class BotBrain
     bool _popPeek, _crouchLos = true, _proneLos, _exposedCrouched;
     /// <summary>Flat on the ground for incoming (a mortar bomb whistling down close by) until this time.</summary>
     double _hitTheDirtUntil = -1, _proneBlockedUntil = -1;
+    /// <summary>Running from a burst (to cover, or just away) until this time, when he drops flat wherever he is; the burst he last reacted to.</summary>
+    double _blastRunUntil = -1, _blastSeen = -1, _dropSeen = -1;
+    /// <summary>Where the indirect-fire drill is taking him, to go on to once he's up from the last bomb.</summary>
+    Vector3? _escapeGoal;
+    /// <summary>Sitting out shelling or a drone in a building (or under a roof or canopy): since when, until when, at the longest; and not again before.</summary>
+    bool _sheltering;
+    double _shelterSince, _shelterUntil, _shelterMax, _shelterSearchAt, _shelterCoolUntil;
+    /// <summary>The FPV he's worked out what to do about, and what: 0 shoot at it, 1 run for it, 2 down.</summary>
+    Drone? _fpvPlanFor;
+    int _fpvPlan;
     double _popUntil, _popAt, _losCheckAt, _targetSince, _scanNextAt;
     float _scanAngle;
     int _strafeSide;
@@ -226,6 +236,8 @@ public sealed class BotBrain
 
         if (CheckGrenades()) return;
         if (CheckIncoming()) return;
+        if (CheckFpv()) return;
+        if (TakeShelter(t)) return;
         if (State == BotState.Evade)
         {
             SetState(t != null ? BotState.Hold : BotState.Advance, "clear of the frag");
@@ -1001,6 +1013,8 @@ public sealed class BotBrain
                 SetState(BotState.TakeCover, "incoming! off the impact area");
                 Cover = null;
                 _b.MoveTo(goal, MoveMode.Sprint);
+                _escapeGoal = goal;
+                _escapeResumes = 0;
                 return true;
             }
             case Drill.BreakContact:
@@ -1178,12 +1192,19 @@ public sealed class BotBrain
     Drone? _droneTarget;
 
     /// <summary>
-    /// Counter-drone. A quad overhead or an FPV coming in is heard before it's seen: the FPV's
-    /// scream from ~150 m, the quad's drone from ~120 m (and it has to be in view to shoot).
-    /// - An FPV diving at us, close: get out of its path and down.
-    /// - Otherwise shoot it (a rifle round brings any of them down; they're hard to hit), or,
-    ///   for some, get under a roof or into the trees where the camera can't see.
+    /// Counter-drone. A quad overhead or an FPV coming in is seen from a long way off, and heard before that: the
+    /// FPV's scream from ~150 m, the quad's drone from ~120 m (it has to be in view to shoot at).
+    /// - An FPV coming for the ground he stands on: CheckFpv (a building, cover, across its line, flat).
+    /// - Otherwise shoot at it (a rifle round brings any of them down; they're hard to hit, quads at range especially).
+    ///   Not at a quad high over the fight, which is a speck and would eat every magazine on the hill (the recon
+    ///   quad orbits at 100 m up); at one that's close, or is coming down onto someone to drop on him. And not the
+    ///   whole squad at one at range: one man in two, and always the machine gunner (a belt of it is the best
+    ///   chance anyone has).
+    /// - For a man sitting still with a quad over him (it drops on men who don't move), two in three would sooner
+    ///   be indoors, or under a roof or trees where its camera can't see; the rest shoot.
     /// A man shooting at us close by comes first.
+    /// (The men used to "shoot" at drones without ever firing a round, in any run: the aim was set here and put
+    /// back by the ordinary aiming a frame later. Aiming and firing at a drone are in Act now.)
     /// </summary>
     bool TryAntiDrone(Threat? t)
     {
@@ -1191,18 +1212,22 @@ public sealed class BotBrain
         if (Now < _droneQuitUntil) return false;
         if (Now < _droneAt && _droneTarget is { Dead: false } && GodotObject.IsInstanceValid(_droneTarget)) return EngageDrone(_droneTarget);
         _droneTarget = null;
+        if (Drone.All.Count == 0) { _droneSince = 0; return false; }
         var space = _b.GetWorld3D().DirectSpaceState;
         var eye = _b.EyePos;
         Drone? best = null;
-        float bestD = float.MaxValue;
+        float bestD = float.MaxValue, bestScore = float.MaxValue;
         foreach (var d in Drone.All)
         {
             if (d.Dead || d.Team == _b.Team || !GodotObject.IsInstanceValid(d)) continue;
             float dist = d.GlobalPosition.DistanceTo(eye);
-            if (dist > (d.IsFpv ? 150f : 140f) || dist >= bestD) continue;
+            // An FPV is what kills: it comes first.
+            float score = dist - (d.IsFpv ? 80f : 0f);
+            if (dist > (d.IsFpv ? 150f : 140f) || score >= bestScore) continue;
             if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, d.GlobalPosition, Layers.World | Layers.Trees)).Count > 0) continue;
             best = d;
             bestD = dist;
+            bestScore = score;
         }
         if (best == null) { _droneSince = 0; return false; }
         // A quad circling at 100 m is a hard shot: after a quarter of a minute of missing, most give up on it for a while.
@@ -1216,44 +1241,65 @@ public sealed class BotBrain
         _droneTarget = best;
         _droneAt = Now + 3.0;
         if (Now > _droneCallAt) { _droneCallAt = Now + 8.0; Say(best.IsFpv ? "FPV! FPV incoming!" : "Drone overhead!"); }
-        // An FPV coming at us: dive out of its line.
         var rel = eye - best.GlobalPosition;
-        if (best.IsFpv && bestD < 45f && best.Vel.Dot(rel.Normalized()) > best.Vel.Length() * 0.8f && State != BotState.Evade)
+        if (best.IsFpv)
         {
-            var side = rel.Cross(Vector3.Up).Normalized() * (_rng.Randf() < 0.5f ? -1f : 1f);
-            SetState(BotState.Evade, "FPV! get down");
-            _evadeUntil = Now + 1.5;
-            _b.MoveTo(_b.FeetPos + side * 7f, MoveMode.Sprint);
-            return true;
+            // One coming our way is worth every rifle there is; one crossing far off isn't our business.
+            if (bestD > 60f && best.Vel.Dot(rel.Normalized()) < best.Vel.Length() * 0.5f) { _droneAt = 0; return false; }
+            return EngageDrone(best);
         }
-        // A quad watching us: about a third of us get under cover it can't see through; the rest shoot.
-        if (best.Kind == DroneKind.Quad && (_b.GetInstanceId() % 3 == 0) && State is not (BotState.TakeCover or BotState.InCover) && HideFromAbove())
-            return true;
+        // A quad over a man who's sitting still: it drops on those. Under a roof, or trees, or shoot at it.
+        bool idle = State is BotState.Hold or BotState.Advance or BotState.Search or BotState.Investigate && (t == null || !t.Visible);
+        if (Flat(rel) < 80f && _b.Vel.Length() < 1.2f && idle && !Committed && Now > _shelterCoolUntil && Now > _shelterSearchAt)
+        {
+            int pick = (int)(_b.GetInstanceId() % 3);
+            if (pick != 2)
+            {
+                _shelterSearchAt = Now + 8.0;
+                if (CoverFinder.FindShelter(_b, null, 25f, _rng) is CoverSpot room)
+                {
+                    Prof.Count("shelter:go in (drone)");
+                    StartShelter(room, 12.0, 30.0, "in out of the drone's sight", drone: true);
+                    return true;
+                }
+                if (pick == 0 && HideFromAbove()) return true;
+            }
+        }
         // High up, a quad is a speck: heard, called out, not worth the rounds until it comes down.
-        if (best.Kind == DroneKind.Quad && bestD > 100f) { _droneAt = 0; return false; }
+        if (bestD > 100f) { _droneAt = 0; return false; }
+        if (bestD > 60f && Role != Role.AutoRifleman && _b.GetInstanceId() % 2 != 0) { _droneAt = 0; return false; }
         return EngageDrone(best);
     }
 
+    /// <summary>Until when he's aiming at, and firing on, the drone (this is decided five times a second, the shooting every frame: see ShootDrone).</summary>
+    double _droneAimUntil;
+
     bool EngageDrone(Drone d)
     {
+        if (_b.Reloading || _b.Ammo <= 0) return true;
+        _droneAimUntil = Now + 0.5;
+        if (State is BotState.Advance or BotState.Search) { SetState(BotState.Hold, "shooting at a drone"); _holdUntil = Now + 3.0; _b.Stop(); }
+        return true;
+    }
+
+    /// <summary>
+    /// Lead it by the round's time of flight and fire when the sights are on: a drone is a few decimetres across,
+    /// so within a couple of hand-widths at a hundred metres is as close as anyone waits for. The rounds fly as
+    /// any others do, spread, aim wobble and all, so most miss (a quad at 80 m subtends a fifth of a degree).
+    /// </summary>
+    bool ShootDrone()
+    {
+        if (_droneTarget is not { Dead: false } d || !GodotObject.IsInstanceValid(d) || _b.Reloading || _b.Ammo <= 0) return false;
         var eye = _b.EyePos;
         var p = d.GlobalPosition;
         float dist = p.DistanceTo(eye);
-        if (_b.Reloading || _b.Ammo <= 0) return true;
-        // Lead it by the round's time of flight.
-        float tof = dist / MathF.Max(_b.Def.MuzzleVel, 1f);
-        var aim = p + d.Vel * tof;
-        _b.Aim.Goal = aim;
-        _b.Aim.Tracking = true;
-        _b.Aim.GoalVel = d.Vel;
-        _b.SetCrouch(false);
-        if (State is BotState.Advance or BotState.Search) { SetState(BotState.Hold, "shooting at a drone"); _holdUntil = Now + 3.0; _b.Stop(); }
-        if (Mathf.RadToDeg(_b.Aim.Dir.AngleTo(aim - eye)) < 1.2f && Now >= _nextShotAt && !FriendlyInLine(eye, aim))
-        {
-            if (_burstLeft <= 0) StartBurst(dist, false);
-            FireMode = "at a drone";
-            Shoot(dist);
-        }
+        var aim = p + d.Vel * (dist / MathF.Max(_b.Def.MuzzleVel, 1f));
+        float tol = Mathf.Clamp(Mathf.RadToDeg(MathF.Atan2(0.5f, dist)), 0.3f, 3f);
+        if (Mathf.RadToDeg(_b.Aim.Dir.AngleTo(aim - eye)) > tol || Now < _nextShotAt || FriendlyInLine(eye, aim) || !_b.ShotReaches(aim, 3f)) return true;
+        if (_burstLeft <= 0) StartBurst(dist, false);
+        FireMode = "at a drone";
+        Prof.Count(d.IsFpv ? "antidrone:rounds at an FPV" : "antidrone:rounds at a quad");
+        Shoot(dist);
         return true;
     }
 
@@ -1267,10 +1313,9 @@ public sealed class BotBrain
             float a = _rng.Randf() * Mathf.Tau, r = _rng.RandfRange(2f, 15f);
             var p = origin + new Vector3(MathF.Cos(a), 0f, MathF.Sin(a)) * r;
             if (!CoverFinder.Standable(space, p, origin.Y, out var g)) continue;
-            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(g + Vector3.Up * 1.8f, g + Vector3.Up * 30f, Layers.World | Layers.Trees)).Count == 0) continue;
-            SetState(BotState.TakeCover, "hiding from the drone");
-            Cover = new CoverSpot { Pos = g, PeekPos = g };
-            _b.MoveTo(g, MoveMode.Sprint);
+            if (!Surroundings.Overhead(space, g)) continue;
+            Prof.Count("shelter:go under cover (drone)");
+            StartShelter(new CoverSpot { Pos = g, PeekPos = g }, 12.0, 30.0, "hiding from the drone", drone: true);
             return true;
         }
         return false;
@@ -1612,9 +1657,16 @@ public sealed class BotBrain
 
     bool _buddyHold;
     Vector3 _areaPoint;
-    double _areaPickAt;
+    double _areaPickAt, _areaBlindSince = -1, _areaShiftAt;
+    /// <summary>Does the current area-fire point have a line from here?</summary>
+    bool _areaOk;
 
-    /// <summary>In the support team during an assault, with nobody in sight: fire on the objective itself.</summary>
+    /// <summary>
+    /// In the support team during an assault, with nobody in sight: fire on the objective itself. Someone seen a while
+    /// ago and not now counts as nobody in sight: the point of support by fire is to hit the windows and walls the enemy is
+    /// behind, not to wait for a head to show. (It used to need no target at all, remembered ones included, and a
+    /// support team in a real assault went the whole minute with a target "out of sight" and never fired an area round.)
+    /// </summary>
     bool AreaFire => Sq != null && _b.Ammo > _b.Def.MagSize * 0.3f
                      && (Sq.SuppressUntil > Now && Sq.SuppressAt.DistanceTo(_b.FeetPos) < 400f
                          || Objective != null && Sq.FiringInSupport(_b) && FromObjective(_b.FeetPos) < 260f);
@@ -1891,7 +1943,19 @@ public sealed class BotBrain
             {
                 bool hostile = Squad.Hostile?.Invoke(so.Site, _b.Team) == true;
                 if (!hostile || Sq.RecentlyAssaulted(Objective) || Sq.Alive < 4 || d > 340f || d < 150f) return false;
-                Sq.BeginOrp(_b.FeetPos, Objective);
+                // No halting to form up in the middle of a fight, or under indirect fire (an ORP is somewhere quiet): deal with
+                // the contact first, and plan the attack in the lull after. (It used to start the ORP whatever was going on, and
+                // a good third of them were called off within seconds by the contact they were started in.)
+                if (Sq.Engaged || Sq.Current == Drill.Indirect) return false;
+                // Out of sight of the objective if there's somewhere close that is, rather than wherever the leader happens to be.
+                var orp = Sq.ChooseOrp(_b.GetWorld3D().DirectSpaceState, _b.FeetPos, Objective, _rng);
+                Sq.BeginOrp(orp, Objective);
+                if (orp.DistanceTo(_b.FeetPos) > 6f)
+                {
+                    Say("ORP back there, out of their sight. On me.");
+                    GoTo(orp);
+                    return true;
+                }
                 Say("ORP here. Security out, form up on me.");
                 _b.Stop();
                 _hasWaypoint = false;
@@ -1899,6 +1963,11 @@ public sealed class BotBrain
             }
             case AssaultPhase.Orp:
             {
+                if (_b.FeetPos.DistanceTo(Sq.OrpAt) > 6f && Sq.PhaseAge < 30.0)
+                {
+                    if (!_hasWaypoint || _waypoint.DistanceTo(Sq.OrpAt) > 3f) GoTo(Sq.OrpAt);
+                    return true;
+                }
                 int near = Sq.Members.Count(m => m.Alive && m.FeetPos.DistanceTo(Sq.OrpAt) < 30f);
                 // A few seconds at least: security out, the leader looks and gives his orders.
                 if ((near >= Sq.Alive * 0.75f && Sq.PhaseAge > 8.0) || Sq.PhaseAge > 30.0)
@@ -1916,9 +1985,9 @@ public sealed class BotBrain
             {
                 bool atLd = _b.FeetPos.DistanceTo(Sq.LdAt) < 10f;
                 // Go when support is set, or at the latest after 90 s whatever's holding things up.
-                if ((atLd && (Sq.SupportSet || Sq.PhaseAge > 50.0)) || Sq.PhaseAge > 90.0)
+                if ((atLd && (Sq.SupportSet || Sq.PhaseAge > 75.0)) || Sq.PhaseAge > 90.0)
                 {
-                    Sq.BeginAssault();
+                    Sq.BeginAssault(atLd && Sq.SupportSet ? "support set" : atLd ? "75 s, support not set" : "90 s, not at the LD");
                     Say($"Support, open fire! {Squad.TeamName(Sq.SbfTeam ^ 1)}, on line — assault, go!");
                     GoTo(Objective.PointFor(_b, _rng));
                     return true;
@@ -1928,7 +1997,7 @@ public sealed class BotBrain
                 return true;
             }
             case AssaultPhase.Assault:
-                if (InZone || Sq.PhaseAge > 90.0) Sq.EndAssault();
+                if (InZone || Sq.PhaseAge > 90.0) Sq.EndAssault(InZone ? "leader on the objective" : "90 s");
                 return false;
         }
         return false;
@@ -2050,7 +2119,8 @@ public sealed class BotBrain
         float d = t != null ? _b.FeetPos.DistanceTo(t.LastKnownPos) : 999f;
         bool open = Env is EnvKind.Open or EnvKind.Forest; // a street or a floor: lying down just gets you trodden on and shot from above
         bool mayLie = open && Now > _proneBlockedUntil;
-        if (Now < _hitTheDirtUntil && State != BotState.Evade) return Posture.Prone;
+        // (Not while he's still running for cover or away from it: the flat-until time is set when the run starts.)
+        if (Now < _hitTheDirtUntil && Now >= _blastRunUntil && State != BotState.Evade) return Posture.Prone;
         switch (State)
         {
             case BotState.InCover:
@@ -2079,33 +2149,408 @@ public sealed class BotBrain
         }
     }
 
+    // ================================================================ Incoming: bombs, grenades from drones, FPVs, shelter
+
     /// <summary>
-    /// A mortar bomb whistling down close by (it's heard for the last few seconds of its fall): hit the
-    /// dirt where you stand; there's no outrunning it. Under a roof, stay put. The squad gets off the
-    /// impact area once it's landed (the indirect-fire drill).
+    /// Mortar bombs and shells about to land or just landed (where, when), kept a minute and a half: what "the fire's
+    /// still coming" and "it's over" mean to the men under it. Shared: one man noting a round notes it for all.
+    /// </summary>
+    static readonly List<(Vector3 At, double When)> Shelling = new();
+    static double _shellingNotedAt;
+
+    static void NoteShelling()
+    {
+        if (Now < _shellingNotedAt) Shelling.Clear(); // a new match: the clock started again
+        else if (Now - _shellingNotedAt < 0.15) return;
+        _shellingNotedAt = Now;
+        foreach (var inc in Ballistics.Incoming) if (!Shelling.Contains(inc)) Shelling.Add(inc);
+        Shelling.RemoveAll(s => Now - s.When > 90.0);
+    }
+
+    /// <summary>Rounds that have landed, or are about to, within r (m) of a point in the last <paramref name="within"/> s.</summary>
+    static int ShellsNear(Vector3 p, float r, double within, out double last)
+    {
+        int n = 0;
+        last = -1;
+        foreach (var (at, when) in Shelling)
+        {
+            if (Now - when > within || Flat(at - p) > r) continue;
+            n++;
+            if (when > last) last = when;
+        }
+        return n;
+    }
+
+    static float Flat(Vector3 v) => MathF.Sqrt(v.X * v.X + v.Z * v.Z);
+
+    /// <summary>What keeps a man at his job whatever's falling: on the way to or at his vehicle or tube, at a drone's screen, dressing a wound.</summary>
+    bool Committed => _b.Ride != null || State == BotState.Aid || Note is "to the transport" or "to the vehicle" or ToTheTube or AssistantGunner || _b.Ops is { Flying: true };
+
+    /// <summary>
+    /// A bomb or shell coming down close by (heard for the last three seconds of its fall, and where it will land is
+    /// plain from where it's coming from), or a grenade seen falling from a drone. The way people do it:
+    /// - something solid within a few strides, between him and the burst: get behind it and down (fragments don't go
+    ///   through walls);
+    /// - else, if there's time (the whistle is heard ~3 s out; a beat to take it in, and 0.8 s to get flat), sprint
+    ///   away from the spot: the spray thins with the square of the distance and lying flat shows a tenth of a
+    ///   man to it (Grenade.Spray), so 15 m more and then flat is worth having, while a man on his feet at 8 m is torn;
+    /// - else, or if it's not close, flat where he is. In the open there's no outrunning it, and no one runs at it.
+    /// Then he stays down after it's gone off: a moment for a single round, longer if it's a fire mission (the
+    /// rounds come a few seconds apart, and he can't know it's the last). Under a roof he stays put.
     /// </summary>
     bool CheckIncoming()
     {
-        if (Now < _hitTheDirtUntil) { _b.Stop(); return true; }
-        if (Ballistics.Incoming.Count == 0 || Env == EnvKind.Interior) return false;
-        foreach (var (at, when) in Ballistics.Incoming)
+        NoteShelling();
+        // Running from a burst, to cover or just away: until he's there, or out of time, when he goes down where he is.
+        if (Now < _blastRunUntil && !_b.Arrived) return true;
+        if (_blastRunUntil > 0)
         {
-            double left = when - Now;
-            if (left < -0.2 || left > 3.2 || at.DistanceTo(_b.FeetPos) > 45f) continue;
-            _hitTheDirtUntil = when + _rng.RandfRange(0.6f, 1.5f);
-            Prof.Count("incoming:hit-the-dirt");
-            if (State is not (BotState.Hold or BotState.InCover or BotState.Engage)) SetState(BotState.Hold, "incoming! down!");
-            _holdUntil = _hitTheDirtUntil;
-            _b.Stop();
-            Say(_rng.Randf() < 0.5f ? "Incoming!" : "Get down!");
+            _blastRunUntil = -1;
+            if (Cover != null && _b.Arrived) SetState(BotState.InCover, "incoming! behind it");
+            Down();
+        }
+        if (Env != EnvKind.Interior)
+        {
+            var feet = _b.FeetPos;
+            Vector3 at = default;
+            double when = double.MaxValue;
+            float fragR = 25f;
+            foreach (var (a, w) in Ballistics.Incoming)
+            {
+                double left = w - Now;
+                if (left < -0.2 || left > 3.2 || w >= when || w == _blastSeen || Flat(a - feet) > 45f) continue;
+                at = a;
+                when = w;
+            }
+            // A quad's grenade: only a man with the drone in sight above him might see it let go and fall, and then
+            // not every time: a small dark thing falling from 60 m against the sky.
+            if (when == double.MaxValue && Drone.Drops.Count > 0 && _droneTarget is { Kind: DroneKind.Quad, Dead: false } && Now < _droneAt)
+                foreach (var (a, w) in Drone.Drops)
+                {
+                    double left = w - Now;
+                    if (left < 0.6 || left > 3.8 || w == _dropSeen || Flat(a - feet) > 22f) continue;
+                    _dropSeen = w; // one look at each
+                    if (_rng.Randf() < 0.4f) { at = a; when = w; fragR = 7f; }
+                    break;
+                }
+            if (when < double.MaxValue)
+            {
+                _blastSeen = when;
+                AvoidBlast(at, when, fragR);
+                return true;
+            }
+        }
+        // Down from the last one; and the drill's still on: get on to where it was sending him. (The drill's dash used
+        // to end at the first whistle, and he lay in the impact area till the drill ran out.)
+        if (Now < _hitTheDirtUntil) { _b.Stop(); return true; }
+        if (_escapeGoal is Vector3 eg)
+        {
+            if (Sq == null || Sq.Current != Drill.Indirect || _b.Ride != null || _escapeResumes > 3 || _b.FeetPos.DistanceTo(eg) < 3f) _escapeGoal = null;
+            else if (State != BotState.TakeCover || _b.Arrived)
+            {
+                _escapeResumes++;
+                SetState(BotState.TakeCover, "incoming! off the impact area");
+                Cover = null;
+                _b.MoveTo(eg, MoveMode.Sprint);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    int _escapeResumes;
+
+    void AvoidBlast(Vector3 at, double when, float fragR)
+    {
+        float left = (float)(when - Now);
+        var feet = _b.FeetPos;
+        var away = (feet - at) with { Y = 0f };
+        float d = away.Length();
+        Prof.Count("incoming:react");
+        Say(_rng.Randf() < 0.5f ? "Incoming!" : "Get down!");
+        // Already flat (from an earlier one): he stays there, longer, rather than get up to run.
+        bool flat = _b.Prone && Now < _hitTheDirtUntil;
+        bool repeated = ShellsNear(feet, 100f, 45.0, out _) >= 2;
+        _hitTheDirtUntil = Math.Max(_hitTheDirtUntil, when + (repeated ? _rng.RandfRange(5f, 9f) : _rng.RandfRange(1.5f, 3f)));
+        _holdUntil = _hitTheDirtUntil;
+        // A beat to take it in, 0.9 s at the end to get down: what's left is time to run.
+        float run = left - 0.3f - 0.9f;
+        if (!flat && run > 0.6f && d < fragR * 1.4f)
+        {
+            if (CoverFinder.Find(_b, at + Vector3.Up * 0.5f, MathF.Min(10f, run * 5.6f), _rng) is CoverSpot s)
+            {
+                if (s.Pos.DistanceTo(feet) > 0.7f)
+                {
+                    Prof.Count("incoming:into cover");
+                    SetState(BotState.TakeCover, "incoming! into cover");
+                    Cover = s;
+                    _b.MoveTo(s.Pos, MoveMode.Sprint);
+                    _blastRunUntil = when - 0.9;
+                    return;
+                }
+                // Already behind something: down here.
+            }
+            else if (d < fragR && PickEscape(d > 0.5f ? away / d : Vector3.Right, Mathf.Clamp(run * 5.6f * 0.9f, 3f, 18f), out var goal))
+            {
+                Prof.Count("incoming:away");
+                SetState(BotState.TakeCover, "incoming! away from it");
+                Cover = null;
+                _b.MoveTo(goal, MoveMode.Sprint);
+                _blastRunUntil = when - 0.9;
+                return;
+            }
+        }
+        Prof.Count("incoming:hit-the-dirt");
+        Down();
+    }
+
+    /// <summary>Flat where he is: down and still until <c>_hitTheDirtUntil</c>.</summary>
+    void Down()
+    {
+        if (State is not (BotState.Hold or BotState.InCover or BotState.Engage)) SetState(BotState.Hold, "incoming! down!");
+        _holdUntil = _hitTheDirtUntil;
+        _b.Stop();
+    }
+
+    /// <summary>A place <paramref name="dist"/> m off in about the direction given, standable and with a clear run to it, or as near as the ground allows.</summary>
+    bool PickEscape(Vector3 dir, float dist, out Vector3 goal)
+    {
+        var space = _b.GetWorld3D().DirectSpaceState;
+        var feet = _b.FeetPos;
+        foreach (float deg in new[] { 0f, 35f, -35f, 70f, -70f })
+        {
+            var p = feet + dir.Rotated(Vector3.Up, Mathf.DegToRad(deg)) * dist;
+            if (!CoverFinder.Standable(space, p, feet.Y, out goal)) continue;
+            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(feet + Vector3.Up * 0.6f, goal + Vector3.Up * 0.6f, Layers.World)).Count > 0) continue;
+            return true;
+        }
+        goal = default;
+        return false;
+    }
+
+    /// <summary>
+    /// An FPV coming down on this part of the ground. He can see where it's going by the line it flies along: if
+    /// that comes within a dozen metres of him he has 2-4 seconds (it's seen a couple of hundred metres off and screams
+    /// long before). What people do: get under a roof or behind a wall if there's one within reach; failing that,
+    /// some shoot at it (a rifle round brings one down, though it's a hard shot at 38 m/s) and some run across
+    /// its line; and in the last second, flat (lying down cuts what a burst does to a man to a fraction). The FPV
+    /// used to be "dived out of" by a fixed seven metres sideways, from under 45 m: 1.2 s out, too late for anything.
+    /// </summary>
+    bool CheckFpv()
+    {
+        if (Drone.All.Count == 0 || _b.Ride != null || Env == EnvKind.Interior) return false;
+        var eye = _b.EyePos;
+        var chest = _b.FeetPos + Vector3.Up * 0.9f;
+        Drone? d = null;
+        float bestEta = 99f;
+        Vector3 bestAt = default;
+        foreach (var f in Drone.All)
+        {
+            if (!f.IsFpv || f.Dead || f.Team == _b.Team || !GodotObject.IsInstanceValid(f)) continue;
+            var fp = f.GlobalPosition;
+            if (fp.DistanceTo(eye) > 130f) continue;
+            if (!f.Predict(out var land, out float eta) || eta > 4f || eta >= bestEta) continue;
+            if (SegmentDistance(chest, fp, land) > 12f) continue;
+            if (_b.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, fp, Layers.World | Layers.Trees)).Count > 0) continue; // unseen: its line is anyone's guess
+            d = f;
+            bestEta = eta;
+            bestAt = land;
+        }
+        if (d == null) { _fpvPlanFor = null; return false; }
+        float time = bestEta - 0.3f;
+        if (_fpvPlanFor != d)
+        {
+            _fpvPlanFor = d;
+            _fpvPlan = 0;
+            Prof.Count("fpv:threatened");
+            if (Now > _droneCallAt) { _droneCallAt = Now + 8.0; Say("FPV! FPV incoming!"); }
+            var fp = d.GlobalPosition;
+            // Flat, when it comes to that, for as long as it takes and a moment more (it may circle, or there's a second).
+            double downFor = Now + bestEta + _rng.RandfRange(2f, 4f);
+            if (time > 1.6f && Now > _shelterSearchAt && !Committed && CoverFinder.FindShelter(_b, fp, MathF.Min(14f, (time - 0.6f) * 5.6f), _rng) is CoverSpot room)
+            {
+                Prof.Count("fpv:into a building");
+                StartShelter(room, bestEta + 8.0, 30.0, "FPV! into the building");
+                _fpvPlan = 1;
+                return true;
+            }
+            _shelterSearchAt = Math.Max(_shelterSearchAt, Now + 4.0);
+            if (time > 0.9f && CoverFinder.Find(_b, fp, MathF.Min(8f, time * 5.6f), _rng) is CoverSpot s && s.Pos.DistanceTo(_b.FeetPos) > 0.7f)
+            {
+                Prof.Count("fpv:into cover");
+                SetState(BotState.TakeCover, "FPV! into cover");
+                Cover = s;
+                _b.MoveTo(s.Pos, MoveMode.Sprint);
+                _blastRunUntil = Now + bestEta - 0.9;
+                _hitTheDirtUntil = Math.Max(_hitTheDirtUntil, downFor);
+                _fpvPlan = 1;
+                return true;
+            }
+            // Nothing to get behind. Some (all the machine gunners) shoot at it while there's time; the rest run across its line.
+            if (time > 1.4f && (Role == Role.AutoRifleman || _rng.Randf() < 0.5f)) { _fpvPlan = 0; return false; }
+            var line = (bestAt - fp) with { Y = 0f };
+            var side = line.LengthSquared() > 0.01f ? line.Normalized().Cross(Vector3.Up) : Vector3.Right;
+            // Whichever way takes him further from where it will come down.
+            if ((_b.FeetPos + side * 6f - bestAt).LengthSquared() < (_b.FeetPos - side * 6f - bestAt).LengthSquared()) side = -side;
+            if (time > 0.9f && PickEscape(side, Mathf.Clamp((time - 0.6f) * 5.6f, 3f, 10f), out var goal))
+            {
+                Prof.Count("fpv:across its line");
+                SetState(BotState.TakeCover, "FPV! off its line");
+                Cover = null;
+                _b.MoveTo(goal, MoveMode.Sprint);
+                _blastRunUntil = Now + bestEta - 0.9;
+                _hitTheDirtUntil = Math.Max(_hitTheDirtUntil, downFor);
+                _fpvPlan = 1;
+                return true;
+            }
+            _fpvPlan = 2;
+            _hitTheDirtUntil = Math.Max(_hitTheDirtUntil, downFor);
+            Prof.Count("fpv:down");
+            Down();
+            return true;
+        }
+        // Shooting at it till there's no time left, then flat.
+        if (_fpvPlan == 0 && time <= 0.6f)
+        {
+            _fpvPlan = 2;
+            _hitTheDirtUntil = Math.Max(_hitTheDirtUntil, Now + bestEta + _rng.RandfRange(2f, 4f));
+            Prof.Count("fpv:down");
+            Down();
             return true;
         }
         return false;
     }
 
+    /// <summary>How far a point is from the line segment a-b.</summary>
+    static float SegmentDistance(Vector3 p, Vector3 a, Vector3 b)
+    {
+        var ab = b - a;
+        float len2 = ab.LengthSquared();
+        float t = len2 > 1e-4f ? Mathf.Clamp((p - a).Dot(ab) / len2, 0f, 1f) : 0f;
+        return p.DistanceTo(a + ab * t);
+    }
+
+    /// <summary>
+    /// Sitting out shelling, or a drone overhead, under a roof: the ground floor of a building clear of the windows
+    /// (see CoverFinder.FindShelter), or, from a drone, anywhere with something solid overhead. Repeated indirect
+    /// fire is what sends a man there (one round lands and he goes flat, or the squad's drill takes him out of the
+    /// beaten zone; a second, and a building within forty metres is where he wants to be, if there's one he can reach).
+    /// He stays a reasonable time after the last round (rounds come a few seconds apart, and it might be over: ~15 s
+    /// on) or while the drone's still about (heard, not seen: through a roof), at the longest 90 s (shelling) or 30 s
+    /// (a drone), and not again for a while after a drone (a quad orbits for eight minutes on one battery). A man
+    /// shooting at us close by ends it.
+    /// </summary>
+    bool TakeShelter(Threat? t)
+    {
+        var feet = _b.FeetPos;
+        if (_sheltering)
+        {
+            bool fight = InContact(t, feet) || Committed;
+            // Never got there (blocked, or the route was longer than it looked): not standing against a wall for a minute and a half.
+            bool stuck = Now - _shelterSince > 15.0 && Flat(feet - _shelterAt) > 3f;
+            // More coming, or the drone still about: it goes on.
+            if (ShellsNear(feet, 120f, 60.0, out double last) > 0 && last + _shelterHold > _shelterUntil) _shelterUntil = last + _shelterHold;
+            foreach (var q in Drone.All)
+                if (!q.Dead && q.Team != _b.Team && q.Kind == DroneKind.Quad && Flat(q.GlobalPosition - feet) < 100f) { _shelterUntil = Math.Max(_shelterUntil, Now + 8.0); break; }
+            if (fight || stuck || Now > _shelterUntil || Now > _shelterMax)
+            {
+                // Not straight back under it after a drone (a quad orbits for eight minutes on a battery): the men would never be out.
+                if (_shelterDrone) _shelterCoolUntil = Now + (Now > _shelterMax ? 90.0 : 40.0);
+                _sheltering = false;
+                Prof.Count(stuck ? "shelter:gave up, never got there" : Flat(feet - _shelterAt) < 2f ? "shelter:ended in it" : "shelter:ended away from it");
+                if (DuelMode.Verbose) GD.Print($"[{Now:0}s] {_b.Callsign} out of shelter after {Now - _shelterSince:0} s ({(_shelterDrone ? "drone" : "shelling")}{(stuck ? ", never got there" : "")})");
+                if (State is BotState.InCover or BotState.TakeCover) { SetState(t != null ? BotState.Hold : BotState.Advance, "out from shelter"); _hasWaypoint = false; }
+                return false;
+            }
+            if (Flat(feet - _shelterAt) > 1.2f)
+            {
+                // On the way, or stopped short (a whistle put him flat on the way): on.
+                if (State != BotState.TakeCover || _b.Arrived)
+                {
+                    SetState(BotState.TakeCover, "to shelter");
+                    Cover = new CoverSpot { Pos = _shelterAt, PeekPos = _shelterAt };
+                    _b.MoveTo(_shelterAt, MoveMode.Sprint);
+                }
+                return true;
+            }
+            if (State != BotState.InCover || Note != "sheltering")
+            {
+                SetState(BotState.InCover, "sheltering");
+                Cover = new CoverSpot { Pos = _shelterAt, PeekPos = _shelterAt };
+                _hideUntil = Now + 5.0;
+            }
+            return true;
+        }
+        if (Now < _shelterCoolUntil || Committed) return false;
+        int n = ShellsNear(feet, 100f, 60.0, out double lastShell);
+        // Only while it's still going on: a round in the last quarter minute (else he'd be in and out as the old ones age, and
+        // the squad that came through a shelling a minute ago has long since got on with it).
+        if (n == 0 || Now - lastShell > 15.0) return false;
+        // Where the nearest of them fell: the hazard a wall has to stand between him and.
+        Vector3? nearest = null;
+        float nd = float.MaxValue;
+        foreach (var (at, when) in Shelling) if (Now - when < 60.0 && Flat(at - feet) < nd) { nd = Flat(at - feet); nearest = at; }
+        float walk = n >= 2 ? 40f : nd < 45f ? 15f : 0f;
+        if (walk <= 0f || InContact(t, feet)) return false;
+        _shelterHold = _rng.RandfRange(12f, 22f);
+        if (Env == EnvKind.Interior)
+        {
+            // Already under a roof: stay in it, and back from the glass if he's at a window.
+            if (n < 2) return false;
+            Prof.Count("shelter:already inside");
+            StartShelter(new CoverSpot { Pos = feet, PeekPos = feet }, Math.Max(lastShell + _shelterHold - Now, 6.0), 90.0, "sheltering");
+            return true;
+        }
+        if (Now < _shelterSearchAt) return false;
+        _shelterSearchAt = Now + 6.0;
+        if (CoverFinder.FindShelter(_b, nearest, walk, _rng) is not CoverSpot room) { Prof.Count("shelter:none within reach"); return false; }
+        Prof.Count("shelter:go in (shelling)");
+        StartShelter(room, Math.Max(lastShell + _shelterHold - Now, 8.0), 90.0, "incoming! into the building");
+        return true;
+    }
+
+    /// <summary>A man in a fight he can see, or has seen in the last few seconds, within 45 m: no one walks off to a building from that (and a shot at him ends a stay in one).</summary>
+    bool InContact(Threat? t, Vector3 feet) => t != null && (t.Visible || Now - t.LastSeen < 6.0) && feet.DistanceTo(t.LastKnownPos) < 45f;
+
+    double _shelterHold;
+    Vector3 _shelterAt;
+
+    bool _shelterDrone;
+
+    void StartShelter(CoverSpot spot, double stay, double cap, string why, bool drone = false)
+    {
+        _sheltering = true;
+        _shelterDrone = drone;
+        _shelterSince = Now;
+        _shelterUntil = Now + stay;
+        _shelterMax = Now + cap;
+        _shelterAt = spot.Pos;
+        if (_shelterHold <= 0.0) _shelterHold = _rng.RandfRange(12f, 22f);
+        // The squad's drill would take him straight out again once the shelling lets up.
+        if (Sq != null) { _drillSeen = Sq.DrillId; _drillDone = true; }
+        _escapeGoal = null;
+        if (DuelMode.Verbose)
+        {
+            var room = Rooms.At(spot.Pos + Vector3.Up * 1f);
+            GD.Print($"[{Now:0}s] {_b.Callsign} shelter ({(drone ? "drone" : "shelling")}) at ({spot.Pos.X:0},{spot.Pos.Z:0}), {Flat(_b.FeetPos - spot.Pos):0} m off, {(room != null ? $"in a building {room.X1 - room.X0:0}x{room.Z1 - room.Z0:0} m" : "under cover")}, for {stay:0} s");
+        }
+        if (Flat(_b.FeetPos - spot.Pos) < 1.2f) { SetState(BotState.InCover, "sheltering"); Cover = spot; _b.Stop(); return; }
+        SetState(BotState.TakeCover, why);
+        Cover = spot;
+        _b.MoveTo(spot.Pos, MoveMode.Sprint);
+    }
+
     void UpdateAim(Threat? t, bool vis)
     {
         var aim = _b.Aim;
+        if (Now < _droneAimUntil && _droneTarget is { Dead: false } dr && GodotObject.IsInstanceValid(dr))
+        {
+            // Shooting at a drone: on it (the ordinary aim leads by the round's time of flight, as far as his skill goes).
+            aim.Goal = dr.GlobalPosition;
+            aim.GoalVel = dr.Vel;
+            aim.Tracking = true;
+            return;
+        }
         if (vis && _reacted)
         {
             aim.Goal = AimPoint(t!);
@@ -2115,18 +2560,14 @@ public sealed class BotBrain
         }
         aim.Tracking = false;
         if (vis) return; // still reacting: eyes on them, gun not yet
-        if (t == null && AreaFire)
+        if (AreaFire)
         {
             if (Now > _areaPickAt)
             {
-                _areaPickAt = Now + _rng.RandfRange(1.5f, 3f);
-                // The leader's "suppress there", else the objective in the assault.
-                bool ordered = Sq!.SuppressUntil > Now;
-                var centre = ordered ? Sq.SuppressAt : Objective!.Center;
-                float a = _rng.Randf() * Mathf.Tau, r = MathF.Sqrt(_rng.Randf()) * (ordered ? 7f : Objective!.Radius * 0.6f);
-                _areaPoint = centre + new Vector3(MathF.Cos(a) * r, _rng.RandfRange(0.5f, ordered ? 2f : 4f), MathF.Sin(a) * r);
+                PickAreaPoint();
+                _areaPickAt = Now + (_areaOk ? _rng.RandfRange(1.5f, 3f) : 0.7f);
             }
-            aim.Goal = _areaPoint;
+            if (_areaOk) aim.Goal = _areaPoint;
             return;
         }
         bool movingFar = _b.Mode == MoveMode.Sprint || State == BotState.Evade || (State == BotState.TakeCover && _b.RemainingDistance > 6f);
@@ -2175,6 +2616,75 @@ public sealed class BotBrain
     }
 
     /// <summary>
+    /// Where to put area fire: the leader's "suppress there", else the objective in the assault. A point is only worth
+    /// firing at if there's a line to it from where he stands: a clear one, or one that ends on the face of a building
+    /// or wall in the objective (that's what support by fire shoots at: the windows and walls the enemy is behind).
+    /// A line that ends against a hill or another building short of the objective is nothing to fire at, and a point
+    /// with our own men within 15 m of it (the assault team on the objective) is left alone: fire lifts and shifts on
+    /// to what's still clear. If the ordered point can't be seen from here for a few seconds, he looks for a place
+    /// nearby where it can, and goes there. (It used to pick a random point in the area whether or not there was a
+    /// line to it, and stand at whatever place the map gave him; the shot check then held fire, and the support
+    /// spent most of its turn not firing.)
+    /// </summary>
+    void PickAreaPoint()
+    {
+        bool ordered = Sq!.SuppressUntil > Now;
+        var centre = ordered ? Sq.SuppressAt : Objective!.Center;
+        float radius = ordered ? 7f : Objective!.Radius * 0.6f;
+        var space = _b.GetWorld3D().DirectSpaceState;
+        var eye = _b.EyePos;
+        _areaOk = false;
+        for (int k = 0; k < 5; k++)
+        {
+            float a = _rng.Randf() * Mathf.Tau, r = MathF.Sqrt(_rng.Randf()) * radius;
+            var p = centre + new Vector3(MathF.Cos(a) * r, _rng.RandfRange(0.5f, ordered ? 2f : 4f), MathF.Sin(a) * r);
+            if (OwnNear(p, 15f)) continue;
+            var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, p, 1));
+            if (hit.Count > 0)
+            {
+                var at = hit["position"].AsVector3();
+                if (((at - centre) with { Y = 0f }).Length() > radius + 15f) continue;
+                p = at - (p - eye).Normalized() * 0.3f;
+            }
+            _areaPoint = p;
+            _areaOk = true;
+            break;
+        }
+        if (_areaOk) { _areaBlindSince = -1; return; }
+        if (!ordered) return;
+        if (_areaBlindSince < 0) _areaBlindSince = Now;
+        else if (Now - _areaBlindSince > 3.0 && Now > _areaShiftAt && !_b.Moving && State == BotState.Advance) ShiftToFire(space, centre);
+    }
+
+    /// <summary>A spot within 30 m, not further from the point, with a line to it: go there (and fire from it while the order lasts).</summary>
+    void ShiftToFire(PhysicsDirectSpaceState3D space, Vector3 centre)
+    {
+        _areaShiftAt = Now + 8.0;
+        var me = _b.FeetPos;
+        float d0 = ((centre - me) with { Y = 0f }).Length();
+        var target = centre + Vector3.Up * 1.0f;
+        Vector3? best = null;
+        float bestLen = float.MaxValue;
+        for (int k = 0; k < 14; k++)
+        {
+            float a = _rng.Randf() * Mathf.Tau, r = _rng.RandfRange(5f, 30f);
+            var p = me + new Vector3(MathF.Cos(a) * r, 0f, MathF.Sin(a) * r);
+            if (((centre - p) with { Y = 0f }).Length() > d0 + 5f) continue;
+            if (!CoverFinder.Standable(space, p with { Y = me.Y }, me.Y, out var g)) continue;
+            var hit = space.IntersectRay(PhysicsRayQueryParameters3D.Create(g + Vector3.Up * 1.4f, target, Layers.World));
+            if (hit.Count > 0 && hit["position"].AsVector3().DistanceTo(target) > 12f) continue;
+            if (r < bestLen) { bestLen = r; best = g; }
+        }
+        if (best is not Vector3 spot) return;
+        Prof.Count("suppress:shifted to fire");
+        _following = false;
+        _waypoint = spot;
+        _hasWaypoint = true;
+        _pausing = false;
+        _b.MoveTo(spot, MoveMode.Run);
+    }
+
+    /// <summary>
     /// Keeping watch, as an angle off the way he's watching (within +/-range): he looks somewhere for a few seconds,
     /// then somewhere else, each man on his own time. (Everyone on a side swept to the same sine wave: thirty men
     /// turning left and right together, in step.)
@@ -2191,19 +2701,25 @@ public sealed class BotBrain
 
     void TryShoot(Threat? t, bool vis)
     {
-        if (t == null && AreaFire && !_b.Reloading && State != BotState.Evade)
+        if (Now < _droneAimUntil && ShootDrone()) return;
+        if (Sq != null && Sq.FiringInSupport(_b)) Prof.Count(t == null ? "sbf ticks: no target" : vis ? "sbf ticks: target in sight" : "sbf ticks: target out of sight");
+        if ((t == null || !vis) && AreaFire && !_b.Reloading && State != BotState.Evade)
         {
             // Support by fire: rounds onto the buildings and cover the assault is going into.
+            if (!_areaOk) { Prof.Count("areafire:no line to the point"); return; }
             var eye0 = _b.EyePos;
-            if (Mathf.RadToDeg(_b.Aim.Dir.AngleTo(_areaPoint - eye0)) < 3f && Now >= _nextShotAt && !FriendlyInLine(eye0, _areaPoint) && _b.ShotReaches(_areaPoint, 10f))
-            {
-                float d0 = eye0.DistanceTo(_areaPoint);
-                if (_burstLeft <= 0) StartBurst(d0, false);
-                FireMode = "support by fire";
-                Shoot(d0);
-            }
+            if (Mathf.RadToDeg(_b.Aim.Dir.AngleTo(_areaPoint - eye0)) >= 3f) { Prof.Count("areafire:still aiming"); return; }
+            if (Now < _nextShotAt) return;
+            if (FriendlyInLine(eye0, _areaPoint)) { Prof.Count("areafire:friendly in line"); return; }
+            if (!_b.ShotReaches(_areaPoint, 10f)) { Prof.Count("areafire:shot blocked"); return; }
+            float d0 = eye0.DistanceTo(_areaPoint);
+            if (_burstLeft <= 0) StartBurst(d0, false);
+            FireMode = "support by fire";
+            Prof.Count("areafire:rounds");
+            Shoot(d0);
             return;
         }
+        if ((t == null || !vis) && AreaFire) Prof.Count("areafire:reloading or evading");
         if (t == null || _b.Reloading || _b.Ammo <= 0 || State == BotState.Evade) { _burstLeft = 0; return; }
         if (State == BotState.InCover && !_peeking) return;
         if (_b.Mode == MoveMode.Sprint && _b.Moving) return;

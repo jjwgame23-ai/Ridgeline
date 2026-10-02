@@ -213,6 +213,25 @@ public partial class TerritoryMode : Node, IMatch
     }
     public readonly List<Squad>[] Squads = { new(), new(), new() };
     public Squad? PlayerSquad { get; private set; }
+    /// <summary>
+    /// Settings.OwnSquad for this match: -1 you join ALPHA-1 as one of its soldiers; 0 you're a lone soldier; 1 or more you
+    /// lead a squad of that many bots of your own (an extra squad, ALPHA-0), and the other two sides each get an extra
+    /// rifle squad of the same strength (bots only, under their commanders) so nobody has the numbers.
+    /// </summary>
+    public int OwnBots { get; private set; } = -1;
+    /// <summary>What you spawn as: leading your own squad, you're its squad leader; otherwise the role you picked.</summary>
+    public Role PlayerKit => OwnBots >= 1 ? Role.Leader : Settings.PlayerRole;
+    /// <summary>
+    /// A squad the player runs, not the commander: their own, and any detachment of it. It follows them; its orders are
+    /// theirs to give, and stand until they give others. (A set, not "the squad you're in": when you're down and come
+    /// up with a detachment, the rest of it is still yours and not the commander's to send off.)
+    /// </summary>
+    bool PlayerRuns(Squad sq) => _own.Contains(sq);
+    readonly HashSet<Squad> _own = new();
+    /// <summary>The men of a squad of your own after its leader, in the order a rifle squad's template deals them (Roles.Compose).</summary>
+    static readonly Role[] OwnRoles = { Role.Rifleman, Role.AutoRifleman, Role.Grenadier, Role.Medic, Role.AntiTank };
+    /// <summary>Where you last fell: a lone soldier, with no squad to come back to, comes back at the spawn nearest it.</summary>
+    Vector3? _playerFellAt;
     /// <summary>Where the player wants to respawn: -1 = the default choice, 0 = base, 1+ = point index + 1.</summary>
     public int PlayerSpawn = -1;
 
@@ -309,6 +328,8 @@ public partial class TerritoryMode : Node, IMatch
 
         var names = Personality.Callsigns.OrderBy(_ => _rng.Randi()).ToList();
         int k = 0;
+        OwnBots = Setup.PlayerJoins ? Math.Clamp(Settings.OwnSquad, -1, OwnRoles.Length) : -1;
+        Squad? made = null;
         BotBrain.ResetStatics();
         Squad.Engagements = Squad.Assaults = Squad.Hunts = 0;
         Squad.ResetAll();
@@ -317,7 +338,7 @@ public partial class TerritoryMode : Node, IMatch
         SmokeScreen.Clear();
         PerchClaims.Clear();
         MotorPool.ResetCounters();
-        CrewBrain.AreaRounds = CrewBrain.HeldForFriendlies = 0;
+        CrewBrain.AreaRounds = CrewBrain.HeldForFriendlies = CrewBrain.IllumRounds = 0;
         Drone.Log = Log;
         Bot.StuckEvents = Bot.StuckNearVehicle = Bot.StuckBoarding = Bot.StuckWaiting = 0;
         CrewBrain.MortarRounds = 0;
@@ -341,18 +362,8 @@ public partial class TerritoryMode : Node, IMatch
                 if (vk == VKind.Logistics) continue;
                 comp.Add((MotorPool.CrewKind(vk), Enumerable.Repeat(Role.Crewman, MotorPool.Crew(vk)).ToList()));
             }
-            for (int s = 0; s < comp.Count; s++)
+            void Enlist(Squad sq, IEnumerable<Role> roles)
             {
-                var sq = new Squad { Team = team, Number = s + 1, Kind = comp[s].Kind };
-                Squads[team].Add(sq);
-                var roles = comp[s].Roles;
-                // The player takes a place in the first rifle squad: the leader's, if that's
-                // the role they picked, otherwise a rifleman's.
-                if (team == 0 && s == 0 && Setup.PlayerJoins && roles.Count > 1)
-                {
-                    int slot = roles.IndexOf(Settings.PlayerRole == Role.Leader ? Role.Leader : Role.Rifleman);
-                    roles.RemoveAt(slot >= 0 ? slot : roles.Count - 1);
-                }
                 foreach (var role in roles)
                 {
                     var p = Personality.Roll(_rng, names[k++ % names.Count]);
@@ -361,8 +372,41 @@ public partial class TerritoryMode : Node, IMatch
                     _roster[p] = (team, sq, role);
                 }
             }
+            for (int s = 0; s < comp.Count; s++)
+            {
+                var sq = new Squad { Team = team, Number = s + 1, Kind = comp[s].Kind };
+                Squads[team].Add(sq);
+                var roles = comp[s].Roles;
+                // The player takes a place in the first rifle squad: the leader's, if that's
+                // the role they picked, otherwise a rifleman's. (With a squad of their own, none.)
+                if (team == 0 && s == 0 && Setup.PlayerJoins && OwnBots < 0 && roles.Count > 1)
+                {
+                    int slot = roles.IndexOf(Settings.PlayerRole == Role.Leader ? Role.Leader : Role.Rifleman);
+                    roles.RemoveAt(slot >= 0 ? slot : roles.Count - 1);
+                }
+                Enlist(sq, roles);
+            }
+            // A squad of your own comes on top of the side's, and the same again for each other side, headcount for
+            // headcount (you and your bots; a bot leader and his): the extra squad isn't an edge for anyone.
+            if (OwnBots >= 0 && (team != 0 || OwnBots >= 1))
+            {
+                var ex = new Squad { Team = team, Number = team == 0 ? 0 : comp.Count + 1, Kind = SquadKind.Rifle };
+                Squads[team].Add(ex);
+                var roles = OwnRoles.Take(OwnBots).ToList();
+                if (team != 0) roles.Insert(0, Role.Leader);
+                Enlist(ex, roles);
+                if (team == 0)
+                {
+                    // It stays on you: its "objective" is wherever its leader is, so its men keep up with you in formation and,
+                    // told to stand down from following (B), keep loose company round you.
+                    ex.Order(null, new FollowObjective { Target = ex }, false, "Follow", "you");
+                    ex.FollowPlayer = true;
+                    _own.Add(ex);
+                    made = ex;
+                }
+            }
         }
-        if (Setup.PlayerJoins) PlayerSquad = Squads[0][0];
+        if (Setup.PlayerJoins) PlayerSquad = OwnBots < 0 ? Squads[0][0] : made;
         Squad.Spotted += OnSpotted;
 
         // The motor pool: vehicles parked in a row at each base, facing the middle, each bound to its crew.
@@ -409,7 +453,10 @@ public partial class TerritoryMode : Node, IMatch
         _nextTick = Clock.Now + TickEvery;
         _nextBleed = Clock.Now + BleedEvery;
         _hud.Center("Take and hold the settlements", 5f);
-        Log($"--- TERRITORY {Setup.TeamSize}x3, {n} points, {StartTickets} tickets, {Squads[0].Count} squads per side ---");
+        Log($"--- TERRITORY {Setup.TeamSize}x3, {n} points, {StartTickets} tickets, {Squads[1].Count} squads per side ---");
+        if (OwnBots >= 0)
+            Log(OwnBots == 0 ? $"    you're on your own; {Squads[1][^1].Name} and {Squads[2][^1].Name} are one extra soldier each"
+                : $"    you lead {PlayerSquad!.Name} ({OwnBots} bots); {Squads[1][^1].Name} and {Squads[2][^1].Name} are {OwnBots + 1} strong");
         if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
     }
 
@@ -580,9 +627,12 @@ public partial class TerritoryMode : Node, IMatch
         var lead = Anchor(sq) ?? sq?.Leader;
         Vector3? near = lead?.FeetPos ?? (sq != null && _lastSeenAt.TryGetValue(sq, out var last) ? last : sq?.Objective?.Center);
         if (near is not Vector3 goal) return opts[0];
-        // A FOB counts as 150 m nearer: it's built forward to put men back into the fight close to it.
-        return opts.OrderBy(o => (o.Pos - goal with { Y = o.Pos.Y }).Length() - (o.Point >= 100 ? 150f : 0f)).First();
+        return Nearest(opts, goal);
     }
+
+    /// <summary>The spawn closest to a place. A FOB counts as 150 m nearer: it's built forward to put men back into the fight close to it.</summary>
+    static (string Name, Vector3 Pos, int Point) Nearest(List<(string Name, Vector3 Pos, int Point)> opts, Vector3 goal) =>
+        opts.OrderBy(o => (o.Pos - goal with { Y = o.Pos.Y }).Length() - (o.Point >= 100 ? 150f : 0f)).First();
 
     float Face(Vector3 from, Vector3 to)
     {
@@ -595,8 +645,9 @@ public partial class TerritoryMode : Node, IMatch
     {
         var sq = _roster[p].Squad;
         // With a front line, the infantry deploys straight to the point nearest its orders
-        // (in its own sector) rather than walking kilometres from base; crews start with their vehicles.
-        (string Name, Vector3 Pos, int Point)? where = IsCrew(sq) || (atBase && !Front) ? (HQOpen(team) ? ("Base", Map.Bases[team], -1) : null) : BestSpawn(team, sq);
+        // (in its own sector) rather than walking kilometres from base; crews start with their vehicles. So does
+        // your own squad: it has no orders but you, and starts where you do.
+        (string Name, Vector3 Pos, int Point)? where = IsCrew(sq) || (atBase && (!Front || PlayerRuns(sq))) ? (HQOpen(team) ? ("Base", Map.Bases[team], -1) : null) : BestSpawn(team, sq);
         if (where is not { } w) return false;
         SpawnBot(p, team, w);
         return true;
@@ -625,23 +676,28 @@ public partial class TerritoryMode : Node, IMatch
         if (opts.Count == 0) { PlayerWait = "nowhere to come back: every spawn is cut off or under fire"; return false; }
         var baseOpt = opts.FirstOrDefault(o => o.Point == -1);
         string wait = "";
-        (string Name, Vector3 Pos, int Point)? pick = atBase && !Front && baseOpt.Name != null ? baseOpt
+        // (A soldier of your own starts at base, with the squad that's there with him: ALPHA-1 has orders to go to.)
+        (string Name, Vector3 Pos, int Point)? pick = atBase && (!Front || OwnBots >= 0) && baseOpt.Name != null ? baseOpt
             : atBase ? BestSpawn(0, PlayerSquad)
             : PlayerSpawn == 0 && baseOpt.Name != null ? baseOpt
             : PlayerSpawn > 0 && opts.FirstOrDefault(o => o.Point == PlayerSpawn - 1) is { Name: not null } chosen ? chosen
             // Otherwise with your squad, the way its other men come back (a spawn you pick is going on your own).
             : PlayerSquad != null ? JoinAt(PlayerSquad, _playerDiedAt, out wait)
+            // On your own: the spawn nearest where you fell.
+            : _playerFellAt is Vector3 fell ? Nearest(opts, fell)
             : BestSpawn(0, PlayerSquad);
         PlayerWait = pick == null ? wait : "";
         if (pick is not { } where) return false;
         PlayerBody?.QueueFree();
-        var p = new Player { TeamId = 0, Kit = Settings.PlayerRole };
+        var p = new Player { TeamId = 0, Kit = PlayerKit };
         GetParent().AddChild(p);
         p.GlobalPosition = SpawnAt(where, 0);
         p.SetYaw(Face(p.GlobalPosition, PlayerSquad?.Objective?.Center ?? Vector3.Zero));
         PlayerSquad?.Join(p);
+        // Back with your own squad: it's on you again, not at the rally point it fell back to.
+        if (PlayerSquad is { Regrouping: true } back && PlayerRuns(back)) back.Order(null, new FollowObjective { Target = back }, false, "Follow", "you");
         // Leading: your squad forms up on you by default.
-        if (PlayerSquad != null) PlayerSquad.FollowPlayer = Settings.PlayerRole == Role.Leader;
+        if (PlayerSquad != null) PlayerSquad.FollowPlayer = PlayerKit == Role.Leader;
         SoundWorld.I.ResetHearing();
         PlayerBody = p;
         PlayerHud.P = p;
@@ -828,6 +884,7 @@ public partial class TerritoryMode : Node, IMatch
     {
         var d = new Squad { Team = sq.Team, Number = sq.Number, Kind = sq.Kind, Suffix = "B", DetachedFrom = sq };
         Squads[sq.Team].Add(d);
+        if (PlayerRuns(sq)) _own.Add(d);
         return d;
     }
 
@@ -839,7 +896,7 @@ public partial class TerritoryMode : Node, IMatch
         if (PlayerSquad == sq && PlayerBody is { Dead: true }) PlayerSquad = d;
         bool detachmentLarger = n > Standing(sq);
         // A squad you lead, or one you've given an order, isn't re-tasked: that's your call, and the detachment comes to you.
-        bool yours = sq == PlayerSquad && PlayerLeads || sq.PlayerOrderUntil > now;
+        bool yours = sq == PlayerSquad && PlayerLeads || PlayerRuns(sq) || sq.PlayerOrderUntil > now;
         if (detachmentLarger && !yours && sq.Objective != null && sq.Objective is not FollowObjective)
         {
             // It takes over the job; the few left go to it.
@@ -904,6 +961,7 @@ public partial class TerritoryMode : Node, IMatch
         d.Members.Clear();
         p.LinkUpWith = d.LinkUpWith = null;
         Squads[d.Team].Remove(d);
+        _own.Remove(d);
         Squad.All.Remove(d);
         _lastSeenAt.Remove(d);
         _joining.Remove(d);
@@ -989,14 +1047,14 @@ public partial class TerritoryMode : Node, IMatch
 
         var assigned = new int[N];
         foreach (var sq in Squads[team])
-            if (sq.Kind == SquadKind.Rifle && sq.PlayerOrderUntil > Clock.Now && IndexOf(sq.Site) is >= 0 and var pi) assigned[pi]++;
+            if (sq.Kind == SquadKind.Rifle && (sq.PlayerOrderUntil > Clock.Now || PlayerRuns(sq)) && IndexOf(sq.Site) is >= 0 and var pi) assigned[pi]++;
 
         // Defenders (front line): about one rifle squad in three holds the most threatened points
         // on our side of the front, so ground taken isn't simply walked away from.
         var defenders = new HashSet<Squad>();
         if (Front)
         {
-            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && s.Alive > 0 && s.Transport == null && !s.Busy && !Shattered(s) && s.LinkUpWith == null).ToList();
+            var rifles = Squads[team].Where(s => s.Kind == SquadKind.Rifle && s.PlayerOrderUntil <= Clock.Now && !PlayerRuns(s) && s.Alive > 0 && s.Transport == null && !s.Busy && !Shattered(s) && s.LinkUpWith == null).ToList();
             // One in three: with only two rifle squads both attack (engineers still dig in on the front).
             int want = rifles.Count / 3;
             // A point that already has a garrison keeps it unless another is clearly worse off (a couple of enemies
@@ -1024,7 +1082,8 @@ public partial class TerritoryMode : Node, IMatch
 
         foreach (var sq in Squads[team])
         {
-            if (sq.PlayerOrderUntil > Clock.Now || sq.Kind != SquadKind.Rifle || defenders.Contains(sq)) continue;
+            // (A squad you run isn't the commander's: no orders from him, and none taken back when yours run out.)
+            if (sq.PlayerOrderUntil > Clock.Now || sq.Kind != SquadKind.Rifle || defenders.Contains(sq) || PlayerRuns(sq)) continue;
             // The smaller part of a split squad: it goes to join the rest (see Reinforce).
             if (sq.LinkUpWith is { } rest && Squads[team].Contains(rest))
             {
@@ -1536,7 +1595,7 @@ public partial class TerritoryMode : Node, IMatch
         if (PlayerSquad == null) return;
         if (!PlayerLeads) { _hud.Center("Only the squad leader gives orders", 2f); return; }
         PlayerSquad.FollowPlayer = !PlayerSquad.FollowPlayer;
-        _hud.Center(PlayerSquad.FollowPlayer ? "Squad: on me" : "Squad: go work the objective", 3f);
+        _hud.Center(PlayerSquad.FollowPlayer ? "Squad: on me" : PlayerSquad.Objective is FollowObjective ? "Squad: loose round me" : "Squad: go work the objective", 3f);
         foreach (var m in PlayerSquad.Members)
             if (m is Bot { Alive: true } b && IsInstanceValid(b)) b.Brain.ObjectiveChanged();
     }
@@ -1919,7 +1978,13 @@ public partial class TerritoryMode : Node, IMatch
         }
         if (victim == PlayerBody)
         {
+            _playerFellAt = victim.FeetPos;
             ReleasePlayerOrder();
+            // Your own squad has nobody to follow now: it falls back to the nearest spawn to take you on, as a leaderless
+            // squad makes for its rally point (JoinAt brings you up once it's there and out of contact). (It used to stand
+            // where you fell, 150 m or more from any spawn, and you waited out the whole three minutes.)
+            if (PlayerSquad is { } own && PlayerRuns(own) && Standing(own) > 0 && RegroupAt(own) is { } rg)
+                own.Order(rg.Site, rg.Obj, true, "Regroup at", rg.Name);
             _playerDiedAt = Clock.Now;
             PlayerRespawnAt = Clock.Now + RespawnDelay;
             _hud.Center($"Killed by {killer} — {zone}, {hit.Distance:0} m", 3f);

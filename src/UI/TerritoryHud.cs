@@ -149,10 +149,11 @@ public partial class TerritoryHud : CanvasLayer
         else if (MenuOpen && k.PhysicalKeycode == Key.Escape) MenuOpen = false;
         else if (Mode.PlayerRespawnAt > 0 && RoleKey(k.PhysicalKeycode) is int ri)
         {
-            // Dead: pick what to respawn as.
+            // Dead: pick what to respawn as. (Leading a squad of your own, you're its leader whatever you pick here.)
+            if (Mode.OwnBots >= 1) { Center("You lead your own squad: you come back as its squad leader", 2f); return; }
             Settings.PlayerRole = TerritoryMode.PlayerRoles[ri];
             Settings.Save();
-            Center($"Respawning as {Roles.Name(Settings.PlayerRole)}", 2f);
+            Center($"Respawning as {Roles.Name(Mode.PlayerKit)}", 2f);
         }
     }
 
@@ -211,6 +212,9 @@ public partial class TerritoryHud : CanvasLayer
         return string.Join("\n", lines);
     }
 
+    // The weather is the match's, set before the HUD is made.
+    readonly string _weatherName = Conditions.Weather.ToString().ToLowerInvariant();
+
     public override void _Process(double delta)
     {
         double now = Clock.Now;
@@ -218,7 +222,8 @@ public partial class TerritoryHud : CanvasLayer
         _roster.Text = RosterText();
         _score.Text = string.Join("     ", Enumerable.Range(0, 3).Select(t =>
             $"{TeamTag(t)} {m.Tickets[t]}{(m.Out[t] ? " [color=#888888](out)[/color]" : m.Spent(t) ? " [color=#ff5040](last stand)[/color]" : "")} [color=#aaaaaa]· {m.Owned(t)} pts[/color]"
-            + (!m.Out[t] && m.HQHold[t] < 0.999f ? $" [color=#ff5040]HQ {m.HQHold[t] * 100:0}%[/color]" : "")));
+            + (!m.Out[t] && m.HQHold[t] < 0.999f ? $" [color=#ff5040]HQ {m.HQHold[t] * 100:0}%[/color]" : "")))
+            + $"     [color=#bbbbbb]{Conditions.Clock} · {_weatherName}[/color]";
         _points.Text = PointsLine();
 
         var sq = m.PlayerSquad;
@@ -281,10 +286,10 @@ public partial class TerritoryHud : CanvasLayer
             string chosen = m.PlayerSpawn < 0 ? "with your squad"
                 : m.PlayerSpawn == 0 ? "base (vehicles are parked there)"
                 : opts.FirstOrDefault(o => o.Point == m.PlayerSpawn - 1).Name ?? "nearest (your pick was lost)";
-            string roles = string.Join("  ", TerritoryMode.PlayerRoles.Select((r, i) => r == Settings.PlayerRole ? $"[{RoleKeyName(i)}] {Roles.Short(r)}◂" : $"[{RoleKeyName(i)}] {Roles.Short(r)}"));
+            string roles = string.Join("  ", TerritoryMode.PlayerRoles.Select((r, i) => r == m.PlayerKit ? $"[{RoleKeyName(i)}] {Roles.Short(r)}◂" : $"[{RoleKeyName(i)}] {Roles.Short(r)}"));
             respawn = (m.PlayerWait != "" && m.PlayerSpawn < 0
-                          ? $"Waiting to rejoin your squad as {Roles.Name(Settings.PlayerRole)}: {m.PlayerWait}. Map (M): click a spawn to go on your own\n"
-                          : $"Respawning in {Math.Max(0, m.PlayerRespawnAt - now):0}s at {chosen} as {Roles.Name(Settings.PlayerRole)} — map (M): click a spawn\n") +
+                          ? $"Waiting to rejoin your squad as {Roles.Name(m.PlayerKit)}: {m.PlayerWait}. Map (M): click a spawn to go on your own\n"
+                          : $"Respawning in {Math.Max(0, m.PlayerRespawnAt - now):0}s at {chosen} as {Roles.Name(m.PlayerKit)} — map (M): click a spawn\n") +
                       $"Role: {roles}\n";
         }
         var b = s.Target;

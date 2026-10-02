@@ -177,6 +177,9 @@ public partial class SoundWorld : Node3D
         Bus("TailDoor", "Tail", new AudioEffectHighShelfFilter { CutoffHz = 1200f, Gain = 0.63f });
         Bus("TailWall", "Tail", new AudioEffectLowPassFilter { CutoffHz = 420f, Resonance = 0.6f, Db = AudioEffectFilter.FilterDB.Filter6Db });
 
+        // Rain, heard through whatever is between you and it: nothing outdoors, the roof indoors (UpdateRain).
+        Bus("Rain", "World", new AudioEffectLowPassFilter { CutoffHz = 20000f, Resonance = 0.5f });
+
         Bus("Ear", "Master");
         if (AudioServer.GetBusEffectCount(0) == 0) AudioServer.AddBusEffect(0, new AudioEffectHardLimiter { CeilingDb = -0.5f });
     }
@@ -363,6 +366,7 @@ public partial class SoundWorld : Node3D
             _listenerFwd = -cam.GlobalBasis.Z;
         }
         UpdateSpace(dt);
+        UpdateRain(dt);
         for (int i = _echoes.Count - 1; i >= 0; i--)
         {
             if (now < _echoes[i].At) continue;
@@ -574,6 +578,97 @@ public partial class SoundWorld : Node3D
         _windSpeed = _windTarget = _windMean * _rng.RandfRange(0.6f, 1.4f);
         _windNext = Clock.Now + _rng.RandfRange(60f, 180f);
         UpdateWeather(0f);
+        if (SkyView.RainRate > 0f)
+        {
+            _rain = new AudioStreamPlayer { Stream = RainLoop(_rng.RandiRange(1, 1 << 20)), Bus = "Rain", VolumeDb = RainDb };
+            AddChild(_rain);
+            _rain.Play(_rng.Randf() * 5f);
+        }
+    }
+
+    AudioStreamPlayer? _rain;
+    float _rainIn; // 0 outdoors .. 1 under a roof, eased
+
+    /// <summary>
+    /// How loud the rain is: the sound comes from the drops' impacts, so its power goes with the kinetic energy
+    /// brought down, about in proportion to the rain rate (+10 dB for ten times the rain). Moderate rain
+    /// (10 mm/h, ~50-55 dBA in the open) sits some 8 dB under a footstep beside you; a downpour 6 dB over that.
+    /// </summary>
+    static float RainDb => -26f + 10f * MathF.Log10(MathF.Max(SkyView.RainRate, 0.5f) / 10f);
+
+    /// <summary>
+    /// Indoors the rain is on the roof and the walls: masonry passes its low end and stops the patter's highs
+    /// (mass law), some 10 dB down overall.
+    /// </summary>
+    void UpdateRain(float dt)
+    {
+        if (_rain == null) return;
+        float target = Rooms.At(ListenerPos) != null ? 1f : 0f;
+        _rainIn += (target - _rainIn) * (1f - MathF.Exp(-dt / 0.3f));
+        _rain.VolumeDb = RainDb - 10f * _rainIn;
+        if (AudioServer.GetBusEffect(AudioServer.GetBusIndex("Rain"), 0) is AudioEffectLowPassFilter lp)
+            lp.CutoffHz = 20000f * MathF.Pow(800f / 20000f, _rainIn);
+    }
+
+    /// <summary>
+    /// Rain as a seamless stereo loop, different in each ear so it's all round you: the near drops as separate
+    /// ticks, thousands a second, most of them faint (drop sizes fall off exponentially and a drop's impact
+    /// energy goes as about D^4, so 30 dB between the least and the most), over the hiss of the countless
+    /// far ones. Band-limited to where rain on earth and leaves has its energy, ~0.5-8 kHz.
+    /// </summary>
+    static AudioStreamWav RainLoop(int seed)
+    {
+        const int rate = SoundSynth.Rate;
+        int n = rate * 6, fade = rate / 5, len = n + fade;
+        var rnd = new Random(seed);
+        var ch = new float[2][];
+        float peak = 1e-6f;
+        float ah = MathF.Exp(-2f * MathF.PI * 500f / rate), al = 1f - MathF.Exp(-2f * MathF.PI * 8000f / rate);
+        for (int c = 0; c < 2; c++)
+        {
+            var s = new float[len];
+            int ticks = (int)(len / (float)rate * 2500f);
+            for (int k = 0; k < ticks; k++)
+            {
+                int at = rnd.Next(len);
+                float a = MathF.Pow(10f, -1.5f * (float)rnd.NextDouble());
+                float tau = rate * (0.0003f + 0.0012f * (float)rnd.NextDouble());
+                float decay = MathF.Exp(-1f / tau), env = a;
+                int m = Math.Min(len - at, (int)(tau * 5f));
+                for (int i = 0; i < m; i++, env *= decay) s[at + i] += env * ((float)rnd.NextDouble() * 2f - 1f);
+            }
+            float hiss = 0f, x0 = 0f, hp = 0f, lo = 0f;
+            for (int i = 0; i < len; i++)
+            {
+                hiss += 0.35f * ((float)rnd.NextDouble() * 2f - 1f - hiss);
+                float x = s[i] + hiss * 0.25f;
+                hp = ah * (hp + x - x0);
+                x0 = x;
+                lo += al * (hp - lo);
+                s[i] = lo;
+            }
+            // The overrun crossfaded into the start (equal power, for noise): the loop has no seam.
+            for (int i = 0; i < fade; i++)
+            {
+                float t = (i + 0.5f) / fade;
+                s[i] = s[i] * MathF.Sqrt(t) + s[n + i] * MathF.Sqrt(1f - t);
+            }
+            for (int i = 0; i < n; i++) peak = MathF.Max(peak, MathF.Abs(s[i]));
+            ch[c] = s;
+        }
+        var bytes = new byte[n * 4];
+        for (int i = 0; i < n; i++)
+            for (int c = 0; c < 2; c++)
+            {
+                short q = (short)Math.Clamp((int)(ch[c][i] / peak * 0.8f * 32767f), -32768, 32767);
+                bytes[i * 4 + c * 2] = (byte)(q & 0xff);
+                bytes[i * 4 + c * 2 + 1] = (byte)((q >> 8) & 0xff);
+            }
+        return new AudioStreamWav
+        {
+            Format = AudioStreamWav.FormatEnum.Format16Bits, MixRate = rate, Stereo = true, Data = bytes,
+            LoopMode = AudioStreamWav.LoopModeEnum.Forward, LoopBegin = 0, LoopEnd = n,
+        };
     }
 
     /// <summary>
@@ -1038,6 +1133,9 @@ public partial class SoundWorld : Node3D
     /// <summary>For the HUD/debug: what space the listener is in.</summary>
     public string SpaceName => _env == EnvKind.Interior ? $"room ({_room?.Volume:0} m³)" : Surroundings.Name(_env);
 
+    /// <summary>The wind (m/s, horizontal, gusts included): what the rain drifts with.</summary>
+    public Vector3 Wind => _wind;
+
     /// <summary>For the HUD/debug: the wind, as speed and the compass bearing it blows from.</summary>
     public string WindName => $"{_wind.Length():0.0} m/s from {Mathf.PosMod(Mathf.RadToDeg(MathF.Atan2(-_wind.X, _wind.Z)), 360f):000}"; // compass: north is -Z
 
@@ -1072,6 +1170,7 @@ public partial class SoundWorld : Node3D
         SoundSynth.RotorLoop(false).SaveToWav($"{dir}/loop_rotor.wav");
         SoundSynth.DroneLoop(false).SaveToWav($"{dir}/loop_drone.wav");
         SoundSynth.DroneLoop(true).SaveToWav($"{dir}/loop_fpv.wav");
+        RainLoop(1).SaveToWav($"{dir}/loop_rain.wav");
         GD.Print($"sounddump: wrote {dir}\n{Report}");
     }
 

@@ -71,6 +71,12 @@ public partial class DevShot : Node
         if (setup != null && a.TryGetValue("level", out var lv)) setup.MapId = lv;
         if (a.TryGetValue("front", out var fr)) Settings.FrontLine = fr != "0";
         if (a.TryGetValue("minutes", out var mn) && int.TryParse(mn, out var mins)) Settings.MatchMinutes = mins;
+        // hour=23.5 (or -1 random), weather=rain|fog|overcast|clear|random, moon=0.5 (full), timescale=4
+        if (setup == null) return null; // a mode= the list above doesn't know: the menu
+        if (a.TryGetValue("hour", out var hr) && double.TryParse(hr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var hour)) setup.Hour = hour;
+        if (a.TryGetValue("weather", out var wx)) setup.Weather = wx;
+        if (a.TryGetValue("moon", out var mo) && float.TryParse(mo, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var moon)) setup.Moon = moon;
+        if (a.TryGetValue("timescale", out var ts) && float.TryParse(ts, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var tsv)) setup.TimeScale = tsv;
         if (a.TryGetValue("tickets", out var tk) && int.TryParse(tk, out var tix)) TerritoryMode.TicketsOverride = tix;
         return setup;
     }

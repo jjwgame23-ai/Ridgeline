@@ -11,6 +11,14 @@ public sealed class GameSetup
     public int Seed = 20260923;
     /// <summary>Which battlefield (a MapSpec id); empty = the one picked in the menu.</summary>
     public string MapId = "";
+    /// <summary>The hour the match starts at (0..24); below 0, the menu's choice (Settings.StartHour).</summary>
+    public double Hour = -2;
+    /// <summary>The weather; empty, the menu's choice (Settings.Weather).</summary>
+    public string Weather = "";
+    /// <summary>World seconds per match second; below 0, the menu's choice.</summary>
+    public float TimeScale = -1;
+    /// <summary>The moon's age, 0 new .. 0.5 full; below 0, random (test runs pin it).</summary>
+    public float Moon = -1;
 }
 
 /// <summary>

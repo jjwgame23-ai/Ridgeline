@@ -37,6 +37,9 @@ public partial class Effects : Node3D
         _grow.AddPoint(new Vector2(0f, 0.35f));
         _grow.AddPoint(new Vector2(1f, 1f));
 
+        BuildFlashPools();
+        AddChild(new Illumination());
+
         _markMat = new StandardMaterial3D
         {
             AlbedoTexture = soft,
@@ -141,14 +144,71 @@ public partial class Effects : Node3D
         }
     }
 
-    public void MuzzleFlash(Vector3 pos, Vector3 dir, float scale = 1f)
+    /// <summary>
+    /// A shot's flash: the glowing gas at the muzzle, and at night the light it throws on what's round the gun. Both come
+    /// from pools, not a new node per round. The light is only worth drawing when it's dark enough to see it (by day the
+    /// sun swamps a muzzle flash's light on the ground), and only so many at once: the nearest the camera win.
+    /// <paramref name="ownView"/>: the flash of the weapon the camera's on (the player's, in first person). At night
+    /// it's cut down to what a flash hider leaves the shooter: a hider (the M16A2's birdcage, the AK's slant-cut brake)
+    /// breaks up and cools the gas so little of the flame shows, and keeping the firer's night vision is what it's for.
+    /// Others looking at the same shot see the whole of it.
+    /// </summary>
+    public void MuzzleFlash(Vector3 pos, Vector3 dir, float scale = 1f, bool ownView = false)
     {
-        var light = new OmniLight3D { LightColor = new Color(1f, 0.75f, 0.45f), LightEnergy = 2.5f * scale, OmniRange = 6f * scale };
-        AddChild(light);
-        light.GlobalPosition = pos;
-        GetTree().CreateTimer(0.045f).Timeout += light.QueueFree;
+        float dark = 1f - Mathf.Clamp(Conditions.Light / 0.8f, 0f, 1f);
+        float hidden = ownView ? dark : 0f;
+        var sprite = _flashSprites[_nextSprite];
+        _flashSpriteUntil[_nextSprite] = _time + 0.035;
+        _nextSprite = (_nextSprite + 1) % _flashSprites.Length;
+        sprite.Visible = true;
+        // (Half a metre from the eye, the full flash covered a fifth of the view at night, and the light it threw
+        // lit the weapon and the ground in front of it, dazzling him: he couldn't see what he was shooting at.)
+        sprite.Transparency = hidden * 0.67f; // (0.9 opaque down to 0.3 on the darkest night)
+        sprite.GlobalPosition = pos + dir * 0.05f;
+        sprite.Scale = Vector3.One * (0.18f + GD.Randf() * 0.1f) * scale * Mathf.Lerp(1f, 0.3f, hidden);
+        if (scale > 2f) Burst(pos, dir, 16, 1.2f, 3f, 10f, 25f, new Vector3(0, 0.3f, 0), 0.8f, 2f, _smokeRamp, _smoke, 3f, _grow);
 
-        _flashMat ??= new StandardMaterial3D
+        if (Conditions.Light > 0.8f) return;
+        float d2 = pos.DistanceSquaredTo(CameraPos);
+        int slot = -1;
+        float worst = -1f;
+        for (int i = 0; i < _flashLights.Length; i++)
+        {
+            if (_flashLightUntil[i] <= _time) { slot = i; break; }
+            if (_flashLightD2[i] > worst) { worst = _flashLightD2[i]; slot = i; }
+        }
+        if (_flashLightUntil[slot] > _time && worst <= d2) { Prof.Count("flash:lights over budget"); return; }
+        var l = _flashLights[slot];
+        // A rifle's flash lights a few metres round the firer; a tank gun's the ground tens of metres off. Brighter
+        // against a darker night (the eye's scale, see NightLight): a flash is ~a thousandth of a second, but the eye
+        // holds it for a few hundredths.
+        float own = Mathf.Lerp(1f, 0.15f, hidden);
+        l.LightEnergy = 2.5f * scale * dark * own;
+        l.OmniRange = 4.5f * MathF.Pow(scale, 1.4f) * Mathf.Lerp(1f, 0.6f, hidden);
+        l.GlobalPosition = pos + dir * 0.3f;
+        l.Visible = true;
+        _flashLightUntil[slot] = _time + 0.045;
+        _flashLightD2[slot] = d2;
+        Prof.Count("flash:lights");
+    }
+
+    /// <summary>At most this many muzzle-flash lights at once.</summary>
+    const int FlashLightBudget = 8;
+    MeshInstance3D[] _flashSprites = null!;
+    readonly double[] _flashSpriteUntil = new double[48];
+    int _nextSprite;
+    readonly OmniLight3D[] _flashLights = new OmniLight3D[FlashLightBudget];
+    readonly double[] _flashLightUntil = new double[FlashLightBudget];
+    readonly float[] _flashLightD2 = new float[FlashLightBudget];
+    double _time;
+
+    /// <summary>Where the eye is: the camera, or the listener when nothing's rendered.</summary>
+    public Vector3 EyePos => CameraPos;
+    Vector3 CameraPos => GetViewport().GetCamera3D() is { } cam ? cam.GlobalPosition : SoundWorld.I?.ListenerPos ?? Vector3.Zero;
+
+    void BuildFlashPools()
+    {
+        var mat = new StandardMaterial3D
         {
             ShadingMode = BaseMaterial3D.ShadingModeEnum.Unshaded,
             Transparency = BaseMaterial3D.TransparencyEnum.Alpha,
@@ -156,15 +216,30 @@ public partial class Effects : Node3D
             AlbedoColor = new Color(1f, 0.8f, 0.45f, 0.9f),
             BillboardMode = BaseMaterial3D.BillboardModeEnum.Enabled,
         };
-        var flash = new MeshInstance3D { Mesh = _flash, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = _flashMat };
-        AddChild(flash);
-        flash.GlobalPosition = pos + dir * 0.05f;
-        flash.Scale = Vector3.One * (0.18f + GD.Randf() * 0.1f) * scale;
-        if (scale > 2f) Burst(pos, dir, 16, 1.2f, 3f, 10f, 25f, new Vector3(0, 0.3f, 0), 0.8f, 2f, _smokeRamp, _smoke, 3f, _grow);
-        GetTree().CreateTimer(0.035f).Timeout += flash.QueueFree;
+        _flashSprites = new MeshInstance3D[_flashSpriteUntil.Length];
+        for (int i = 0; i < _flashSprites.Length; i++)
+        {
+            _flashSprites[i] = new MeshInstance3D { Mesh = _flash, CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, MaterialOverride = mat, Visible = false };
+            AddChild(_flashSprites[i]);
+        }
+        for (int i = 0; i < _flashLights.Length; i++)
+        {
+            _flashLights[i] = new OmniLight3D { LightColor = new Color(1f, 0.75f, 0.45f), ShadowEnabled = false, Visible = false, OmniAttenuation = 2f };
+            AddChild(_flashLights[i]);
+        }
     }
 
-    StandardMaterial3D? _flashMat;
+    public override void _Process(double delta)
+    {
+        _time += delta;
+        NightLight.ResolveShadows();
+        for (int i = 0; i < _flashSprites.Length; i++)
+            if (_flashSprites[i].Visible && _flashSpriteUntil[i] <= _time) _flashSprites[i].Visible = false;
+        for (int i = 0; i < _flashLights.Length; i++)
+            if (_flashLights[i].Visible && _flashLightUntil[i] <= _time) _flashLights[i].Visible = false;
+        UpdateFires();
+        DimByNight();
+    }
 
     /// <summary>Decoy flares: bright, hot, falling away from the aircraft in a spray.</summary>
     public void Flares(Vector3 pos, Vector3 vel)
@@ -186,20 +261,38 @@ public partial class Effects : Node3D
         Burst(pos, Vector3.Up, 2, 1.6f, 0.1f, 0.5f, 180f, new Vector3(0, 0.2f, 0), 0.3f, 0.7f, _smokeRamp, _smoke, 1f, _grow);
     }
 
-    /// <summary>A burning wreck: flames, then a long column of black smoke.</summary>
     /// <summary>A fire and its smoke column, which can be moved: a burning aircraft trails them as it falls.</summary>
     public sealed class Burning
     {
         public CpuParticles3D Fire = null!, Smoke = null!;
+        public Vector3 Pos;
+        public double Start, Out;
+        public float Candela;
+        public int LightId;
+        public OmniLight3D Light = null!;
+        public float Phase, PuffHz;
         /// <summary>Move the source; what's already been given off stays where it was (a trail).</summary>
         public void MoveTo(Vector3 pos)
         {
+            Pos = pos;
             if (IsInstanceValid(Fire)) Fire.Position = pos;
             if (IsInstanceValid(Smoke)) Smoke.Position = pos + Vector3.Up * 1.5f;
+            Conditions.MoveLight(LightId, pos + Vector3.Up * 1.5f);
         }
     }
 
-    public Burning Burn(Vector3 pos, float seconds)
+    readonly List<Burning> _fires = new();
+    /// <summary>At most this many fires cast light on the scene at once (the nearest the camera); every one still lights the senses (Conditions).</summary>
+    const int FireLightBudget = 8;
+    double _fireSortAt;
+
+    /// <summary>
+    /// A burning wreck: flames, then a long column of black smoke, and at night a light that flickers over the ground
+    /// round it. <paramref name="candela"/>: how much light the flames give, as registered for everyone's eyes (a car
+    /// about 20 000 cd). Big fires pulse at about 1.5/√D Hz for a fire D metres across (Cetegen &amp; Ahmed 1993): under
+    /// once a second for a burning vehicle, with faster turbulent flicker on top.
+    /// </summary>
+    public Burning Burn(Vector3 pos, float seconds, float candela = 20000f)
     {
         CpuParticles3D Stream(int amount, float life, float vMin, float vMax, float sMin, float sMax, Gradient ramp, Mesh mesh)
         {
@@ -209,6 +302,7 @@ public partial class Effects : Node3D
                 Direction = Vector3.Up, Spread = 12f, InitialVelocityMin = vMin, InitialVelocityMax = vMax,
                 Gravity = new Vector3(0.4f, 0.8f, 0f), ScaleAmountMin = sMin, ScaleAmountMax = sMax, ScaleAmountCurve = _grow,
                 ColorRamp = ramp, Mesh = mesh, EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 1f,
+                CastShadow = GeometryInstance3D.ShadowCastingSetting.Off, // (its own light would shine through it)
             };
             AddChild(p);
             p.Emitting = true;
@@ -234,6 +328,7 @@ public partial class Effects : Node3D
             ScaleAmountMin = 18f, ScaleAmountMax = 34f, ScaleAmountCurve = _plumeGrow,
             ColorRamp = _plumeRamp, Mesh = _smoke, EmissionShape = CpuParticles3D.EmissionShapeEnum.Sphere, EmissionSphereRadius = 1.2f,
             VisibilityAabb = new Aabb(new Vector3(-150f, -10f, -150f), new Vector3(300f, 320f, 300f)),
+            CastShadow = GeometryInstance3D.ShadowCastingSetting.Off,
         };
         AddChild(smoke);
         smoke.Emitting = true;
@@ -249,7 +344,81 @@ public partial class Effects : Node3D
         tree.CreateTimer(seconds).Timeout += () => { if (IsInstanceValid(fire)) fire.Emitting = false; };
         tree.CreateTimer(smokeFor).Timeout += () => { if (IsInstanceValid(smoke)) smoke.Emitting = false; };
         tree.CreateTimer(smokeFor + 40f).Timeout += () => { if (IsInstanceValid(fire)) fire.QueueFree(); if (IsInstanceValid(smoke)) smoke.QueueFree(); };
-        return new Burning { Fire = fire, Smoke = smoke };
+        double now = Clock.Now;
+        var b = new Burning
+        {
+            Fire = fire, Smoke = smoke, Pos = pos, Start = now, Out = now + seconds, Candela = candela, Phase = GD.Randf() * Mathf.Tau,
+            PuffHz = 1.5f / MathF.Sqrt(3f), // a vehicle fire ~3 m across
+            LightId = Conditions.AddLight(pos + Vector3.Up * 1.5f, candela, now + seconds),
+            Light = new OmniLight3D { LightColor = new Color(1f, 0.62f, 0.3f), ShadowEnabled = false, Visible = false },
+        };
+        AddChild(b.Light);
+        _fires.Add(b);
+        Prof.Count("fire:lights registered");
+        return b;
+    }
+
+    /// <summary>
+    /// The fires' light: dying down over the last third of the burn (the fuel going), pulsing and flickering, and drawn
+    /// for the nearest few only. What everyone sees by (Conditions) is kept to the fire's output as it dies down.
+    /// </summary>
+    void UpdateFires()
+    {
+        if (_fires.Count == 0) return;
+        double now = Clock.Now;
+        var cam = CameraPos;
+        bool sort = now >= _fireSortAt;
+        if (sort)
+        {
+            _fireSortAt = now + 0.5;
+            _fires.Sort((a, b) => a.Pos.DistanceSquaredTo(cam).CompareTo(b.Pos.DistanceSquaredTo(cam)));
+        }
+        for (int i = _fires.Count - 1; i >= 0; i--)
+        {
+            var f = _fires[i];
+            if (now >= f.Out)
+            {
+                Conditions.RemoveLight(f.LightId);
+                if (IsInstanceValid(f.Light)) f.Light.QueueFree();
+                _fires.RemoveAt(i);
+                continue;
+            }
+            float t = (float)(now - f.Start), left = (float)(f.Out - now), span = (float)(f.Out - f.Start);
+            float output = Mathf.Clamp(t / 3f, 0f, 1f) * Mathf.Clamp(left / (span * 0.33f), 0f, 1f);
+            // Re-registered as it dies down (a light's intensity is fixed when it's added), a step at a time.
+            if (sort && output < 0.97f)
+            {
+                Conditions.RemoveLight(f.LightId);
+                f.LightId = Conditions.AddLight(f.Pos + Vector3.Up * 1.5f, f.Candela * output, f.Out);
+            }
+            if (i >= FireLightBudget) { f.Light.Visible = false; continue; }
+            float flicker = 1f + 0.22f * MathF.Sin(t * Mathf.Tau * f.PuffHz + f.Phase)
+                               + 0.1f * MathF.Sin(t * 13.7f + f.Phase * 3f) + 0.07f * MathF.Sin(t * 23.1f + f.Phase * 5f);
+            // Drawn from the middle of the flames (a vehicle fire's flame is a few metres tall, its light centred about
+            // 2.5 m up: Heskestad's flame height), so a shadow doesn't start inside the hull.
+            f.Light.GlobalPosition = f.Pos + Vector3.Up * (2.5f + 0.3f * MathF.Sin(t * 5.3f + f.Phase));
+            NightLight.Apply(f.Light, f.Candela * output, 3f, 60f, Conditions.Lux, flicker);
+            NightLight.Offer(f.Light, f.Candela * output, cam);
+        }
+    }
+
+    readonly List<StandardMaterial3D> _litByDay = new();
+    float _dim = -1f;
+
+    /// <summary>
+    /// Dust, smoke and blood are drawn unshaded (lighting every particle would cost too much), so they'd glow grey on
+    /// a moonless night. They're darkened to the sky's light as the eye takes it (see NightLight); the flames aren't,
+    /// they give their own light.
+    /// </summary>
+    void DimByNight()
+    {
+        float dim = MathF.Max(0.02f, MathF.Pow(Conditions.Light, 2.2f));
+        if (MathF.Abs(dim - _dim) < 0.005f) return;
+        _dim = dim;
+        if (_litByDay.Count == 0)
+            foreach (var q in new[] { _dust, _smoke, _debris })
+                if (q.Material is StandardMaterial3D m) _litByDay.Add(m);
+        foreach (var m in _litByDay) m.AlbedoColor = new Color(dim, dim, dim, 1f);
     }
 
     Gradient? _screenRamp;

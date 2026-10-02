@@ -35,6 +35,13 @@ public static class Surroundings
     public static bool Indoors(PhysicsDirectSpaceState3D space, Vector3 feet) =>
         space.IntersectRay(PhysicsRayQueryParameters3D.Create(feet + Vector3.Up * 1.7f, feet + Vector3.Up * 14f, Layers.World)).Count > 0;
 
+    /// <summary>
+    /// Something solid overhead, a roof, a bridge deck or a canopy of branches: out of the view of a camera looking
+    /// straight down, and what a drone's grenade would have to come through.
+    /// </summary>
+    public static bool Overhead(PhysicsDirectSpaceState3D space, Vector3 feet) =>
+        space.IntersectRay(PhysicsRayQueryParameters3D.Create(feet + Vector3.Up * 1.8f, feet + Vector3.Up * 30f, Layers.World | Layers.Trees)).Count > 0;
+
     /// <summary>How far one bound (cover to cover) should go here.</summary>
     public static float BoundStep(EnvKind e) => e switch { EnvKind.Interior => 10f, EnvKind.Urban => 16f, EnvKind.Forest => 22f, _ => 36f };
 

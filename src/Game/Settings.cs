@@ -9,12 +9,24 @@ public static class Settings
     /// <summary>Master volume, 0..2 (1 = default). The default already sits 6 dB above the raw mix.</summary>
     public static float Volume = 1f;
     public static Role PlayerRole = Role.Rifleman;
+    /// <summary>
+    /// Territory: -1 you join ALPHA-1 as one of its soldiers; otherwise you go your own way with a squad of your own of that
+    /// many bots (0: alone), and the other sides get an extra squad the same size (see TerritoryMode.OwnBots).
+    /// </summary>
+    public static int OwnSquad = -1;
+    public static readonly int[] OwnSquadSizes = { 0, 1, 2, 3, 5 };
     /// <summary>The battlefield Territory and KOTH are played on (a MapSpec id).</summary>
     public static string Map = "valley";
     /// <summary>Territory with a front line: points must be taken in order, linked from your own.</summary>
     public static bool FrontLine = true;
     /// <summary>Territory: how long before the match is decided on ground held, if no side has lost by then (0: no limit).</summary>
     public static int MatchMinutes = 180;
+    /// <summary>The hour a match starts at; -1 random (see Conditions).</summary>
+    public static double StartHour = 12.0;
+    /// <summary>"Clear", "Overcast", "Rain", "Fog", or "Random".</summary>
+    public static string Weather = "Clear";
+    /// <summary>World seconds per match second: 0 stops the clock, 1 is real time.</summary>
+    public static float TimeScale = 4f;
     public static readonly int[] MatchLengths = { 60, 120, 180, 0 };
 
     // ---- graphics
@@ -40,19 +52,31 @@ public static class Settings
         if (_loaded) return;
         _loaded = true;
         var cfg = new ConfigFile();
-        if (cfg.Load(Path) != Error.Ok) { Apply(); return; }
+        if (cfg.Load(Path) != Error.Ok) { ApplyArgs(); Apply(); return; }
         Volume = (float)cfg.GetValue("audio", "volume", 1f).AsDouble();
         PlayerRole = (Role)cfg.GetValue("game", "role", (int)Role.Rifleman).AsInt32();
+        OwnSquad = cfg.GetValue("game", "own_squad", -1).AsInt32();
         Map = cfg.GetValue("game", "map", "valley").AsString();
         FrontLine = cfg.GetValue("game", "front", true).AsBool();
         MatchMinutes = cfg.GetValue("game", "match_minutes", 180).AsInt32();
+        StartHour = cfg.GetValue("game", "start_hour", 12.0).AsDouble();
+        Weather = cfg.GetValue("game", "weather", "Clear").AsString();
+        TimeScale = (float)cfg.GetValue("game", "time_scale", 4.0).AsDouble();
         Display = (DisplayMode)cfg.GetValue("graphics", "display", 0).AsInt32();
         VSync = cfg.GetValue("graphics", "vsync", true).AsBool();
         MaxFps = cfg.GetValue("graphics", "max_fps", 0).AsInt32();
         RenderScale = (float)cfg.GetValue("graphics", "render_scale", 1.0).AsDouble();
         Msaa = cfg.GetValue("graphics", "msaa", 0).AsInt32();
         Shadows = cfg.GetValue("graphics", "shadows", 2).AsInt32();
+        ApplyArgs();
         Apply();
+    }
+
+    /// <summary>Test runs: ownsquad=N on the command line (after --) picks the squad for that run.</summary>
+    static void ApplyArgs()
+    {
+        foreach (var a in OS.GetCmdlineUserArgs())
+            if (a.StartsWith("ownsquad=") && int.TryParse(a.AsSpan(9), out int n)) OwnSquad = n;
     }
 
     public static void Save()
@@ -60,9 +84,13 @@ public static class Settings
         var cfg = new ConfigFile();
         cfg.SetValue("audio", "volume", Volume);
         cfg.SetValue("game", "role", (int)PlayerRole);
+        cfg.SetValue("game", "own_squad", OwnSquad);
         cfg.SetValue("game", "map", Map);
         cfg.SetValue("game", "front", FrontLine);
         cfg.SetValue("game", "match_minutes", MatchMinutes);
+        cfg.SetValue("game", "start_hour", StartHour);
+        cfg.SetValue("game", "weather", Weather);
+        cfg.SetValue("game", "time_scale", TimeScale);
         cfg.SetValue("graphics", "display", (int)Display);
         cfg.SetValue("graphics", "vsync", VSync);
         cfg.SetValue("graphics", "max_fps", MaxFps);

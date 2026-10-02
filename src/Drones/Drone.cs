@@ -24,6 +24,11 @@ public partial class Drone : Node3D
 {
     public static readonly List<Drone> All = new();
     public static int Launched, BombsDropped, FpvStrikes, ShotDown, Spots;
+    /// <summary>
+    /// Grenades in the air from a quad: where each will land and when. A man with the drone in sight overhead may
+    /// see the small dark thing let go and fall (see BotBrain.CheckIncoming); nobody hears it.
+    /// </summary>
+    public static readonly List<(Vector3 At, double When)> Drops = new();
     /// <summary>The mode's event log (verbose runs).</summary>
     public static Action<string>? Log;
 
@@ -67,6 +72,7 @@ public partial class Drone : Node3D
     {
         foreach (var d in All.ToArray()) if (IsInstanceValid(d)) d.QueueFree();
         All.Clear();
+        Drops.Clear();
         Launched = BombsDropped = FpvStrikes = ShotDown = Spots = 0;
     }
 
@@ -249,6 +255,7 @@ public partial class Drone : Node3D
             if (horiz > 130f || d.Y > 0f) continue;
             var h = space.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, c.ChestPos, Layers.World | Layers.Trees | Layers.Vehicles, excl));
             if (h.Count > 0) continue;
+            if (GD.Randf() > ThermalTransmission(d.Length())) continue;
             if (!Seen.ContainsKey(c) || now - Seen[c] > 5.0)
             {
                 Spots++;
@@ -263,8 +270,23 @@ public partial class Drone : Node3D
             var d = v.Center - pos;
             if (new Vector2(d.X, d.Z).Length() > 180f) continue;
             if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, v.Center, Layers.World | Layers.Trees, excl)).Count > 0) continue;
+            if (GD.Randf() > ThermalTransmission(d.Length())) continue;
             if (Operator.Alive) Radio.Report(Operator, RadioKind.Armor, v.Center, v);
         }
+    }
+
+    /// <summary>
+    /// How much of what a quad's camera would show gets through the air: the military quads of 2024 carry a thermal
+    /// camera alongside the visible one (Mavic 3T class), so the dark costs it next to nothing, and haze, fog and rain
+    /// are what cost. Long-wave infrared goes about 3x as far through haze, 1.5x through fog, no further than light
+    /// through rain, relative to clear air (20 km), as BotBrain's night gear works it out (NightGear.AirLoss/ThermalThrough,
+    /// not public: the same small formula here). (The scan used to see through any weather as if it were clear.)
+    /// Each pass notices a man with this chance, so a sight on the edge of the weather's range is seen less often rather than never.
+    /// </summary>
+    static float ThermalTransmission(float dist)
+    {
+        float through = Conditions.Weather switch { WeatherKind.Rain => 1f, WeatherKind.Fog => 1.5f, _ => 3f };
+        return MathF.Min(1f, MathF.Exp(-3.912f * (dist / through) * (1f / Conditions.VisibilityM - 1f / 20000f)));
     }
 
     /// <summary>Let go of a grenade: it falls with the drone's own drift, and goes off on impact.</summary>
@@ -284,6 +306,29 @@ public partial class Drone : Node3D
                           ignore: _hit.GetRid(), silent: true, explosive: true, armM: 0f, pen: 20f, vehDamage: 40f, crater: 0.5f, fragR: 7f, power: 0.6f,
                           dropped: true);
         SoundWorld.I?.Emit(Snd.Click, GlobalPosition, -4f);
+        // Where it comes down: on from the drift it's let go with (the metre or so of noise in the aim can't be seen).
+        var drift = GlobalPosition + (Vel with { Y = 0f }) * (0.5f * fall);
+        Drops.RemoveAll(x => x.When < Clock.Now - 2.0);
+        Drops.Add((new Vector3(drift.X, GroundAt(drift), drift.Z), Clock.Now + fall));
+        return true;
+    }
+
+    /// <summary>
+    /// Where this drone will come down if it carries on as it's going, and when. A man watching it dive works it
+    /// out the same way: the line it's flying along, out to where that meets the ground, a wall, a tree or a
+    /// vehicle. False when it's nearly still, or the line runs on past 250 m.
+    /// </summary>
+    public bool Predict(out Vector3 at, out float eta)
+    {
+        at = default;
+        eta = 0f;
+        float speed = Vel.Length();
+        if (Dead || speed < 6f) return false;
+        var pos = GlobalPosition;
+        var hit = GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(pos, pos + Vel / speed * 250f, Layers.World | Layers.Trees | Layers.Vehicles));
+        if (hit.Count == 0) return false;
+        at = hit["position"].AsVector3();
+        eta = pos.DistanceTo(at) / speed;
         return true;
     }
 

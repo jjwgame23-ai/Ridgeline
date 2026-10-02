@@ -42,6 +42,16 @@ public sealed class Projectile
     /// <summary>Set by Impact when the round went through what it hit (see Penetration): where it came out.</summary>
     public Vector3? ExitAt;
     public readonly Godot.Collections.Array<Rid> Exclude = new();
+    /// <summary>A tracer: seconds of compound still to burn (0: ball, or burnt out), its colour and the width of its glow.</summary>
+    public float TraceLeft, TraceWidth;
+    public Color TraceColor;
+    /// <summary>Where its streak may start from: the muzzle, or where it last glanced off something.</summary>
+    public Vector3 TraceFrom;
+    /// <summary>An illumination round: the candle it carries (candela, seconds) and its time fuze (0: at the top of its flight).</summary>
+    public float IllumCd, IllumS, FuzeS;
+    /// <summary>How many times it has glanced off something; set while Impact is handling a glance (it flies on).</summary>
+    public int Glances;
+    public bool Glanced;
 }
 
 /// <summary>
@@ -66,9 +76,38 @@ public partial class Ballistics : Node3D
     {
         I = this;
         Incoming.Clear(); // a new match: the clock starts again
+        _belts.Clear();
+    }
+
+    TracerDraw _tracers = null!;
+
+    public override void _Ready()
+    {
+        _tracers = new TracerDraw();
+        AddChild(_tracers);
     }
 
     public void Clear() { _live.Clear(); Incoming.Clear(); }
+
+    /// <summary>The tracers, drawn where the rounds are this frame (between physics steps they've moved on by their velocity).</summary>
+    public override void _Process(double delta)
+    {
+        using var _p = Prof.Time("tracers");
+        _tracers.Update(_live, (float)(Engine.GetPhysicsInterpolationFraction() / Engine.PhysicsTicksPerSecond));
+    }
+
+    /// <summary>Where each gun is in its belt: rounds fired, per gun (the vehicle, or the man) and weapon.</summary>
+    static readonly Dictionary<(object?, string), int> _belts = new();
+
+    /// <summary>Is the next round out of this gun a tracer? A belt linked four ball to one tracer: every fifth.</summary>
+    static bool NextIsTracer(object? gun, string weapon, int every)
+    {
+        if (every <= 1) return true;
+        if (_belts.Count > 4000) _belts.Clear();
+        int n = _belts.GetValueOrDefault((gun, weapon));
+        _belts[(gun, weapon)] = n + 1;
+        return n % every == every - 1;
+    }
 
     /// <param name="ignore">A body the ray should pass through (a grenade's own body); otherwise the shooter's.</param>
     public void Fire(Vector3 origin, Vector3 dir, float speed, float drag, ICombatant? shooter, float damage, string weapon,
@@ -125,6 +164,25 @@ public partial class Ballistics : Node3D
         else if (!burst && (shooter is not GodotObject gone || GodotObject.IsInstanceValid(gone))) { if (shooter != null) p.Exclude.Add(shooter.BodyRid); }
         if (tag != "") ShotTags[tag] = ShotTags.GetValueOrDefault(tag) + 1;
         Prof.Count(silent ? "proj:fragments" : "proj:rounds");
+        if (!silent && Tracers.Lookup(weapon, out var load))
+        {
+            if (load.Every > 0 && NextIsTracer((object?)shooterVehicle ?? shooter, weapon, load.Every))
+            {
+                p.TraceLeft = load.BurnS;
+                p.TraceFrom = origin;
+                // A vehicle's ammunition is its own side's; a man's, his.
+                p.TraceColor = Tracers.ColorFor(shooterVehicle?.Def.Faction ?? shooter?.Team ?? 0);
+                // The glow round the burning compound: bigger for a cannon round's tracer cavity.
+                p.TraceWidth = load.Every == 1 ? 0.12f : heavyCrack ? 0.06f : 0.035f;
+                Prof.Count("tracer:rounds fired");
+            }
+            if (load.IllumCd > 0f)
+            {
+                p.IllumCd = load.IllumCd;
+                p.IllumS = load.IllumS;
+                p.FuzeS = Illumination.TakeFuze(shooterVehicle);
+            }
+        }
         _live.Add(p);
     }
 
@@ -182,6 +240,13 @@ public partial class Ballistics : Node3D
             p.Pos = next;
             p.Vel = v;
             p.Life += dt;
+            if (p.TraceLeft > 0f) p.TraceLeft -= dt;
+            // An illumination round's fuze: the candle and its parachute are thrown out, and the empty body flies on.
+            if (p.IllumCd > 0f && (p.FuzeS > 0f ? p.Life >= p.FuzeS : p.Vel.Y < 0f))
+            {
+                Illumination.I?.Deploy(p.Pos, p.Vel, p.IllumCd, p.IllumS);
+                p.IllumCd = 0f;
+            }
             if (p.Visual != null)
             {
                 var d = v.Normalized();
@@ -405,6 +470,7 @@ public partial class Ballistics : Node3D
         var pos = hit["position"].AsVector3();
         var normal = hit["normal"].AsVector3();
         var collider = hit["collider"].AsGodotObject();
+        bool glanced = false;
 
         if (collider is Node { } dn && dn.GetParent() is Drone drone)
         {
@@ -414,6 +480,8 @@ public partial class Ballistics : Node3D
         if (collider is Vehicle veh)
         {
             veh.TakeProjectile(p, pos, normal);
+            // Glanced off the armour: it flies on (see Ricochet).
+            if (p.Glanced) { p.Glanced = false; return false; }
             if (p.Explosive && pos.DistanceTo(p.Origin) >= p.ArmM)
                 Grenade.Detonate(pos + normal * 0.1f, normal, p.Shooter, p.FragR * 0.6f, 0f, p.Power >= 6f ? 3f : -3f, p.Weapon, power: p.Power);
             return true;
@@ -490,7 +558,7 @@ public partial class Ballistics : Node3D
                 p.Vel = through;
                 return false;
             }
-            if (!p.Silent) Ricochet(p, pos, normal, surface is Surface.Rock or Surface.Stone or Surface.Metal);
+            glanced = !p.Silent && Ricochet(p, pos, normal, surface is Surface.Rock or Surface.Stone or Surface.Metal, Critical(surface));
             if (p.Shooter is Bot bot && p.IntendedDist > 0f)
             {
                 float at = pos.DistanceTo(p.Origin);
@@ -502,6 +570,11 @@ public partial class Ballistics : Node3D
                 if (at < p.IntendedDist - 1.5f) bot.ShotsBlocked++;
                 else bot.ShotsWide++;
             }
+            if (glanced)
+            {
+                p.Glanced = false;
+                p.IntendedDist = 0f; // counted where it struck first
+            }
         }
 
         if (p.Silent) return true;
@@ -511,22 +584,54 @@ public partial class Ballistics : Node3D
             float d = pos.DistanceTo(chest);
             if (d < 4f) c.OnNearMiss(d + 1f, p.Origin);
         }
+        return !glanced;
+    }
+
+    /// <summary>
+    /// A round striking something hard at a shallow angle often glances off and tumbles away, whirring: heard from a
+    /// little along the way it went. And it flies on, a tracer still burning: off a hard surface a bullet leaves
+    /// flatter than it came in (roughly a third to two thirds of the angle; Haag, Shooting Incident Reconstruction),
+    /// having lost a good part of its speed (more the steeper it struck), knocked a few degrees off line, tumbling
+    /// (about three times the drag) and deformed (it goes through far less). True if it flies on: the caller carries
+    /// it on from <see cref="Projectile.ExitAt"/>. (A glancing round used to stop dead where it struck, whirr and all.)
+    /// </summary>
+    /// <param name="critical">
+    /// The sine of the steepest angle it can glance off at (see <see cref="Critical"/>); steeper than that it goes in,
+    /// breaks up or craters instead.
+    /// </param>
+    public static bool Ricochet(Projectile p, Vector3 pos, Vector3 normal, bool hard, float critical = 0.34f)
+    {
+        if (!hard || p.Explosive) return false;
+        var d = p.Vel.Normalized();
+        float graze = MathF.Abs(d.Dot(normal)); // sine of the angle to the surface
+        if (graze > critical || Random.Shared.NextDouble() > 0.6 * (1f - graze / critical) + 0.2) return false;
+        var away = (d - 2f * d.Dot(normal) * normal).Normalized();
+        SoundWorld.I.Emit(Snd.Ricochet, pos + away * 1.5f, Mathf.Clamp((p.Vel.Length() - 300f) / 100f, -6f, 2f));
+        // Fragments glance too, but there are dozens of them and each is gone in a few metres.
+        if (p.Silent || p.Glances >= 2) return false;
+        var up = normal.Dot(d) > 0f ? -normal : normal; // the face it struck, out toward where it came from
+        var flat = d - d.Dot(up) * up;
+        if (flat.LengthSquared() < 1e-6f) return false;
+        flat = flat.Normalized();
+        float outAngle = MathF.Asin(graze) * (0.33f + 0.34f * Random.Shared.NextSingle());
+        var dir = (flat * MathF.Cos(outAngle) + up * MathF.Sin(outAngle)).Rotated(up, Mathf.DegToRad(Random.Shared.NextSingle() * 12f - 6f));
+        float keep = Mathf.Clamp(0.85f - graze * 1.2f, 0.4f, 0.85f);
+        p.Vel = dir.Normalized() * p.Vel.Length() * keep;
+        if (p.Glances == 0) { p.Drag *= 3f; p.Pen *= 0.3f; }
+        p.Glances++;
+        p.Glanced = true;
+        p.ExitAt = pos + up * 0.02f;
+        p.TraceFrom = pos;
+        Prof.Count(p.TraceLeft > 0f ? "ricochet:flew on (tracer)" : "ricochet:flew on");
         return true;
     }
 
     /// <summary>
-    /// A round striking something hard at a shallow angle often glances off and tumbles away,
-    /// whirring: heard from a little along the way it went.
+    /// The critical ricochet angle by what was struck, as a sine: steel plate and rock throw a bullet off up to about
+    /// 20-25°; masonry, concrete and paving, which crumble and crater under it, only below about 12° (Haag; Jauhari's
+    /// ricochet tests). (One 20° rule for everything had every shallow miss in a town skipping on.)
     /// </summary>
-    public static void Ricochet(Projectile p, Vector3 pos, Vector3 normal, bool hard)
-    {
-        if (!hard || p.Explosive) return;
-        var d = p.Vel.Normalized();
-        float graze = MathF.Abs(d.Dot(normal)); // sine of the angle to the surface
-        if (graze > 0.34f || Random.Shared.NextDouble() > 0.6 * (1f - graze / 0.34f) + 0.2) return;
-        var away = (d - 2f * d.Dot(normal) * normal).Normalized();
-        SoundWorld.I.Emit(Snd.Ricochet, pos + away * 1.5f, Mathf.Clamp((p.Vel.Length() - 300f) / 100f, -6f, 2f));
-    }
+    static float Critical(Surface s) => s switch { Surface.Metal => 0.42f, Surface.Rock => 0.34f, _ => 0.21f };
 
     /// <summary>
     /// A fire-control solution: the direction to launch a round so that it passes through <paramref name="delta"/>

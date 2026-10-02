@@ -151,6 +151,72 @@ public static class CoverFinder
     }
 
     /// <summary>
+    /// Somewhere indoors to sit out shelling or a drone overhead: the ground floor of a building, in a room clear of
+    /// its windows and doors (splinters and a drone's camera come in by those), with the walls and a slab or two of
+    /// concrete overhead. That's what men do: into the nearest solid building, down a cellar if there is one, and
+    /// away from the glass. Only what's within <paramref name="maxWalk"/> by the way people would really walk there
+    /// (the navmesh says so, not the straight line: a room whose door is round the far side is no shelter in five
+    /// seconds). <paramref name="from"/> is where the burst will be, if it's a shell: a wall between is what counts
+    /// then, and a spot the fragments could reach through a window doesn't.
+    /// </summary>
+    public static CoverSpot? FindShelter(Bot b, Vector3? from, float maxWalk, RandomNumberGenerator rng)
+    {
+        using var _ = Prof.Time("shelter");
+        var space = b.GetWorld3D().DirectSpaceState;
+        var origin = b.FeetPos;
+        var v = Valley.Current;
+        // Which buildings are near: a ring of probes against the rooms' footprints (a dictionary lookup each).
+        var rooms = new List<RoomBox>();
+        for (float r = 3f; r <= maxWalk; r += 4f)
+        {
+            int n = Math.Max(8, (int)(r * 0.9f));
+            float a0 = rng.Randf() * Mathf.Tau;
+            for (int i = 0; i < n; i++)
+            {
+                float a = a0 + i * Mathf.Tau / n;
+                float x = origin.X + MathF.Cos(a) * r, z = origin.Z + MathF.Sin(a) * r;
+                var room = Rooms.At(new Vector3(x, (v?.HeightAt(x, z) ?? origin.Y) + 1.0f, z));
+                if (room != null && !rooms.Contains(room)) rooms.Add(room);
+            }
+        }
+        if (rooms.Count == 0) return null;
+        var cands = new List<(Vector3 Pos, float Score)>();
+        foreach (var room in rooms.OrderBy(rm => rm.Center.DistanceTo(origin)).Take(4))
+        {
+            for (int k = 0; k < 8; k++)
+            {
+                var local = new Vector3(rng.RandfRange(room.X0 + 1f, room.X1 - 1f), 0f, rng.RandfRange(room.Z0 + 1f, room.Z1 - 1f));
+                var p = room.Origin + room.Rot * local;
+                if (p.DistanceTo(origin) > maxWalk) continue;
+                if (!Standable(space, p, room.Origin.Y, out var g)) continue;
+                if (Reserved(b, g)) continue;
+                // Really indoors (a roof over it), not the yard or a gap between two walls the box happens to span.
+                if (Rooms.At(g + Vector3.Up * 1f) != room || !Surroundings.Indoors(space, g)) continue;
+                float clear = float.MaxValue;
+                foreach (var po in room.Portals) if (po.Pos.Y - room.Origin.Y < 2.4f) clear = MathF.Min(clear, ((po.Pos - g) with { Y = 0f }).Length());
+                if (clear < 1.5f) continue; // in the window or the doorway
+                // A shell: a wall (or three) between the spot and the burst, or it isn't shelter.
+                if (from is Vector3 hz && !Stops(space, hz, g + Vector3.Up * 0.5f)) continue;
+                float score = 10f + MathF.Min(clear, 5f) * 1.2f - g.DistanceTo(origin) * 0.3f + rng.RandfRange(0f, 1f);
+                cands.Add((g, score));
+            }
+        }
+        if (cands.Count == 0) return null;
+        // The best few by score, then a real path to each: the first that gets there in time.
+        var map = b.GetWorld3D().NavigationMap;
+        foreach (var (pos, _) in cands.OrderByDescending(c => c.Score).Take(3))
+        {
+            var path = NavigationServer3D.MapGetPath(map, origin, pos, true);
+            if (path.Length == 0 || path[^1].DistanceTo(pos) > 1.2f) continue;
+            float len = 0f;
+            for (int i = 1; i < path.Length; i++) len += path[i].DistanceTo(path[i - 1]);
+            if (len > maxWalk * 1.4f) continue;
+            return new CoverSpot { Pos = pos, PeekPos = pos };
+        }
+        return null;
+    }
+
+    /// <summary>
     /// The next bound: a covered spot 6-25 m closer to <paramref name="goal"/> (the
     /// enemy, or the objective), hidden from the threat, ideally one you can fight from.
     /// Fire and manoeuvre — this is how a squad takes ground instead of trading shots

@@ -107,6 +107,9 @@ public sealed partial class Squad
     {
         int t = TeamOf(b);
         if (!Teams || t < 0) return MayMove(now);
+        // In the assault the support team holds and fires and the assault team is the one that moves (fire and movement
+        // between the teams, not the alternating bounds of the approach, which would have the support up and running).
+        if (Phase == AssaultPhase.Assault) return t != SbfTeam;
         bool moving = Members.Any(m => TeamOf(m) == BoundingTeam && _moving.TryGetValue(m, out var u) && u > now && m.Alive);
         // Swap once the movers are set again, or if they've had their turn and found nowhere to go.
         if (((_teamMoved[BoundingTeam] && !moving) || (!moving && now > _swapAt + 12.0)) && now > _swapAt)
@@ -210,6 +213,14 @@ public sealed partial class Squad
         if (lead == null) return;
         float d = lead.FeetPos.DistanceTo(at);
         if (d < 50f || d > 300f || Current == Drill.Contact) return;
+        // In a deliberate attack the plan is the answer to contact with the objective: support fixes it, the assault team
+        // goes in (see AdaptToContact); a far-off sighting while forming up doesn't start a second, hasty attack on top of it.
+        // Contact from somewhere else ends the plan and gets the drill.
+        if (Phase != AssaultPhase.None && Objective != null)
+        {
+            if (Phase == AssaultPhase.Orp || ((at - Objective.Center) with { Y = 0f }).Length() < Objective.Radius + 150f) return;
+            EndAssault("contact from another direction: hasty attack", true);
+        }
         // The team closer to the enemy fixes them; the other goes round.
         float Near(int t) => Members.Where(m => m.Alive && TeamOf(m) == t).Select(m => m.FeetPos.DistanceTo(at)).DefaultIfEmpty(9999f).Min();
         AssaultTeam = Near(0) <= Near(1) ? 1 : 0;
@@ -244,7 +255,7 @@ public sealed partial class Squad
     {
         if (Defend || Current is Drill.BreakContact or Drill.Consolidate) return;
         ContactAt = from;
-        if (Phase != AssaultPhase.None) EndAssault();
+        if (Phase != AssaultPhase.None) EndAssault("break contact");
         CancelCrossing();
         StartDrill(Drill.BreakContact, 35.0);
         Breaks++;
