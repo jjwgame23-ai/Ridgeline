@@ -93,11 +93,219 @@ It's the same bot with the same state either way; only the fidelity changes.
   - FPVs working with recon sources and Mavic spotting.
   - Counter-drone: spotting them, shooting them down, taking cover.
 - **Trench map** (its own run): a front of trench lines with dugouts and trench rooms to fight through, where FPVs and drone-dropped grenades would come into their own.
-- **Campaign war mode** (a big one; to scope separately): a whole war instead of one skirmish.
-  - A large theatre (about 100 × 100 km, e.g. an island) split into 5 × 5 km battle maps, like X4's sectors or PlanetSide 2's continents.
-  - A realistic military chain of command above the squad (platoon, company, battalion and up), so moves across the campaign map make narrative sense and taking a sector serves a real war aim beyond one round.
-  - The economy would fit here.
-  - Viability: the existing 5 km map generator can make each sector. The operational layer (units, supply, front lines across sectors) can run as the abstract simulation described above, with the sector you're in fully simulated. Needs: a campaign map generator (terrain regions, towns, roads), persistent unit rosters and supply, a strategic AI per side, and the hand-off between the abstract and full simulations.
+- **Campaign war mode**: now planned in full as Conquest mode (below). The fixed 5 × 5 km battle maps first sketched here became a window built round the player.
+
+## Conquest mode (planned)
+
+A whole war on a generated island of about 100 × 100 km. Each side fields an army of about 50,000, and the player is one grunt in it. The aim is a soldier's life that plays out like a story nobody wrote, different every time because all of it is simulated. Planned with the user in October 2026; nothing is built yet. It comes next, ahead of new weapons and maps, and the economy is part of it.
+
+**The sides**
+- ALPHA, BRAVO and CHARLIE are organised like the armies whose kit they use (US, Russian, British):
+  - squad (US 9; British section 8; Russian about 8, with its BMP's crew);
+  - then platoon, company, battalion, brigade or regiment, division and army.
+- 50,000 is about 3–4 divisions, 10 brigades, 40 battalions, 150 companies and 500 platoons.
+- About half of each army is support (drivers, gun crews, medics, staff), simulated mostly as the crews of trucks, guns and aid posts.
+- Doctrine differs as well as names: Russian practice is more centralised and leans on artillery; Western armies leave more to junior leaders.
+- 100 km suits three armies: about 10 divisions on 10,000 km² is 30 × 30 km each, a realistic division sector.
+- Each side starts with a small area round its port. The aim is the whole island.
+
+**The soldiers**
+- A species that exists to fight, and enjoys it.
+  - There's no morale: no panic, rout, surrender or combat stress.
+  - They want to stay alive to go on fighting, so they take cover and their leaders withdraw on purpose. Dying doesn't bother them.
+- They sleep, eat and tire.
+  - In the line they eat rations where they are. When it's quiet, a field kitchen's cooks send hot food up. At the rear there's a mess.
+  - Lost sleep costs judgement and shooting, about 25% per day awake (Belenky et al. 1994).
+- No civilians: the towns are empty.
+- Every soldier has a record: an identity computed from the world seed and their number (so it costs nothing to keep), and what has happened to them (wounds, kills, kit, where they are).
+- Skill grows with combat (`Personality`), so veterans and new replacements fight differently.
+- Death is final, and the dead keep a one-line record (name, unit, date, place, cause). The wounded go back through aid posts and hospitals and return days later.
+- Tickets are the side's headcount: 50,000 at the start, less the dead, plus replacements who arrive by ship.
+
+**Command**
+- Commanders are soldiers at real headquarters. When one is killed the deputy takes over. Their personality shows in how they fight.
+- They know only what their units have reported, late by the time it takes to come up the chain.
+- Orders take time to plan and pass down: a commander uses a third of the time available and leaves two thirds to those below (the 1/3–2/3 rule, ADP 5-0).
+- The player's unit gets no special treatment.
+
+**Three levels of simulation**
+
+| Level | Who | Cost |
+|---|---|---|
+| Record | all ~150,000, always | ~100 bytes each |
+| Abstract: moving and fighting on coarse terrain | everyone not embodied | grows with how many are fighting, not how many there are |
+| Embodied: today's bots | the ~100–150 nearest the player | as now: Valley at 3×33 took 255 s of computing for 360 s of play, headless |
+
+- **Abstract fights are individual.**
+  - Each soldier spots, takes cover, suppresses, is wounded (`Body`) and runs low on ammo.
+  - Fights are resolved burst by burst, once or twice a second, on a 5–10 m terrain grid (Combat Mission uses 8 m).
+  - The numbers are fitted to embodied matches from telemetry, so a fight comes out the same at either level.
+- **One squad brain, two bodies.** The drill and attack decisions are the same code at both levels; only carrying them out differs (navmesh and physics, or the grid). A squad halfway round a flank when the player arrives is still halfway round it.
+- The abstract war runs on its own threads.
+- Saving writes the records only, after demoting the area round the player.
+- **Time skip.** Everything goes abstract, the player too, who sees a map and a log. The skip stops before the action: new orders, contact near the platoon, fire landing nearby.
+
+**The playable window**
+- A window a few km across is built round the player from the world data and re-centred as they move: behind a load at first, streamed later. With no fixed squares, there's no border to split a fight.
+- Each window has its own origin. Godot here is single precision: 50 km out, positions come in ~4 mm steps, about what a crawling soldier moves in a physics tick.
+- Beyond the window: low-detail land and sea to the horizon, and stand-ins for what the abstract war has out there (vehicles, wrecks, fires and smoke, flares, tracers, flashes). The sound is already there.
+- Cities are real sizes: a city of 100,000 covers 20–30 km². So interiors exist only within about 1 km of the player, with shells beyond. The abstract level needs only footprints.
+
+**The island**
+- One climate per island, picked at the start: Mediterranean first, desert, arctic and others later. Latitude comes with it: the sun model takes it, so an arctic island gets its polar night.
+- **Terrain is made the way real terrain is: uplift against erosion.**
+  - Rivers cut down faster the more water they carry and the steeper they run (the stream power law).
+  - Cordonnier et al. (2016) generate large terrain this way, solved with Braun and Willett's (2013) implicit method, O(n) a step.
+- **Then, in order:**
+  1. slopes, rivers, lakes and the coast (cliffs, beaches, harbours);
+  2. vegetation and farmland, by climate, height and water;
+  3. towns sized like real ones (rank-size: the biggest about twice the second and three times the third);
+  4. ports, in sheltered bays and river mouths;
+  5. roads, by least-cost paths along the valleys, with bridges and fords;
+  6. farms and hamlets;
+  7. resource nodes.
+- **Checked against real measures:** river lengths against Hack's law, branching against Horton's ratios, town sizes against rank-size.
+
+**Weather**
+- Weather moves across the island:
+  - a front crossing at 30–50 km/h;
+  - rain in the west while the east is clear;
+  - fog in the valleys at dawn after a clear night.
+- Daily weather comes from a stochastic weather generator (Richardson 1981) fitted to the climate, through the seasons.
+- It matters by what it does:
+  - mud slows vehicles off the roads;
+  - rivers rise over fords;
+  - low cloud and wind ground helicopters and drones.
+
+**Economy and supply**
+- **Money** is one pot per side. It comes from the extractors and from free *miners* that quarry stone anywhere on the side's ground.
+  - Each miner has a crew of 2–4.
+  - Quick to set up, slow to pack up, and can't move while working.
+  - Yields less when crowded.
+- **Resource nodes** give money, ammo and fuel through an *extractor*, which an expensive vehicle puts up. The extractor stores what it makes for trucks to collect.
+- **Ammo, fuel and food are three separate cargoes.**
+  - Ammo and fuel come from extractors, or are bought and shipped in. Food comes by ship.
+  - Food can't burn or explode. It's a lesser target than ammo or fuel, but a unit cut off from it goes hungry.
+  - Trucks carry them to depots and on to units.
+  - Each company gets a daily resupply run, usually after dark (the US calls it a LOGPAC), bringing ammo, fuel, hot food, mail and replacements.
+  - So there are supply lines and convoys to ambush, units cut off run dry, and offensives stall when they outrun their supply.
+- **Depots** keep their stacks apart by quantity-distance rules, so one hit doesn't set off the lot.
+- **Trucks** come by cargo: tankers, cargo trucks and the logistics truck, each side's real ones.
+- **What burns or explodes.** Cargo and on-board ammunition burn or explode by what they are (UN hazard divisions):
+  - 1.1, mass explosion: shells, mortar bombs, warheads, FPV charges. A truck of a hundred 155 mm shells holds about a tonne of TNT, some 4,500 grenades' worth. By the cube root, as in `Effects`, its blast reaches about 16 times as far as a grenade's.
+  - 1.3, fire with a minor blast: propellant and rocket motors.
+  - 1.4: small arms, which burn and pop.
+  - Diesel and jet fuel seldom catch from a bullet. An HE or incendiary hit sets them burning: a long fire and a column of smoke, not a big blast.
+  - A shaped charge or HE straight into the load can set it off at once. Otherwise it burns and cooks off over minutes, sometimes ending in a mass detonation, which gives the crew time to run.
+- **Vehicles** are bought and arrive by sea.
+  - Tiers run light vehicle, armoured car, APC, IFV and tank.
+  - Within a class they run old to new, from each side's real line. For tanks: light tank (the mobile guns already in the game), an older main battle tank, then the current one.
+- **Armies start with vehicles:** the trucks and light vehicles an army this size needs, and older armour. Money buys the newer tiers.
+- **Ports** are where replacements and everything bought arrive. A port under fire or taken stops them, which makes the coast what everyone fights over.
+- **Replacements** are free. They come as fast as the side's ports can land them, and only refill units to full strength; an army doesn't grow past it. (Otherwise whoever holds the most ports snowballs.)
+- **Fire support.** Artillery is added: 120 mm mortars, 155 mm guns and rockets. So is naval gunfire from ships offshore: a 4.5–5 inch gun reaches about 20–25 km inland. Ships are abstract at first. Jets come later.
+
+**Behaviour**
+- The new behaviour is mostly between fights:
+  - road marches, convoys and assembly areas;
+  - digging in: lookouts, sectors, patrols, stand-to at dawn and dusk, and sleeping in shifts;
+  - handing over positions, resupply, casualty evacuation, and replacements joining.
+- Attacks move up a level: a company attacks with one platoon supporting by fire and the others assaulting.
+- Every test run checks that behaviour fits the place:
+  - soldiers at rest are under cover;
+  - positions face the threat and have a field of fire;
+  - lookouts see the approaches;
+  - vehicles near the front are hidden;
+  - marches keep their intervals;
+  - digging happens only where the ground allows.
+
+**The player**
+- One grunt, with no promotions.
+- After dying, the player carries on as a squadmate (never the leader). If the squad is wiped out, they arrive by ship as a replacement.
+- They start in the lead battalion of the main effort. Replacements go where units are short of soldiers, which is usually where the fighting is.
+- They know what their chain of command tells them, plus a map of what their side knows.
+- Orders say why, and come from named people.
+- Hills are named by their height ("Hill 302"), and towns have names.
+- There's a journal, casualty lists, and a war map of how the front moved.
+
+**Build order**
+1. **The island generator** (built: see below). It produces map images and is checked against real measures.
+2. **The abstract war, headless.** Campaign telemetry and a replay of the war.
+3. **Calibration.** Abstract fights fitted to embodied matches.
+4. **The playable window.** Promotion and demotion, and the distant layer.
+5. **The soldier's life.** The player in the war: time skip, briefings, dying and carrying on, the journal.
+6. **Economy and construction**, then weather and seasons.
+
+**Defaults still to confirm**
+- bought vehicles arrive by sea;
+- ships are abstract at first;
+- the player never takes over as leader;
+- the starting motor pool;
+- food comes free by ship, like the replacements.
+
+### The island generator (built)
+
+Phase 1. `-- mode=worldgen [seed=1] [seeds=N] [size=1280] [out=worldgen]` makes islands headless. For each seed it writes four files to `worldgen/`:
+- `island-N.png`: the map;
+- `-layers.png`: relief, uplift, rain and drainage;
+- `-report.txt`;
+- `.html`: the map with names on it (wheel to zoom, drag to pan, hover for details) and the report.
+
+Defaults: 1280 × 1280 cells of 100 m over 128 km. An island takes 16–21 s, of which the erosion is 12–14 s. The code is in `src/Conquest/`. `IslandGen` runs the stages in order, each from its own random stream, so changing one doesn't reshuffle the rest.
+
+- **Ground** (`Landform`, `Drainage`).
+  - Uplift against stream-power erosion (n = 1, m = 0.45), solved implicitly, with hillslope creep. It runs on 320, 640 and 1280 grids: 240, 70 and 25 steps of 25,000 years.
+  - Uplift is an island-shaped field with a fractal edge. It's highest along one to three ranges, middling over hill country, and low between (plains). Rock erodibility varies, in folded bands in places.
+  - Heights are scaled into the climate's summit range. With n = 1 that's the same as uplifting at another rate.
+  - Ground steeper than 40° slides down. The sea then rises 20–50 m and drowns the valley mouths into inlets, and islets under 0.6 km² go.
+- **Climate** (`IslandClimate`).
+  - The Mediterranean preset: 38° N, 18 °C at sea level, 560 mm on the windward lowlands, the wet wind from 300°.
+  - Temperature falls 6.5 °C per km.
+  - Rain follows the moist air across the island: more where it's forced up, less in the lee.
+- **Rivers** (`Hydrology`).
+  - Pits are filled with Priority-Flood, then each cell drains to its steepest neighbour (D8).
+  - Each cell gets its drainage area and mean flow (rain × 0.3 runoff).
+  - Lakes form where filling stands a metre of water. Floodplains are laid flat along rivers of 20 km² and up (HAND).
+  - Streams get Strahler orders, and the 14 biggest rivers have their main stems traced.
+- **Cover** (`LandCover`).
+  - Vegetation by rain, height, aspect and slope: garrigue, maquis, Aleppo pine, oak, montane pine, grass, rock, beach and marsh.
+  - Farmland is 0.4 ha a head, taken from the best land nearest the towns: fields on the flat, orchards on terraces.
+- **Towns** (`TownPlanner`).
+  - Sizes by rank-size from 110 people per km². That only sizes what was built.
+  - Placed by flatness, water, farmland in reach, height and harbour. Villages favour hilltops and avoid the low shore; the ports and market towns are on the plains and the coast.
+  - Spaced by size, and only on land masses of 30 km² and up.
+  - Ports are towns of 3,000+ on sheltered water, none within 10 km of a bigger one.
+- **Roads** (`RoadBuilder`, `RoadNet`, `PathFinder`).
+  - Relative neighbourhood graphs: main roads between towns, secondary roads between villages, tracks to hamlets and nodes.
+  - Routed by A*, priced on grade, ground and stream crossings, joining earlier roads. Bridges and fords are recorded.
+  - Farmsteads lie among the fields, more of them near roads.
+- **Sides and nodes** (`Holdings`).
+  - Three starting areas of 6% of the land each, round ports kept 20 km from the cities. The trio is chosen for spacing and for evenness of what's inside, measured by travel time.
+  - 16–22 resource nodes, at least 7 km apart: fuel in soft lowland rock, ore in hard mountain rock. One sits in each starting area, and each has a track to a road.
+- **Names** (`PlaceNames`, `Peaks`): Mediterranean-sounding names; hills named by their height ("Hill 302").
+
+Measured on seeds 1–6:
+- land 5,100–6,900 km², summits 1,300–2,300 m;
+- 390–640 places, 9–16 ports, 19–23 nodes;
+- village median heights 130–330 m;
+- the poorest starting area holds 0.62–0.90 of what the richest does.
+
+| Check | Seeds 1–6 | Real |
+|---|---|---|
+| Hack exponent (river length ∝ area^h) | 0.53–0.57 | 0.5–0.65 (Hack 1957) |
+| Bifurcation ratio, basins of order 4+ | 3.7–4.1 | 3–5 (Horton 1945) |
+| Length ratio | 1.8–2.3 | 1.5–3.5 (Horton 1945) |
+| Rank-size exponent | 0.96–1.08 | 0.8–1.2 (Zipf; Gabaix 1999) |
+| Coastline fractal dimension | 1.17–1.28 | 1.1–1.3 (Mandelbrot 1967) |
+
+(Before the checks were taken within basins, the bifurcation ratio read 5.2–5.5. Hundreds of tiny coastal basins of one or two streams were swamping it.)
+
+Not done yet:
+- **Weak rain shadow.** The lee is wetter than real: about 600 mm on the lee third, where Palma gets 430.
+- **No deposition besides floodplains.** There are no deltas, and no coastal plains built out by rivers.
+- **One climate.**
+- **Towns are points with a radius.** Their streets and buildings come with the playable window (phase 4).
+- **Nothing saves the island yet.** It's made fresh from the seed each time, so it's the same island every time.
 
 ## Milestones
 
@@ -237,6 +445,7 @@ It's the same bot with the same state either way; only the fidelity changes.
 5. **Roster.** About 150 persistent named mercs with skills, playstyles, bank
    balances and grudges. Post-match scoreboards.
 6. **Vehicles.** Trucks, then armor, then helicopters.
+7. **Conquest mode** (next; see "Conquest mode (planned)"). It takes in 3c, the economy and the roster.
 
 ## Bots (built)
 

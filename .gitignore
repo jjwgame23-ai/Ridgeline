@@ -4,3 +4,4 @@ obj/
 *.user
 __pycache__/
 recordings/
+worldgen/

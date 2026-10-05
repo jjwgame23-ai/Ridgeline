@@ -16,6 +16,7 @@ public partial class Main : Node3D
 
     public override void _Ready()
     {
+        if (WorldGenMode.RunIfRequested(this)) return; // mode=worldgen: make Conquest islands headless and quit
         Controls.Register();
         foreach (var a in OS.GetCmdlineUserArgs())
             if (a.StartsWith("bindsdoc="))

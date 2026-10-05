@@ -28,6 +28,14 @@ The main test is a match nobody plays, run headless and logged.
 - `run.err` must contain no "Exception".
 - `verbose` writes squad orders, assault phases, drills, "still" and "stuck" reports, and counters (`count ...` lines) to the log.
 
+**Conquest islands.** `<godot> --path . --headless -- mode=worldgen seed=1 [seeds=3] [size=1280]` writes four files per island to `worldgen/` (gitignored):
+- `island-N.png`, the map;
+- `-layers.png`;
+- `-report.txt`;
+- `.html`, the map with names.
+
+The report checks the island against laws measured on real landscapes, and each line says "ok" or "OUTSIDE". About 20 s an island.
+
 **Reading a run.** `tools/telemetry.py` (class `Match`) reads the `.jsonl` file:
 - a sample of everyone every 0.5 s;
 - events: shot, hit, kill, down, boom, st (state change), drill, order, cross, reinf, radio, score.
