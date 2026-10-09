@@ -38,6 +38,8 @@ The report checks the island against laws measured on real landscapes, and each 
 
 **Conquest war.** `<godot> --path . --headless -- mode=war seed=2 days=7 [trace=N]` makes island N, raises the three armies and runs the war. It writes `war-N-report.txt` (casualties against real rates, the biggest fights, the units that fought most) and `war-N.html` (the replay) to `worldgen/`. `trace=N` adds fight N's state every 30 s to the report. About 1–2 min for 7 days.
 
+**Assault test.** `<godot> --path . --headless -- mode=assault seed=2 runs=12 [attack=9] [defend=3] [arty=1]` fights the same attack on a dug-in position again and again. It writes `assault-N.txt`: losses on each side, how often the place is carried, and how long it takes, against historical marks. About 2 min for 12 runs.
+
 **Reading a run.** `tools/telemetry.py` (class `Match`) reads the `.jsonl` file:
 - a sample of everyone every 0.5 s;
 - events: shot, hit, kill, down, boom, st (state change), drill, order, cross, reinf, radio, score.

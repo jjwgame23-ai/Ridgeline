@@ -20,10 +20,11 @@ public static class WarMode
             var kv = arg.Split('=', 2);
             a[kv[0]] = kv.Length > 1 ? kv[1] : "";
         }
-        if (!a.TryGetValue("mode", out var mode) || mode != "war") return false;
+        if (!a.TryGetValue("mode", out var mode) || mode is not ("war" or "assault")) return false;
         try
         {
-            Run(from, a);
+            if (mode == "assault") AssaultTest.Run(from, a);
+            else Run(from, a);
         }
         catch (Exception e)
         {

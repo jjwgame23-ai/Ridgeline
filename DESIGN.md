@@ -371,7 +371,7 @@ The code is in `src/Conquest/War/`.
 - Wounds: a fifth killed outright, a third down (a third of those bleed to death within the hour unless a medic or squadmate stops it), the rest lightly wounded and fighting on.
 - Companies decide every 30 s:
   - attack if advancing, at 3:1 against a dug-in enemy and 2.5:1 against a hasty one (FM 3-90's planning ratios), bounding and assaulting from 60 m;
-  - pull back by bounds, half the squads covering, when outnumbered 2:1 or after losing 30%;
+  - pull back by bounds, half the squads covering, when outnumbered 2:1 (6:1 dug in, what a prepared position is worth by the 3:1 an attack needs) or after losing 30%;
   - otherwise hold.
 - A fight ends when it's quiet, when one side is gone, or after half an hour with nobody coming on.
 - A company held up by enemies still standing in its way halts and its battalion decides what next. One that was beaten off falls back 2 km, away from the enemy and toward its own rear.
@@ -427,6 +427,15 @@ The code is in `src/Conquest/War/`.
 - **Joining.** Soldiers back from hospital and replacements reach their unit with its nightly resupply, if it gets through to them, and are issued their basic load.
 - **Tickets.** A side's headcount: 50,000 at the start, less the dead, plus the replacements landed.
 
+**The assault test** (`AssaultTest`): `-- mode=assault [seed=2] [runs=20] [attack=9] [defend=3] [arty=0|1]`.
+- BRAVO's first rifle companies dig in round the town nearest the island's middle. ALPHA's first rifle companies set off at it from 3 km out and press on, renewing the attack every half hour until the place falls. With `arty=1`, both sides' battalion mortars set up behind their lines. Everyone else stands aside.
+- The same attack is fought with fresh dice each run. `assault-N.txt` gives what it cost each side, how often it carried the town (counting only defending companies that were attacked), how long it took, rounds per hit, and the share of hits inside 100 m.
+- Measured: 9 companies (1,374 men) against 3 dug in (255 men and 30 BMPs), with mortars, 12 runs.
+  - It carried the town 8 times in 12, in a median 2½ hours.
+  - The attackers lost 23% (5% killed); the defenders lost 52% (12% killed).
+  - The mark for a battalion attack at three to one on a prepared company position is 5–15% for the attackers, more for the defenders, over hours, carrying it more often than not. The attackers' losses run high.
+- Before the 6:1 rule for troops dug in, a defending company left its trenches at its first sight of the attack 1.4 km off, and no attack ever had to carry a position.
+
 **Reading a run.** The report lists:
 - casualties against Dupuy's rates;
 - hits by range;
@@ -444,12 +453,12 @@ The code is in `src/Conquest/War/`.
 
 | | Seed 2 | Seed 1 |
 |---|---|---|
-| ALPHA | 2.4% | 1.7% |
-| BRAVO | 1.1% | 0.6% |
-| CHARLIE | 0.8% | 1.8% |
+| ALPHA | 2.9% | 1.9% |
+| BRAVO | 1.2% | 0.8% |
+| CHARLIE | 1.0% | 2.2% |
 
 Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
-- **Over 30 days on seed 2** the armies averaged 1.3%, 0.7% and 0.5% a day.
+- **Over 30 days on seed 2** the armies averaged 1.4%, 0.7% and 0.5% a day.
 - **Where the hits come from:** planned offensives 55%; shelling outside fights 20% (half on units seen, half counter-battery); brigades taking open ground 16%; units meeting on the march 7%; skirmishes along static fronts 1%.
 - **The offensives.** They made 14 offensives of 4–12 battalions. Some took 7–14 places and went a bound or two deeper; others stalled and were called off after a day, or were fought down to 70% within hours.
 - **The war's course.** BRAVO and CHARLIE both turned on ALPHA, which still grew from 24% of the island to 36%. ALPHA took the heaviest losses: 7,300 dead, 15% of its starting strength.
@@ -496,7 +505,10 @@ Not done yet:
   - The other lever is the 500 soldiers a day each port lands. It sets how long an army can be fed into a losing fight: CHARLIE on seed 1 had 8,775 replacements in a week while it was crushed.
 - **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
-- **Offensives are bloody.** Some burn through 30% of 12 battalions in a few hours against a prepared defence, and in a month an army attacked from two sides has 15% of its starting strength killed (Germany's eastern army lost about 2% a month in 1941–45). The next place to look is the assault itself, how much attackers can suppress before closing. That is what phase 3's fit to the battle simulation is for. Also, 5–14 battalions per army end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
+- **Attacks cost the attacker too much, and the war never lets up.**
+  - On the assault test, attackers lose 23% where history says 5–15%. There's no smoke to cover the approach yet, and the defenders' dug-in IFVs see through everything with thermal sights.
+  - Over a month, an army attacked from two sides has 15% of its starting strength killed. Germany's eastern army lost about 2% a month in 1941–45, but that average includes long quiet spells. This island war has none: offensives every few days, all armies in contact all the time.
+  - Phase 3 fits the assault to the battle simulation. How hard the war should run is a design choice: long lulls make for a different soldier's life. Also, 5–14 battalions per army end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
