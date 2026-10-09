@@ -57,6 +57,7 @@ public static class WarMode
         var sw = Stopwatch.StartNew();
         var war = new War(isl, seed) { Note = Note, Trace = a.TryGetValue("trace", out var tr) && int.TryParse(tr, out var tv) ? tv : -1 };
         war.Raise(new Random(seed * 31 + 7));
+        Artillery.Setup(war);
         Supply.Setup(war);
         GD.Print($"war: raised {war.SoldierCount:N0} soldiers, {war.Units.Count:N0} units, {war.Vehicles.Count:N0} vehicles in {sw.Elapsed.TotalSeconds:0.0} s");
         DrawStart(war, stem + "-start.png");
@@ -68,7 +69,7 @@ public static class WarMode
         var marches = new List<(Mobility Mob, double Km)>();
         var run = Stopwatch.StartNew();
         // Where the time goes, for the daily note.
-        var clocks = new Dictionary<string, Stopwatch> { ["march"] = new(), ["supply"] = new(), ["contact"] = new(), ["fights"] = new(), ["command"] = new(), ["ground"] = new() };
+        var clocks = new Dictionary<string, Stopwatch> { ["march"] = new(), ["supply"] = new(), ["contact"] = new(), ["fights"] = new(), ["guns"] = new(), ["command"] = new(), ["ground"] = new() };
         void Timed(string k, Action a)
         {
             war.Doing = k;
@@ -95,6 +96,7 @@ public static class WarMode
             int t = (int)war.Time;
             Timed("contact", () => Combat.Detect(war, t % 300 == 0));
             Timed("fights", () => Combat.Step(war, Dt));
+            Timed("guns", () => Artillery.Step(war));
             if (t % 600 == 0) Timed("command", () => Command.Think(war));
             if (t % 1800 == 0)
                 Timed("ground", () =>
@@ -167,6 +169,27 @@ public static class WarMode
             }
             int takes = war.Events.Count(e => e.Text.Contains(" takes "));
             sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day");
+            sb.AppendLine("    Artillery:");
+            foreach (var sd in war.Sides)
+            {
+                int i = sd.Index;
+                float t = war.ArtyRounds[i, 0] * 15f + war.ArtyRounds[i, 1] * 45f + war.ArtyRounds[i, 2] * (i == 1 ? 280f : 300f);
+                int hit = war.Hits[i, (int)Cause.Shell] + war.Hits[i, (int)Cause.Mortar], kia = war.Kills[i, (int)Cause.Shell] + war.Kills[i, (int)Cause.Mortar];
+                int allHit = Enumerable.Range(0, 12).Sum(c => war.Hits[i, c]);
+                int guns = war.Vehicles.Count(v => v.Side == i && v.Class == VClass.Howitzer);
+                double days = Math.Max(1.0 / 24, war.Time / 86400.0);
+                sb.AppendLine($"      {sd.Name}: {war.ArtyRounds[i, 1] / Math.Max(1, guns) / days:0} shells a gun a day;");
+                sb.AppendLine($"      {sd.Name}: fired {war.ArtyRounds[i, 0]:N0} mortar bombs, {war.ArtyRounds[i, 1]:N0} shells, {war.ArtyRounds[i, 2]:N0} rockets ({t / 1000f:N0} t) in "
+                              + $"{war.ArtyMissions[i, 0]} close-support, {war.ArtyMissions[i, 1]} observed and {war.ArtyMissions[i, 2]} counter-battery missions; "
+                              + $"lost {war.GunsLost[i]} guns to counter-battery; {hit} of its soldiers hit by shell and mortar fire ({kia} killed; {war.StruckHit[i]} outside fights), {100.0 * hit / Math.Max(1, allHit):0}% of all hit");
+            }
+            foreach (var sd in war.Sides)
+                sb.AppendLine($"      {sd.Name} hit outside fights: riding {war.StruckHow[sd.Index, 0]}, marching {war.StruckHow[sd.Index, 1]}, just halted {war.StruckHow[sd.Index, 2]}, "
+                              + $"in shell scrapes {war.StruckHow[sd.Index, 3]}, dug in {war.StruckHow[sd.Index, 4]}; {war.StruckByCb[sd.Index]} by counter-battery fire; by arm: "
+                              + string.Join(", ", war.StruckArm[sd.Index].OrderByDescending(kv => kv.Value).Take(6).Select(kv => $"{kv.Key.ToString().ToLowerInvariant()} {kv.Value}")));
+            foreach (var (id, n) in war.StruckUnit.OrderByDescending(kv => kv.Value).Take(5))
+                sb.AppendLine($"      most shelled outside fights: {war.Units[id].Name} ({war.Sides[war.Units[id].Side].Name}, raised {war.Units[id].Raised}, {war.Units[id].Carries.Count} parts): {n} hit");
+            sb.AppendLine("    (real: artillery caused about 60% of casualties in the World Wars, and most in Ukraine)");
             sb.AppendLine("    Supply, in tonnes of food/fuel/ammunition:");
             foreach (var sd in war.Sides)
             {

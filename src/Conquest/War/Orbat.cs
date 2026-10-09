@@ -472,7 +472,9 @@ public static class Orbat
     public static short VehicleLoad(VClass v) => v switch
     {
         VClass.Ifv => 400, VClass.Tank => 40, VClass.LightTank => 30, VClass.Spaa => 600,
-        VClass.Howitzer => 40, VClass.Rocket => 12, VClass.Mortar => 60, _ => 0,
+        // A gun with its share of the battery's ammunition carriers (M109A7 39 rounds on board, its M992 carrier 90;
+        // 2S19 50); a 120 mm mortar carrier about 70 bombs with its truck's; a launcher's two pods.
+        VClass.Howitzer => 90, VClass.Rocket => 12, VClass.Mortar => 80, _ => 0,
     };
 
     /// <summary>

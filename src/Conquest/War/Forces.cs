@@ -93,6 +93,19 @@ public sealed class Unit
     public double HungrySince = -1;
     public int Depot = -1;
     public bool Hauls;
+    /// <summary>
+    /// Artillery, for a mover with mortars, guns or launchers: which they are, when it can fire again, when it moves after
+    /// firing. For any company: when the fire it last called for has landed.
+    /// </summary>
+    public bool Guns;
+    public VClass Fires;
+    public double FireReady, DisplaceAt, CalledUntil;
+    /// <summary>Rounds fired today, against its daily allowance.</summary>
+    public int RoundsToday;
+    /// <summary>For a mortar platoon on its own: the company it keeps near.</summary>
+    public int Keeps = -1;
+    /// <summary>When it was last shelled outside a fight with casualties.</summary>
+    public double ShelledAt = double.MinValue;
     /// <summary>The fight it's in, or -1.</summary>
     public int InFight = -1;
     /// <summary>When it last pulled out of a fight: it won't be drawn into another straight away.</summary>

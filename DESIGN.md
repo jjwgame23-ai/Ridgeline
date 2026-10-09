@@ -386,6 +386,26 @@ The code is in `src/Conquest/War/`.
   - A battalion short of fuel or food, or below half its ammunition, isn't sent on an operation until it has been resupplied.
 - **In fights,** unarmed vehicles are targets now; guns take armour first and leave ambulances alone. A fighting company's trucks stay back with its trains, but a convoy's or a headquarters' are the unit itself.
 
+**Artillery** (`Artillery`): battalions' mortars, brigades' and divisions' guns, and the armies' rockets.
+- **Close support.** A company in contact calls fire on the strongest enemy squad it can see, outside the distance the weapon needs from its own men: mortars 200 m, guns 300, unguided rockets 600, guided 150.
+  - The nearest mortars answer first, then the guns; rockets only for big targets.
+  - Rounds land 4 minutes after the call for mortars and 6 for guns (10 for BRAVO, whose fire control is more centralised), adjusted and fired for effect.
+  - A battery fires 3 rounds a gun (BRAVO 5, by Russian norms).
+- **Where they land.** The observer knows where the target is to within 10 m plus 3% of his range from it, halved by adjusting. Each round then spreads by its weapon's dispersion: 0.3% of range for guns, 0.4% for mortars, 1.5% for BRAVO's unguided BM-27 rockets, and 5 m for GMLRS.
+- **What they do.**
+  - A round's casualty radius is 25 m for 155/152 mm, 18 m for 120 mm, 12 m for 81 mm (British mortars) and 30–35 m for rockets.
+  - Everyone within four radii is pinned, and it falls on whoever is there, own troops included.
+  - Outside a fight, troops are in their carriers on the move (armour stops nearly all fragments, a truck's canvas few). Halted, they have shell scrapes within half an hour and trenches within two.
+  - A group's ground grows with its size at the same 10 m spacing, so a 150-strong headquarters isn't one 60 m square.
+- **On what's been seen.** Every 10 minutes, idle guns and rockets with half their ammunition left fire on enemy units their side saw in the last 10 minutes, biggest first, outside fights and clear of their own troops. They wait an hour before firing on the same unit again. A headquarters or support unit shelled moves 1.5 km back.
+- **Counter-battery.**
+  - The enemy's radars find a battery that fires seven times in ten if his guns are within 30 km. His nearest free guns fire back on where its tubes fired from, 4 minutes after its rounds land (8 for BRAVO).
+  - Batteries shoot and move: self-propelled ones 2 minutes after their last round, towed ones 10, so counter-battery fire mostly catches towed guns.
+  - A battalion's mortar platoon sets up on its own, within 1.5 km of its company, so fire on its mortars doesn't fall on the battalion staff.
+- **Ammunition.**
+  - Each gun may fire a daily allowance (the controlled supply rate): about a unit of fire for BRAVO's guns (60 rounds of 152 mm), two thirds of that for the others', 60 bombs a mortar, and a launcher's load.
+  - A gun and its ammunition carrier hold 90 rounds, a mortar 80, a launcher 12. They're brought up by the supply system at 45 kg a shell.
+
 **Reading a run.** The report lists:
 - casualties against Dupuy's rates;
 - hits by range;
@@ -393,6 +413,7 @@ The code is in `src/Conquest/War/`.
 - the biggest fights, with their causes;
 - the units that fought most;
 - the share of those who fought who were hit;
+- artillery: rounds and tonnes fired, shells a gun a day, missions by kind, guns lost to counter-battery, soldiers hit by shellfire, and how those outside fights were caught;
 - supply: tonnes landed, hauled and issued, convoy runs, cargo lost, unit-nights cut off, and units out of fuel, hungry or low on ammunition at the end. It also lists the depots' fill and any depot standing empty with its convoys' state.
 
 `trace=N` adds fight N's state every 30 s to the report: fit, hit, suppressed, flat, in cover, what each side can see and how far. If the war sits in one place for 15 s of real time, the progress file says where, and an exception ends the run with an error instead of leaving Godot idling.
@@ -401,19 +422,20 @@ The code is in `src/Conquest/War/`.
 
 | | Seed 2 | Seed 1 |
 |---|---|---|
-| ALPHA | 2.1% | 1.6% |
-| BRAVO | 1.1% | 1.5% |
-| CHARLIE | 1.1% | 2.9% |
+| ALPHA | 2.4% | 2.0% |
+| BRAVO | 1.6% | 1.1% |
+| CHARLIE | 1.3% | 3.4% |
 
 Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
-- Fighting peaks on days 2–4, at about 450 dead a day for the hardest-hit army. It goes on all week, at 40–310 a day on days 5–7.
+- Fighting peaks on days 1–3, at 560–830 dead a day for the hardest-hit army. It goes on all week, at 40–380 a day on days 5–7.
 - About a third of fights are brushes where nobody is hurt.
-- Hits come mostly at 50–400 m, mostly from rifles, then vehicle machine guns, autocannon and grenades.
-- Each side lost 360–1,300 vehicles in the week, most of them light vehicles and APCs. Up to 340 trucks went with them, from headquarters, logistics units and convoys caught in fights.
-- Supply in a week: each army made 78–122 convoy runs and issued its units about 500 t of food, 900–2,000 t of fuel and 20–250 t of ammunition (no artillery yet). Up to 90 t was lost on the road to ambushes. At the end 0–57 units per army are hungry, nearly all of them cut off behind enemy ground.
+- Shell and mortar fire causes 47–71% of the hits, against about 60–75% in the World Wars. Guns fire 17–37 shells a day each. Each army fires 2,400–5,900 t of shells, bombs and rockets in the week, and loses 27–76 guns to counter-battery.
+- Direct-fire hits come mostly at 50–400 m, mostly from rifles, then vehicle machine guns, autocannon and grenades.
+- Each side lost 290–1,460 vehicles in the week, most of them light vehicles, APCs and trucks, many of them to shellfire.
+- Supply in a week: each army made 78–123 convoy runs and issued its units about 500 t of food, 740–2,100 t of fuel and 2,200–5,900 t of ammunition. Shells are now most of what the convoys carry.
 - At the end of the week, 40–80% of each army's fighting battalions hold ground. Another 5–25% are on an operation, and 4–13 battalions per army are reserves or idle.
-- 60–80 places change hands a day.
-- On seed 2, all three pushed a little into open ground (ALPHA 22% of the land to 30%, BRAVO 27% to 31%, CHARLIE 22% to 27%) while ALPHA and BRAVO fought along a north–south front. On seed 1, CHARLIE was crushed between the other two, from 17% of the land to 12%, while BRAVO grew from 34% to 44% and ALPHA from 15% to 23%.
+- 66–97 places change hands a day.
+- On seed 2, ALPHA grew from 24% of the land to 33% and BRAVO from 27% to 32% while they fought along a north–south front, and CHARLIE held at about 25%. On seed 1, CHARLIE was crushed between the other two, from 18% of the land to 13%, while BRAVO grew from 36% to 52%.
 
 How the fights were brought down to this, all in the code's comments. In the first runs, armies lost 10% a day. The causes were:
 - squads standing in a 40 m square;
@@ -440,11 +462,11 @@ Not done yet:
   - what's here sits between the two.
 
   Real offensives pause for supply and replacements, which aren't modelled yet. Until they are, how hard the war runs comes from these command rules rather than from logistics.
-- **Supply seldom binds.** No unit ran out of fuel in a week, and few ran short of ammunition. Without artillery, an army fires 20–250 t a week. It will matter when guns need 45 kg a shell, when ports are taken, and when cargo can blow up (the hazard divisions under "Economy and supply").
+- **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
-- **Artillery,** which caused most casualties in modern wars and will add its own.
 - **The medical chain returning the wounded, and reinforcement by sea.**
+- **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
 
 ## Milestones

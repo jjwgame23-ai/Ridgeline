@@ -242,12 +242,12 @@ public static class Supply
         }
     }
 
-    /// <summary>What a mover uses in a day of ordinary going (tonnes): its rations, a quarter of its tanks, a tenth of its basic load of ammunition.</summary>
+    /// <summary>What a mover uses in a day of ordinary going (tonnes): its rations, a quarter of its tanks, a tenth of its basic load of ammunition (half, for guns and mortars).</summary>
     static float[] DailyUse(War war, Unit m) => new[]
     {
         m.People * RationKg / 1000f,
         m.FuelCap * 0.25f * DieselKgPerL / 1000f,
-        BasicLoadKg(war, m) * 0.1f / 1000f,
+        BasicLoadKg(war, m) * (m.Guns ? 0.5f : 0.1f) / 1000f,
     };
 
     static float BasicLoadKg(War war, Unit m)
@@ -364,13 +364,15 @@ public static class Supply
                 }
                 continue;
             }
-            // Ship what the army has been using, in proportion, up to what the port can land.
-            float total = pd.Target.Sum();
+            // Ship what the port depot is short of, up to what the port can land. (Shipped in fixed shares, it ran out of
+            // shells once the guns were firing, while fuel piled up.)
+            var gap = new float[3];
+            for (int c = 0; c < 3; c++) gap[c] = MathF.Max(0f, pd.Target[c] - pd.Stock[c]);
+            float total = gap.Sum(), scale = total > PortTPerDay ? PortTPerDay / total : 1f;
             for (int c = 0; c < 3; c++)
             {
-                float t = total > 0f ? PortTPerDay * pd.Target[c] / total : 0f;
-                pd.Stock[c] += t;
-                war.Landed[side.Index, c] += t;
+                pd.Stock[c] += gap[c] * scale;
+                war.Landed[side.Index, c] += gap[c] * scale;
             }
         }
     }

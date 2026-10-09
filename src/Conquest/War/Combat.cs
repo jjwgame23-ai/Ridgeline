@@ -20,7 +20,7 @@ public sealed class Fighter
 public enum SquadMode : byte { Engage, Bound, Assault, Withdraw }
 
 /// <summary>What wounded or killed a soldier, for the war's report.</summary>
-public enum Cause : byte { Rifle, MachineGun, Marksman, Grenade, VehicleGun, Autocannon, TankShell, Rocket, Bled, LeftBehind }
+public enum Cause : byte { Rifle, MachineGun, Marksman, Grenade, VehicleGun, Autocannon, TankShell, Rocket, Bled, LeftBehind, Shell, Mortar }
 
 public sealed class FightSquad
 {
@@ -67,7 +67,7 @@ public sealed class Fight
     public float[,] Sight = new float[0, 0];
     public readonly int[] Shots = new int[3], Killed = new int[3], Down = new int[3], Hurt = new int[3], Lost = new int[3];
     /// <summary>Soldiers hit in it by cause, vehicles destroyed in it by cause, and the range it opened at.</summary>
-    public readonly int[] HitBy = new int[10], WreckedBy = new int[10];
+    public readonly int[] HitBy = new int[12], WreckedBy = new int[12];
     public float Opened;
     public readonly bool[] In = new bool[3];
     /// <summary>Enemy squads within 600 m of each other, or moving: the fight runs every step, not every third.</summary>
@@ -120,6 +120,13 @@ public static class Combat
     /// (They used to stand in a 40 m square, so a shell found two or three where it should find one.)
     /// </summary>
     const float Spread = 60f;
+
+    /// <summary>
+    /// The side of the square a group of <paramref name="n"/> takes at the same spacing: a squad's 60 m, a headquarters
+    /// of 300 about 350 m. (Every group used to stand in 60 m whatever its size, so a big headquarters was hundreds of
+    /// men in one square, and shellfire found three in four of them in a week.)
+    /// </summary>
+    public static float Ground(int n) => Spread * MathF.Sqrt(MathF.Max(1f, n / 9f));
 
     /// <summary>Look for contact. Every minute for units on the move; <paramref name="all"/> for everyone.</summary>
     public static void Detect(War war, bool all)
@@ -315,6 +322,7 @@ public static class Combat
             int k = forward ? li++ : bi++, n = forward ? line : back;
             float along = (k - (n - 1) / 2f) * 50f + (float)(rng.NextDouble() - 0.5) * 20f, behind = forward ? 0f : 150f;
             int si = f.S.Count;
+            float side = Ground(c.Members.Count);
             var sq = new FightSquad
             {
                 Index = si, Unit = c.Id, Mover = m.Id, Side = m.Side, Dug = dug,
@@ -328,7 +336,7 @@ public static class Combat
                 if (hasVehicles && IsCrew(so.Job)) continue; // crews fight from their vehicles
                 var fi = new Fighter
                 {
-                    Soldier = s, Squad = si, Side = (byte)m.Side, OffX = (float)(rng.NextDouble() - 0.5) * Spread, OffZ = (float)(rng.NextDouble() - 0.5) * Spread,
+                    Soldier = s, Squad = si, Side = (byte)m.Side, OffX = (float)(rng.NextDouble() - 0.5) * side, OffZ = (float)(rng.NextDouble() - 0.5) * side,
                     Skill = People.Skill(war.Seed, s), Ready = (float)rng.NextDouble() * Tick * 2f,
                 };
                 Ground(war, fi, sq.X + fi.OffX, sq.Z + fi.OffZ, dug, rng);
@@ -806,11 +814,43 @@ public static class Combat
         }
     }
 
+    /// <summary>
+    /// A shell or mortar bomb landing among a fight's squads, whoever's they are: soldiers by the casualty radius as for
+    /// any burst, everyone within four radii pinned, and vehicles near it wrecked (armour only by a near-direct hit).
+    /// </summary>
+    public static void Shellburst(War war, Fight f, float ix, float iz, float reach, Cause cause, Random rng)
+    {
+        float far = reach * 4f;
+        foreach (var t in f.S)
+        {
+            float half = Ground(t.Fighters.Count) / 2f;
+            if (!t.Alive || MathF.Abs(t.X - ix) > far + half || MathF.Abs(t.Z - iz) > far + half) continue;
+            foreach (int k in t.Fighters)
+            {
+                var o = f.F[k];
+                if (o.Gone || war.Soldiers[o.Soldier].State is not (SoldierState.Fit or SoldierState.Wounded)) continue;
+                float dx = t.X + o.OffX - ix, dz = t.Z + o.OffZ - iz, dist = MathF.Max(1f, MathF.Sqrt(dx * dx + dz * dz));
+                if (dist > far) continue;
+                float p = MathF.Min(0.95f, 0.5f * (reach / dist) * (reach / dist)) * o.Cover * (o.Supp > 0.3f ? 0.2f : 0.6f);
+                if (rng.NextDouble() < p) Hit(war, f, k, rng, cause, -1f);
+                o.Supp = MathF.Min(1f, o.Supp + 0.8f);
+            }
+            foreach (int v in t.Vehicles)
+            {
+                var fv = f.V[v];
+                if (fv.Dead || fv.Gone) continue;
+                float kr = (Armoured(war.Vehicles[fv.Vehicle].Class) ? 0.12f : 0.4f) * reach;
+                float dist = MathF.Max(1f, MathF.Sqrt((t.X - ix) * (t.X - ix) + (t.Z - iz) * (t.Z - iz)));
+                if (rng.NextDouble() < MathF.Min(0.9f, 0.5f * (kr / dist) * (kr / dist))) Knock(war, f, fv, 1.0, rng, cause);
+            }
+        }
+    }
+
     /// <summary>A standard normal deviate (Box-Muller).</summary>
     static float Gauss(Random rng) => (float)(Math.Sqrt(-2.0 * Math.Log(1.0 - rng.NextDouble())) * Math.Cos(2.0 * Math.PI * rng.NextDouble()));
 
     /// <summary>A vehicle hit by an anti-armour weapon: destroyed with probability <paramref name="kill"/>, and then its crew are casualties or bail out.</summary>
-    static void Knock(War war, Fight f, FightVehicle fv, double kill, Random rng, Cause cause)
+    internal static void Knock(War war, Fight f, FightVehicle fv, double kill, Random rng, Cause cause)
     {
         if (fv.Dead || rng.NextDouble() >= kill) return;
         fv.Dead = true;
@@ -910,13 +950,13 @@ public static class Combat
     /// A soldier hit. About one in five is killed outright (head, heart, great vessels). One in three is put down: out
     /// of the fight, and dying without help. The rest are lightly wounded and go on. A second wound puts them down.
     /// </summary>
-    static void Hit(War war, Fight f, int k, Random rng, Cause cause, float d)
+    internal static void Hit(War war, Fight f, int k, Random rng, Cause cause, float d)
     {
         int s = f.F[k].Soldier;
         ref var so = ref war.Soldiers[s];
         war.Hits[so.Side, (int)cause]++;
         f.HitBy[(int)cause]++;
-        war.HitsAt[d < 25f ? 0 : d < 50f ? 1 : d < 100f ? 2 : d < 200f ? 3 : d < 400f ? 4 : d < 800f ? 5 : 6]++;
+        if (d >= 0f) war.HitsAt[d < 25f ? 0 : d < 50f ? 1 : d < 100f ? 2 : d < 200f ? 3 : d < 400f ? 4 : d < 800f ? 5 : 6]++;
         f.LastHit = war.Time;
         // Fragments wound more often than they kill: a third of the severe outcomes of a bullet.
         bool fragment = cause is Cause.Grenade or Cause.Autocannon or Cause.TankShell;
@@ -1011,6 +1051,7 @@ public static class Combat
             }
             ex /= seen.Count;
             ez /= seen.Count;
+            Artillery.Call(war, f, m, mine, seen);
             int came = f.Strength.GetValueOrDefault(mid, own);
             // Pull back when outnumbered two to one, or after losing three in ten.
             bool beaten = own * 2 < enemy || own * 10 < came * 7;

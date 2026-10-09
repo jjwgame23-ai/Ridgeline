@@ -28,9 +28,22 @@ public sealed class War
     /// <summary>Each side's dead and evacuated wounded, all told.</summary>
     public readonly int[] Dead = new int[3], Evacuated = new int[3];
     /// <summary>Each side's soldiers hit, and killed, by cause.</summary>
-    public readonly int[,] Hits = new int[3, 10], Kills = new int[3, 10];
+    public readonly int[,] Hits = new int[3, 12], Kills = new int[3, 12];
     /// <summary>Each side's vehicles destroyed, by cause.</summary>
-    public readonly int[,] Wrecked = new int[3, 10];
+    public readonly int[,] Wrecked = new int[3, 12];
+    /// <summary>The units that move on their own, for loops that only care about those.</summary>
+    public readonly List<int> MoverIds = new();
+    /// <summary>Fire missions on their way, and the units that fire them.</summary>
+    public readonly List<Mission> Missions = new();
+    public readonly List<int> FireUnits = new();
+    /// <summary>Each side's rounds fired by mortars, guns and rockets; missions fired in close support, on what was seen, and counter-battery; guns lost to counter-battery.</summary>
+    public readonly int[,] ArtyRounds = new int[3, 3], ArtyMissions = new int[3, 3];
+    public readonly int[] GunsLost = new int[3], StruckHit = new int[3];
+    /// <summary>Soldiers hit by shellfire outside fights, by how they were caught: riding, marching on foot, just halted, in shell scrapes, dug in.</summary>
+    public readonly int[,] StruckHow = new int[3, 5];
+    public readonly Dictionary<Arm, int>[] StruckArm = { new(), new(), new() };
+    public readonly Dictionary<int, int> StruckUnit = new();
+    public readonly int[] StruckByCb = new int[3];
     /// <summary>The supply points and the logistics companies hauling between them.</summary>
     public readonly List<Depot> Depots = new();
     public readonly List<Haul> Hauls = new();
@@ -136,8 +149,18 @@ public sealed class War
             if (u.Echelon == Echelon.Company || (u.Echelon >= Echelon.Battalion && u.Members.Count > 0)) u.Mover = u.Id;
             else if (u.Echelon >= Echelon.Battalion) u.Mover = -1;
             else if (parent == null || parent.Mover < 0) u.Mover = u.Id;
+            // A mortar platoon of a headquarters or support company sets up on its own, away from the command post,
+            // and keeps within reach of its company. (Riding as part of the company, counter-battery fire on its
+            // mortars fell on the battalion staff, and battalion headquarters lost nine in ten of their people.)
+            else if (u.Echelon == Echelon.Platoon && parent.Arm != Arm.Artillery && Below(u).Prepend(u).Any(c => c.Vehicles.Any(v => Vehicles[v].Class == VClass.Mortar)))
+            {
+                u.Mover = u.Id;
+                u.Keeps = parent.Mover;
+            }
             else u.Mover = parent.Mover;
         }
+        foreach (var u in Units)
+            if (u.IsMover) MoverIds.Add(u.Id);
         var seats = new int[Units.Count];
         var tracks = new bool[Units.Count];
         foreach (var u in Units)
