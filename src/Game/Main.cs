@@ -72,6 +72,7 @@ public partial class Main : Node3D
 
         if (setup.Map == "arena") BuildArena(setup);
         else if (setup.Map == "valley") BuildValley(setup);
+        else if (setup.Map == "window") WindowMode.Build(this, setup);
         else BuildRange();
 
         DevShot.AttachIfRequested(this);

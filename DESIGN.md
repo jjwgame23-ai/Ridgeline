@@ -233,7 +233,7 @@ A whole war on a generated island of about 100 × 100 km. Each side fields an ar
 1. **The island generator** (built: see below). It produces map images and is checked against real measures.
 2. **The abstract war, headless** (in progress: see below). Campaign telemetry and a replay of the war.
 3. **Calibration.** Abstract fights fitted to embodied matches.
-4. **The playable window.** Promotion and demotion, and the distant layer.
+4. **The playable window** (in progress: see below). Promotion and demotion, and the distant layer.
 5. **The soldier's life.** The player in the war: time skip, briefings, dying and carrying on, the journal.
 6. **Economy and construction**, then weather and seasons.
 
@@ -538,6 +538,43 @@ Not done yet:
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
+
+### The playable window (phase 4, in progress)
+
+The player is one soldier in the abstract war. Round them, a window a few kilometres across is built from the island and
+runs as the real battle simulation; everywhere else stays abstract. Calibration (phase 3) is folded in: the window is
+what turns abstract units into embodied squads and back, which is what calibration needs.
+
+**Slices**
+1. **The ground** (built): the window's terrain, water, roads, woods, fields and towns, read off the island.
+2. **The armies, frozen**: the war run headless to a chosen day, then every unit inside the window embodied where it is, as squads of bots with their soldiers' names and kit, its vehicles, and its orders (holding a place, moving, attacking).
+3. **Live**: the abstract war runs on outside in real time. Units crossing the window's edge are promoted or demoted. What happens inside (casualties, ammunition, ground taken) is written back to the war's records.
+4. **The distant layer**: low-detail land and sea to the horizon, and what the war is doing out there (flashes, fires, smoke, flares, sound).
+5. **Moving the window**: rebuilt round the player as they near its edge, behind a load at first.
+
+**The ground** (`WindowGround`, `Valley.BuildWindow`, `WindowMode`). `-- mode=window [seed=2] [town=Name | at=x,z] [size=4096]` makes the island and builds a 4 km window round a town or a point (km east and south of the island's centre). The player stands at its middle; nobody else is there yet.
+- **Heights.** The island's 100 m grid, interpolated smoothly (Catmull-Rom), on a 5 m mesh. Finer relief is added: a few metres of outcrop and gully on steep, hard ground, half a metre on the flat, none under water.
+- **Rivers.** Every stream the island maps (2 km² of catchment or more), traced from its head down its cells and smoothed. One shared field bends them into meanders, up to about 30 m off the cell line (meanders run 10–14 channel widths, Leopold and Wolman 1960); sharing it keeps tributaries joined. Bankfull width comes from the island (Leopold and Maddock 1953), depth is a twelfth of it, and the banks slope. The water surface follows the island's cells downstream and never rises.
+- **Water.** The sea at 0 m, the lakes at their levels, the rivers as ribbons on their surfaces. Water too deep to wade (1.2 m for people with kit) or ford (0.9 m for vehicles: trucks ford about 0.75 m, tanks about 1.2 m unprepared) is struck out of the navmeshes.
+- **Roads.** The island's roads, smoothed into curves: main 7 m wide, secondary 5.5 m, tracks 3.5 m. The ground is levelled across them, eased along them over about 60 m, with a 6 m shoulder. A river 3 m wide or more keeps its channel, and the road crosses on a bridge with a deck 1.5 m above the water and parapets, rising to it over 40 m either side. A brook goes under the road through a culvert.
+- **Land cover.** The island's cover cell by cell, the edges wandered by up to 60 m of noise. Fields are a patchwork of crops about 170 m across. The island's town cover beyond the streets built is outskirts.
+- **Trees by cover**, per hectare: pinewood 45 pines, oakwood 38 broadleaves, maquis 55 bushes, garrigue 25 low scrub, orchards 20 trees, a few in grass and along fields. That's fewer than real woods (300–1,000 stems a hectare), as on the battle maps, to keep the count playable; the proportions between covers hold.
+- **Settlements.** The island's towns stand where they are:
+  - those of a thousand people or more as towns of streets and blocks (the battle maps' town builder), up to 700 m across for now, each district a place to fight over;
+  - smaller villages and hamlets as villages;
+  - the island's farms as farmsteads, clear of roads and streams.
+- **The origin is the window's middle**, so positions stay small. Godot here is single precision: 50 km from an origin, positions come in 4 mm steps.
+- **Measured** (island 2):
+  - the village of Froltosa (1,830 people) builds in 4 s, with 548 buildings, 14 farms, 5 streams, 4 roads, 3 bridges and 47,000 trees. Its navmesh is 63,000 polygons for people and 170,000 for vehicles;
+  - the port of Porto Tuca (9,300) builds in 8 s, with 1,286 buildings. Its navmesh bakes in 22 s the first time (tiles are cached after), with 686 stretches of sea and inlet barred;
+  - making the island itself takes 18 s;
+  - both run at 150–160 FPS.
+
+**Not done in the ground yet**
+- Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
+- The town builder doesn't know about rivers, so a stream through a town can run under its blocks. There are no quays at ports.
+- Cover edges still show the 100 m grid from the air; one climate's colours only.
+- Nothing beyond the window's edge yet (slice 4).
 
 ## Milestones
 

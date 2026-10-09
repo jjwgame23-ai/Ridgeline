@@ -33,6 +33,17 @@ public partial class Terrain : Node3D, IGround
     public Func<float, float, int>? Zone;
     /// <summary>A paved area (a town's ground): its colour replaces the grass or sand.</summary>
     public Func<float, float, Color?>? Paint;
+    /// <summary>
+    /// A map made from elsewhere (a Conquest window, read off its island): the ground's height before the pads are
+    /// levelled, a last change after (river channels), its colour (x, z, height, normal, noise 0..1), trees per hectare
+    /// by species (pine, broadleaf, birch, bush, palm, scrub) and the most of each anywhere, and the grid's spacing.
+    /// </summary>
+    public Func<float, float, float>? Source;
+    public Func<float, float, float, float>? Finish;
+    public Func<float, float, float, Vector3, float, Color>? ColorSource;
+    public Func<float, float, int, float>? TreesPerHa;
+    public float[]? MostPerHa;
+    public float SpacingOverride;
 
     public int Res { get; private set; }
     public float Spacing { get; private set; }
@@ -45,7 +56,7 @@ public partial class Terrain : Node3D, IGround
     public void Generate(int seed, bool plant = true)
     {
         // Coarser grid on bigger maps: keeps the mesh and heightfield a sensible size.
-        Spacing = Size <= 2100f ? 4f : Size <= 3100f ? 5f : 8f;
+        Spacing = SpacingOverride > 0f ? SpacingOverride : Size <= 2100f ? 4f : Size <= 3100f ? 5f : 8f;
         Res = (int)MathF.Round(Size / Spacing) / 2 * 2 + 1;
         Extent = Half * Spacing;
         Heights = new float[Res * Res];
@@ -106,6 +117,7 @@ public partial class Terrain : Node3D, IGround
     /// <summary>The biome's ground before the pads are flattened into it.</summary>
     float Raw(float x, float z)
     {
+        if (Source != null) return Source(x, z);
         var p = new Vector2(x, z);
         float h;
         switch (Biome)
@@ -164,7 +176,7 @@ public partial class Terrain : Node3D, IGround
                 float d = new Vector2(x, z).DistanceTo(f.C);
                 h = Mathf.Lerp(h, f.H, 1f - Mathf.SmoothStep(f.R, f.R + MathF.Min(f.R * 0.8f, 150f) + 15f, d));
             }
-            return h;
+            return Finish?.Invoke(x, z, h) ?? h;
         }
         float n = _hills.GetNoise2D(x, z) * 0.5f + 0.5f;
         float ridge = 1f - MathF.Abs(_ridge.GetNoise2D(x, z));
@@ -289,6 +301,7 @@ void fragment() {
         float noise = Mathf.Clamp(_detail.GetNoise2D(x * 0.3f, z * 0.3f) * 0.8f + 0.4f, 0f, 1f);
         float steep = Mathf.SmoothStep(0.25f, 0.5f, 1f - n.Y);
         if (Paint?.Invoke(x, z) is Color paved) return paved.Lerp(paved.Darkened(0.15f), noise);
+        if (ColorSource != null) return ColorSource(x, z, h, n, noise);
         if (Biome == Biome.Desert)
         {
             var c = Sand.Lerp(Sand2, noise);
@@ -431,6 +444,32 @@ void fragment() {
             _ => new[] { (pine, 3200, -0.05f), (broad, 1300, 0f), (bush, 1200, -0.1f) },
         };
         float e = Extent - 20f;
+        if (TreesPerHa != null && MostPerHa != null)
+        {
+            // By the map's own cover: a point drawn at random over the whole map is kept with the odds of the trees
+            // per hectare there against the most anywhere, so each cover gets its density.
+            var kinds = new[] { pine, broad, birch, bush, palm, scrub };
+            for (int k = 0; k < kinds.Length; k++)
+            {
+                var sp = kinds[k];
+                if (MostPerHa[k] <= 0f) continue;
+                int tries = (int)(4f * e * e / 10_000f * MostPerHa[k]);
+                for (int t = 0; t < tries; t++)
+                {
+                    float x = rng.RandfRange(-e, e), z = rng.RandfRange(-e, e);
+                    if (rng.Randf() * MostPerHa[k] >= TreesPerHa(x, z, k)) continue;
+                    int zone = Zone?.Invoke(x, z) ?? 0;
+                    if (zone == 2 || zone == 1 && rng.Randf() > 0.35f) continue;
+                    if (zone == 0 && ClearDist(x, z) < 12f) continue;
+                    if (NormalAt(x, z).Y < (sp.Solid ? 0.82f : 0.7f)) continue;
+                    float s = rng.RandfRange(sp.MinS, sp.MaxS);
+                    var basis = Basis.FromEuler(new Vector3(0f, rng.RandfRange(0f, Mathf.Tau), 0f)).Scaled(new Vector3(s, s, s));
+                    sp.Xf.Add(new Transform3D(basis, new Vector3(x, HeightAt(x, z) - 0.2f, z)));
+                }
+                if (sp.Xf.Count > 0 && !_species.Contains(sp)) _species.Add(sp);
+            }
+            plan = Array.Empty<(Species, int, float)>();
+        }
         foreach (var (sp, count, thresh) in plan)
         {
             int want = (int)(count * (RangeLane ? 1f : area));

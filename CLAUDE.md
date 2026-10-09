@@ -36,6 +36,8 @@ The main test is a match nobody plays, run headless and logged.
 
 The report checks the island against laws measured on real landscapes, and each line says "ok" or "OUTSIDE". About 20 s an island.
 
+**Conquest window.** `<godot> --path . -- mode=window seed=2 [town=Name | at=x,z]` builds a 4 km window of island N round a town and lets you walk it (nobody else is there yet). Add `shot=x.png frames=300 cam=x,z,h look=x,z,h` for a screenshot; that needs a rendered run (no `--headless`), which opens a window on screen. Headless it prints the build and navmesh stats. About 30 s, plus the first navmesh bake.
+
 **Conquest war.** `<godot> --path . --headless -- mode=war seed=2 days=7 [trace=N]` makes island N, raises the three armies and runs the war. It writes `war-N-report.txt` (casualties against real rates, the biggest fights, the units that fought most) and `war-N.html` (the replay) to `worldgen/`. `trace=N` adds fight N's state every 30 s to the report. About 1–2 min for 7 days.
 
 **Assault test.** `<godot> --path . --headless -- mode=assault seed=2 runs=12 [attack=9] [defend=3] [arty=1]` fights the same attack on a dug-in position again and again. It writes `assault-N.txt`: losses on each side, how often the place is carried, and how long it takes, against historical marks. About 2 min for 12 runs.

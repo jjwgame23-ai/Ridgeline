@@ -124,7 +124,14 @@ public partial class NavBaker : Node
     /// of multi-storey interiors does.
     /// </summary>
     public Rect2? Dense;
+    /// <summary>More densely built areas (a Conquest window can hold several towns).</summary>
+    public readonly List<Rect2> DenseAreas = new();
     public float DenseTile = 64f;
+    /// <summary>
+    /// Ground nobody may path on, as outlines with the height up to which it's struck out: water too deep to wade or
+    /// ford (a Conquest window's sea, lakes and rivers), leaving a bridge above it.
+    /// </summary>
+    public readonly List<(Vector3[] Outline, float Below)> Barred = new();
     public string Key = "";
     /// <summary>Which navigation map the regions go into (default: the world's, for people).</summary>
     public Rid Map;
@@ -191,8 +198,9 @@ public partial class NavBaker : Node
         NavigationMeshSourceGeometryData3D? source = null;
         int n = Mathf.CeilToInt(2f * Extent / Tile);
         var tiles = new List<(float X0, float Z0, float Size, string Name, bool Seam)>();
-        bool Split(int ix, int iz) => ix >= 0 && iz >= 0 && ix < n && iz < n && Dense is Rect2 d
-            && d.Intersects(new Rect2(-Extent + ix * Tile, -Extent + iz * Tile, Tile, Tile));
+        bool Split(int ix, int iz) => ix >= 0 && iz >= 0 && ix < n && iz < n
+            && (Dense is Rect2 d && d.Intersects(new Rect2(-Extent + ix * Tile, -Extent + iz * Tile, Tile, Tile))
+                || DenseAreas.Any(r => r.Intersects(new Rect2(-Extent + ix * Tile, -Extent + iz * Tile, Tile, Tile))));
         for (int ix = 0; ix < n; ix++)
         for (int iz = 0; iz < n; iz++)
         {
@@ -225,6 +233,7 @@ public partial class NavBaker : Node
             {
                 source = new NavigationMeshSourceGeometryData3D();
                 NavigationServer3D.ParseSourceGeometryData(Make(), source, Root);
+                foreach (var (outline, below) in Barred) source.AddProjectedObstruction(outline, -1000f, 1000f + below, true);
             }
             var nm = Make();
             nm.BorderSize = border;

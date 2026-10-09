@@ -65,6 +65,7 @@ public partial class DevShot : Node
             "tspec12" => new GameSetup { Map = "valley", TeamSize = 12, PlayerJoins = false },
             "tspec20" => new GameSetup { Map = "valley", TeamSize = 20, PlayerJoins = false },
             "tspec33" => new GameSetup { Map = "valley", TeamSize = 33, PlayerJoins = false },
+            "window" => new GameSetup { Map = "window" },
             _ => null,
         };
         // level=alhamra etc.: which battlefield.
