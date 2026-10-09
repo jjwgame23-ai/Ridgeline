@@ -68,7 +68,7 @@ public sealed class SiteObjective : IObjective
 ///   out orders: attack a neutral or enemy point, or defend one of ours that's
 ///   under threat. The player's squad can be ordered from the map instead.
 /// </summary>
-public partial class TerritoryMode : Node, IMatch, IMotorHost
+public partial class TerritoryMode : Node, IMatch, IMotorHost, ITelemetryMatch
 {
     public const float CaptureExtra = 14f;
     const double TickEvery = 1.0, BleedEvery = 15.0, RespawnDelay = 10.0, CommandEvery = 20.0;
@@ -93,6 +93,13 @@ public partial class TerritoryMode : Node, IMatch, IMotorHost
     Valley IMotorHost.Map => Map;
     List<Squad>[] IMotorHost.Squads => Squads;
     bool[] IMotorHost.Out => Out;
+    Valley ITelemetryMatch.Map => Map;
+    SiteObjective[] ITelemetryMatch.Points => Points;
+    int[] ITelemetryMatch.Owner => Owner;
+    List<Squad>[] ITelemetryMatch.Squads => Squads;
+    int[] ITelemetryMatch.Tickets => Tickets;
+    bool[] ITelemetryMatch.Out => Out;
+    float[] ITelemetryMatch.HQHold => HQHold;
     /// <summary>
     /// Each side's headquarters, at its base: the last thing it has. An enemy can go for it once the front reaches
     /// it (they hold a point linked to it). Worn down to nothing by more attackers than defenders on it, it's

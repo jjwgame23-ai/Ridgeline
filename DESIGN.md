@@ -587,6 +587,22 @@ what turns abstract units into embodied squads and back, which is what calibrati
   - The rendered run played at 82 FPS; headless, 179 s of game took 121 s.
   - **The embodied fight is far bloodier than the abstract one.** 68 of the 164 were killed in 90 seconds, most by BRAVO's BMP gunners at about 220 m, and some crews died with their vehicles. The abstract fight it continues was calibrated to historical casualty rates, a few per cent an hour. Fitting the two together is the calibration this phase folds in. Bots in the open at 200 m in front of autocannons are the first suspects.
 
+**Calibration: the same fight both ways** (in progress). `calib=1` lets the war run on, abstractly, minute by minute beside the embodied fight from the same moment. Each minute the log sets the bubble's soldiers' fates side by side: how many the war's fight has killed, downed and wounded, against the embodied fight. `telemetry=` records the embodied fight as for the battle maps (`tools/telemetry.py`); `ITelemetryMatch` lets any match be recorded.
+- **The test fight** (island 2, day 3): BRAVO's 75th Motor Rifle Regiment against CHARLIE's 42nd Armoured Infantry Brigade.
+  - In the war it was a standoff at about 400 m: 30 minutes old, 557 soldiers in it, nobody attacking. It had fired 12,907 rounds for 63 casualties (about 205 rounds a hit), and the last hit was 2 minutes before.
+  - In the next 5 minutes, the war's fight downed 3 of the bubble's 164 soldiers and killed none.
+- **Embodied, as first built**, it killed 102 of the 164 in 5 minutes, at about 13 rounds a hit. The gap is two orders of magnitude, and real firefights at 200–400 m run at hundreds of rounds a hit or more.
+  - BRAVO's 12.7 mm vehicle guns did most of it: 58–62 kills at 210–240 m, one round in 13 a hit. The gun (a cone of about 8 mils) and the gunner (laying to within 1.5 mils once settled) look realistic for a pintle mount; men in their sights at 240 m are what die.
+  - **Exposure.** Of 131 men hit by machine guns and rifles, 121 were kneeling or standing, and four in five of those were fully suppressed. Bots spent 75% of the time on their feet and 4% prone.
+- **Fixed so far:**
+  - **Pinned.** Under heavy fire in the open, a bot goes flat whatever he's doing, and stays flat a few seconds after it eases (`BotBrain.WantStance`). BRAVO's dead in 5 minutes fell from 30 to 13. On a 33-a-side Valley battle, rounds per bullet hit went from 20 to 44, with kills about the same; single runs vary a lot.
+  - **Dug in.** Squads the war has dug in come in with sandbagged fighting positions, a man behind each half. CHARLIE's dead fell from 83 to 67 of 86.
+- **Still to do.** The men in the fighting positions are now the ones being killed: hit in the torso and head while up to look and shoot over the bags. A bot in cover ducks for only half a second to two seconds between looks, and suppression wears off in 4 s, so he keeps reappearing in front of a gun still laid on him. Next:
+  - how long suppression lasts and keeps a man down;
+  - looking and firing from prone at range;
+  - how quickly gunners find men in cover;
+  - a fair test of an attack (the assault bench embodied at platoon scale) against history.
+
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
 - The town builder doesn't know about rivers, so a stream through a town can run under its blocks. There are no quays at ports.

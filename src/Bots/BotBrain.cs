@@ -85,7 +85,7 @@ public sealed class BotBrain
     double _pushOnUntil = -1;
     bool _popPeek, _crouchLos = true, _proneLos, _exposedCrouched;
     /// <summary>Flat on the ground for incoming (a mortar bomb whistling down close by) until this time.</summary>
-    double _hitTheDirtUntil = -1, _proneBlockedUntil = -1;
+    double _hitTheDirtUntil = -1, _proneBlockedUntil = -1, _pinnedUntil = -1;
     /// <summary>Running from a burst (to cover, or just away) until this time, when he drops flat wherever he is; the burst he last reacted to.</summary>
     double _blastRunUntil = -1, _blastSeen = -1, _dropSeen = -1;
     /// <summary>Where the indirect-fire drill is taking him, to go on to once he's up from the last bomb.</summary>
@@ -2112,6 +2112,11 @@ public sealed class BotBrain
     ///   see them from down there (else a knee); pinned down there with no cover: prone;
     /// - an observation or overwatch post in the open: prone;
     /// - a mortar bomb whistling in close: flat, wherever he is (a grenade with nowhere to hide behind too);
+    /// - pinned: heavy fire round him (suppression past 0.6) out in the open, and not behind the cover he's in or running
+    ///   for: flat, whatever he was doing (on the move, dressing a wound, firing), and he stays flat a few seconds after it
+    ///   eases. That's the drill (FM 3-21.8, react to contact: get down and return fire), and it's what the war's own
+    ///   fights do with a pinned man. (Men under the heaviest fire stayed on a knee or on their feet: of 131 hit by
+    ///   machine guns and rifles in a Conquest fight, 121 were up, and four in five of those were fully suppressed.)
     /// - otherwise as before: a knee behind cover and at range, on his feet to move and up close.
     /// </summary>
     Posture WantStance(Threat? t, bool vis)
@@ -2121,6 +2126,8 @@ public sealed class BotBrain
         bool mayLie = open && Now > _proneBlockedUntil;
         // (Not while he's still running for cover or away from it: the flat-until time is set when the run starts.)
         if (Now < _hitTheDirtUntil && Now >= _blastRunUntil && State != BotState.Evade) return Posture.Prone;
+        if (_b.Suppression > 0.6f) _pinnedUntil = Now + 2.0 + _b.Suppression * 2.0;
+        if (mayLie && Now < _pinnedUntil && _b.Ride == null && State is not (BotState.InCover or BotState.TakeCover or BotState.Evade)) return Posture.Prone;
         switch (State)
         {
             case BotState.InCover:

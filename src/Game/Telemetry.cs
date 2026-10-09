@@ -5,7 +5,7 @@ using Godot;
 namespace Ridgeline;
 
 /// <summary>
-/// telemetry=path (dev arg, Territory mode): the match as it happens, written to a JSON-lines file for
+/// telemetry=path (dev arg, Territory mode and Conquest windows): the match as it happens, written to a JSON-lines file for
 /// looking at fights afterwards (tools/replay.py makes a replay to watch; tools/telemetry.py draws the fights
 /// and measures them). A folder (record.cmd passes one) gets a new file for each match, named for the map and
 /// the time it started.
@@ -17,6 +17,19 @@ namespace Ridgeline;
 ///   state (with the reason), squad drill and capture.
 /// Nothing here changes the game; with no telemetry= argument none of it runs.
 /// </summary>
+/// <summary>What telemetry reads of the match it records (TerritoryMode, or a Conquest window).</summary>
+public interface ITelemetryMatch
+{
+    Valley Map { get; }
+    SiteObjective[] Points { get; }
+    int[] Owner { get; }
+    List<Squad>[] Squads { get; }
+    Squad? PlayerSquad { get; }
+    int[] Tickets { get; }
+    bool[] Out { get; }
+    float[] HQHold { get; }
+}
+
 public static class Telemetry
 {
     static StreamWriter? _w;
@@ -39,7 +52,7 @@ public static class Telemetry
         return null;
     }
 
-    public static void Start(string path, TerritoryMode m)
+    public static void Start(string path, ITelemetryMatch m)
     {
         Stop();
         if (path.EndsWith('/') || path.EndsWith('\\') || Directory.Exists(path))
@@ -80,7 +93,7 @@ public static class Telemetry
 
     // ---------------------------------------------------------------- the map
 
-    static void WriteMap(TerritoryMode m)
+    static void WriteMap(ITelemetryMatch m)
     {
         var map = m.Map;
         var t = map.Terrain;
@@ -157,7 +170,7 @@ public static class Telemetry
 
     // ---------------------------------------------------------------- twice a second: everyone
 
-    public static void Tick(TerritoryMode m)
+    public static void Tick(ITelemetryMatch m)
     {
         if (_w == null || Clock.Now < _nextSample) return;
         _nextSample = Clock.Now + Every;

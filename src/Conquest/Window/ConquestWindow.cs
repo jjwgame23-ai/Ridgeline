@@ -10,9 +10,17 @@ public sealed class AreaObjective : IObjective
     /// <summary>Where the enemy is, if known: half the squad's places are on the side facing it.</summary>
     public Vector3? Threat;
     public Valley Map = null!;
+    /// <summary>A dug-in squad's places: behind its fighting positions, one each.</summary>
+    public readonly List<Vector3> Spots = new();
 
     public Vector3 PointFor(Bot b, RandomNumberGenerator rng)
     {
+        if (Spots.Count > 0 && b.Squad != null)
+        {
+            var spot = Spots[Math.Max(0, b.Squad.Members.IndexOf(b)) % Spots.Count];
+            if (Threat is { } th && (th - spot) with { Y = 0f } is { } look && look.LengthSquared() > 1f) b.LookOut = look.Normalized();
+            return spot;
+        }
         float a = rng.Randf() * Mathf.Tau, r = MathF.Sqrt(rng.Randf()) * Radius * 0.8f;
         var off = new Vector3(MathF.Cos(a) * r, 0f, MathF.Sin(a) * r);
         if (Threat is { } t && rng.Randf() < 0.5f)
@@ -36,6 +44,10 @@ public sealed class AreaObjective : IObjective
 ///   abstract round the bubble).
 /// - Where. A soldier in a fight comes in where the war's fight has him: his squad's place and his own within it. Units
 ///   not fighting come in at their squad's place in their company.
+/// - Dug in. A squad the war has dug in (halted two hours or more, as its fights count trenches) comes in with its
+///   fighting positions: a sandbagged position for every two men, 4 m apart across its front, facing the enemy, each
+///   man behind his. (Squads dug in for days came in kneeling in the open in front of the enemy's machine guns: in a
+///   fight on day 3, CHARLIE lost 83 of 86 in five minutes, 62 of them to BRAVO's 12.7 mm guns at 240 m.)
 /// - Who they are. Each war soldier fit to fight (or lightly wounded) becomes a bot with their name and rank, their
 ///   skill from the war, and a role from their job: squad leaders lead, machine gunners carry the light machine gun,
 ///   grenadiers the launcher, anti-tank gunners the light anti-tank weapon, marksmen the marksman's rifle, medics their
@@ -46,7 +58,7 @@ public sealed class AreaObjective : IObjective
 /// - Orders. A unit holding ground, or halted, defends where it is (a town district, when it's on one). A unit on the
 ///   move goes where it was going, clipped to the window. Nothing here is told to the war yet (slice 3).
 /// </summary>
-public partial class ConquestWindow : Node, IMatch, IMotorHost
+public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
 {
     public War War = null!;
     public Valley Map = null!;
@@ -54,6 +66,12 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
     /// <summary>The window's middle on the island (metres east and south of its centre).</summary>
     public float CX, CZ;
     public int Cap = 160;
+    /// <summary>
+    /// calib=1: the war runs on beside the fight, abstractly, minute by minute from the same moment, so the same soldiers'
+    /// fates can be set side by side: how many of the bubble's soldiers the abstract fight has killed, downed or wounded
+    /// by each minute, against the embodied one. (The war's state is otherwise frozen in the window.)
+    /// </summary>
+    public bool Calibrate;
     public bool PlayerJoins = true;
     public static bool Verbose;
 
@@ -70,16 +88,30 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
     Valley IMotorHost.Map => Map;
     List<Squad>[] IMotorHost.Squads => Squads;
     bool[] IMotorHost.Out => Out;
+    Valley ITelemetryMatch.Map => Map;
+    SiteObjective[] ITelemetryMatch.Points => _points;
+    int[] ITelemetryMatch.Owner => _owner;
+    List<Squad>[] ITelemetryMatch.Squads => Squads;
+    Squad? ITelemetryMatch.PlayerSquad => PlayerBody != null ? Squads.SelectMany(l => l).FirstOrDefault(s => s.Members.Contains(PlayerBody)) : null;
+    int[] ITelemetryMatch.Tickets => _tickets;
+    bool[] ITelemetryMatch.Out => Out;
+    float[] ITelemetryMatch.HQHold => _hold;
+    SiteObjective[] _points = Array.Empty<SiteObjective>();
+    int[] _owner = Array.Empty<int>();
+    readonly int[] _tickets = new int[3];
+    readonly float[] _hold = { 1f, 1f, 1f };
     public bool Spent(int team) => true;
     public void BuildFob(int team, Vector3 at) { }
 
     readonly RandomNumberGenerator _rng = new();
     readonly Dictionary<int, Vector2> _squadAt = new(), _fighterAt = new(), _enemyAt = new();
-    readonly HashSet<int> _attacking = new();
+    readonly HashSet<int> _attacking = new(), _dug = new();
     readonly int[] _numbers = new int[3];
     readonly int[] _killed = new int[3];
     bool _embodied;
-    double _nextLog;
+    double _nextLog, _startedAt, _warMinute;
+    HashSet<int> _bubble = new();
+    readonly int[] _down = new int[3], _hurt = new int[3];
 
     public override void _Ready()
     {
@@ -115,6 +147,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
             return;
         }
         Motor.Tick();
+        Telemetry.Tick(this);
+        if (Calibrate) Abstract();
         if (Verbose && Clock.Now >= _nextLog)
         {
             _nextLog = Clock.Now + 30.0;
@@ -136,7 +170,11 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
         foreach (var f in War.Fights)
         {
             if (f.Over) continue;
-            foreach (var s in f.S) _squadAt[s.Unit] = Local(s.X, s.Z);
+            foreach (var s in f.S)
+            {
+                _squadAt[s.Unit] = Local(s.X, s.Z);
+                if (s.Dug) _dug.Add(s.Unit);
+            }
             foreach (var fi in f.F)
                 if (!fi.Gone) _fighterAt[fi.Soldier] = Local(f.S[fi.Squad].X + fi.OffX, f.S[fi.Squad].Z + fi.OffZ);
             foreach (int mid in f.Movers)
@@ -177,6 +215,11 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
             Bring(c.U, c.M, c.At, c.Fit);
         }
         Log($"--- CONQUEST WINDOW: {War.Isl.Name} day {War.Day} {War.Hour:00.0}h at ({CX / 1000f:0.0}, {CZ / 1000f:0.0}) km ---");
+        Log($"{Dug} fighting positions for dug-in squads");
+        foreach (var f in War.Fights.Where(f => !f.Over && f.Movers.Any(movers.Contains)))
+            Log($"abstract fight {f.Id}: {(War.Time - f.Started) / 60:0} min old, last shot {War.Time - f.LastShot:0} s ago, last hit {War.Time - f.LastHit:0} s ago; "
+                + $"{f.Shots.Sum()} shots, {f.Killed.Sum()} killed, {f.Down.Sum()} down, {f.Hurt.Sum()} hurt so far; {f.Attacking.Count} of {f.Movers.Count} companies attacking; "
+                + $"{f.F.Count(x => !x.Gone)} fighters in it");
         Log($"embodied {n} soldiers in {Squads.Sum(s => s.Count)} squads from {movers.Count} companies ("
             + string.Join(", ", Enumerable.Range(0, 3).Select(t => $"{War.Sides[t].Name} {Bots.Count(b => b.Team == t)}")) + $"), {Motor.Slots.Count} vehicles; "
             + $"{skipped} more soldiers in the window left abstract, in {cands.Count} units in all");
@@ -187,6 +230,11 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
         }
         if (PlayerJoins) JoinPlayer();
         else Spec.Activate(Bots.FirstOrDefault());
+        _points = Map.Sites.Select(s => new SiteObjective { Site = s, Map = Map, R = s.Radius }).ToArray();
+        _owner = Enumerable.Repeat(-1, _points.Length).ToArray();
+        if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
+        _bubble = SoldierOf.Values.ToHashSet();
+        _startedAt = Clock.Now;
     }
 
     static string Doing(Unit m) => m.InFight >= 0 ? "fighting" : m.Path != null ? "moving" : "halted";
@@ -218,11 +266,19 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
         rest.AddRange(crewJobs); // crewmen left over (more crew than vehicles: the rest of a tank's four) fight on foot
         if (rest.Count == 0) return;
         var squad = NewSquad(side, KindOf(u), u);
-        Give(squad, order);
         var c = new Vector3(at.X, 0f, at.Y);
+        bool dug = _dug.Contains(u.Id) || m.Path == null && m.InFight < 0 && War.Time - m.HaltedAt >= 2 * 3600;
+        var spots = dug && order.Obj is AreaObjective { Threat: { } enemy } area ? DigIn(c, enemy, rest.Count) : null;
+        if (spots != null) ((AreaObjective)order.Obj).Spots.AddRange(spots);
+        Give(squad, order);
+        int i = 0;
         foreach (int s in rest.OrderBy(s => War.Soldiers[s].Job == Job.SquadLeader ? 0 : 1))
-            Spawn(s, squad, RoleOf(War.Soldiers[s].Job), _fighterAt.TryGetValue(s, out var fp) ? new Vector3(fp.X, 0f, fp.Y)
-                : c + new Vector3(_rng.RandfRange(-6f, 6f), 0f, _rng.RandfRange(-6f, 6f)));
+        {
+            var at3 = spots != null ? spots[i % spots.Count] : _fighterAt.TryGetValue(s, out var fp) ? new Vector3(fp.X, 0f, fp.Y)
+                : c + new Vector3(_rng.RandfRange(-6f, 6f), 0f, _rng.RandfRange(-6f, 6f));
+            Spawn(s, squad, RoleOf(War.Soldiers[s].Job), at3);
+            i++;
+        }
     }
 
     Squad NewSquad(int side, SquadKind kind, Unit u)
@@ -271,6 +327,32 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
     }
 
     static void Give(Squad sq, (IObjective Obj, Site? Site, bool Defend, string Verb, string What) o) => sq.Order(o.Site, o.Obj, o.Defend, o.Verb, o.What);
+
+    /// <summary>
+    /// A dug-in squad's fighting positions: a sandbagged position for every two men, 4 m apart across its front, facing the
+    /// enemy; and a place behind each for each of the two. The sandbags stand for the trenches the war has them in.
+    /// </summary>
+    List<Vector3> DigIn(Vector3 c, Vector3 enemy, int men)
+    {
+        var facing = (enemy - c) with { Y = 0f };
+        if (facing.LengthSquared() < 1f) return new List<Vector3>();
+        facing = facing.Normalized();
+        var right = facing.Cross(Vector3.Up);
+        int walls = (men + 1) / 2;
+        var spots = new List<Vector3>();
+        for (int w = 0; w < walls; w++)
+        {
+            var at = c + right * ((w - (walls - 1) / 2f) * 4f);
+            Fortifications.Sandbags(GetParent(), Map, at, facing);
+            foreach (float s in new[] { -0.55f, 0.55f })
+                spots.Add(Map.Ground(at - facing * 0.8f + right * s));
+            Dug++;
+        }
+        return spots;
+    }
+
+    /// <summary>Fighting positions built for dug-in squads.</summary>
+    public int Dug;
 
     /// <summary>The nearest enemy unit the war's side knows of within 3 km, in window coordinates.</summary>
     Vector3? Threat(Unit m)
@@ -353,6 +435,30 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost
         PlayerBody = p;
         PlayerHud.P = p;
         Log($"the player is {War.Who(soldier)}, {sq.Name} ({UnitOf[sq].Name})");
+    }
+
+    /// <summary>The war, a minute at a time in step with the fight, and every minute the two counts for the bubble's soldiers.</summary>
+    void Abstract()
+    {
+        double minutes = (Clock.Now - _startedAt) / 60.0;
+        if (minutes < _warMinute + 1.0) return;
+        _warMinute += 1.0;
+        War.Tick(60);
+        var dead = new int[3];
+        var down = new int[3];
+        var hurt = new int[3];
+        foreach (int s in _bubble)
+        {
+            var so = War.Soldiers[s];
+            if (so.State == SoldierState.Dead) dead[so.Side]++;
+            else if (so.State is SoldierState.Down or SoldierState.Evacuated) down[so.Side]++;
+            else if (so.State == SoldierState.Wounded) hurt[so.Side]++;
+        }
+        var embodiedDown = new int[3];
+        foreach (var (c, s) in SoldierOf)
+            if (!c.Dead && !c.Alive) embodiedDown[c.Team]++;
+        GD.Print($"calib {_warMinute:0} min: abstract killed {string.Join("/", dead)} down {string.Join("/", down)} wounded {string.Join("/", hurt)}; "
+                 + $"embodied killed {string.Join("/", _killed)} down {string.Join("/", embodiedDown)}; of {string.Join("/", Enumerable.Range(0, 3).Select(t => _bubble.Count(s => War.Soldiers[s].Side == t)))}");
     }
 
     void OnKilled(ICombatant victim, HitInfo hit)

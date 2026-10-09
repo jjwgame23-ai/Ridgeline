@@ -81,6 +81,7 @@ public static partial class WindowMode
                 War = war, Map = map, PlayerHud = hud, CX = cx, CZ = cz,
                 Cap = a.TryGetValue("bots", out var bv) && int.TryParse(bv, out int bn) ? bn : 160,
                 PlayerJoins = !a.TryGetValue("join", out var jv) || jv != "0",
+                Calibrate = a.TryGetValue("calib", out var cv) && cv != "0",
             });
             return;
         }
