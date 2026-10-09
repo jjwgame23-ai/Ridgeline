@@ -82,6 +82,8 @@ public sealed class Unit
     public int People, Raised;
     /// <summary>Consolidating and reorganising after an operation: no new one before this.</summary>
     public double RestUntil;
+    /// <summary>The objective a battalion garrisons, or -1: one it took in the front line, which it stays on.</summary>
+    public int Holds = -1;
     /// <summary>The fight it's in, or -1.</summary>
     public int InFight = -1;
     /// <summary>When it last pulled out of a fight: it won't be drawn into another straight away.</summary>
@@ -117,6 +119,8 @@ public sealed class Order
     public double At;
     /// <summary>Done: arrived, or the objective is held.</summary>
     public bool Done;
+    /// <summary>A move to get out of contact, not a march: made by night too, and past the day's march limit.</summary>
+    public bool Tactical;
 }
 
 public enum ObjKind : byte { Town, Port, Node, Bridge, Hill }

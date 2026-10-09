@@ -120,10 +120,16 @@ public static class Command
                     if (o.Owner == enemy && !o.Unreachable[side] && war.Time >= o.Retry[side] && reach[war.Ctl.CellOf(o.X, o.Z)] <= 8000f) targets.Add(o);
             }
         }
-        foreach (var o in targets)
+        // Each target, nearest and most valuable first, to the nearest force with battalions free to take it on: two
+        // tasks for each free battalion. (Every target used to go to the nearest division, so the one at the front had
+        // forty tasks and all its battalions tied down holding ground, while a third of the army sat idle.)
+        var room = forces.ToDictionary(f => f.Id, f => 2 * war.Below(f).Count(bn => Free(war, bn)));
+        foreach (var o in targets.OrderBy(o => reach[war.Ctl.CellOf(o.X, o.Z)] / o.Value))
         {
-            var f = forces.MinBy(f => Dist(war, f, o.X, o.Z));
-            f?.Tasks.Add(o.Id);
+            var f = forces.Where(f => room[f.Id] > 0).MinBy(f => Dist(war, f, o.X, o.Z));
+            if (f == null) break;
+            f.Tasks.Add(o.Id);
+            room[f.Id]--;
         }
         var (hx, hz) = Home(war, side);
         foreach (var t in army.Children.Select(c => war.Units[c]).Where(c => !forces.Contains(c)))
@@ -165,7 +171,7 @@ public static class Command
             b.Tasks.RemoveAll(id => !div.Tasks.Contains(id) && war.Objectives[id].Claims[side] == 0 || war.Objectives[id].Owner == side);
         foreach (var b in brigades.OrderBy(b => b.Tasks.Count))
         {
-            int want = Kids(war, b, Echelon.Battalion).Count(Manoeuvre);
+            int want = Kids(war, b, Echelon.Battalion).Count(bn => Free(war, bn));
             while (b.Tasks.Count < want)
             {
                 var (bx, bz) = Pos(war, b);
@@ -187,7 +193,11 @@ public static class Command
 
     /// <summary>
     /// Idle battalions to the brigade's objectives, nearest first: one to an empty objective, two to one the enemy
-    /// holds, so they go in with the odds that attacking a held position needs. A battalion just back from an operation
+    /// holds, so they go in with the odds that attacking a held position needs. A brigade of three or more keeps one
+    /// back in reserve ("two up, one back"), and a battalion that took ground in the front line stays on it as its
+    /// garrison while it's in the front line. (Battalions used to move on from everything they took, leaving it empty
+    /// for the enemy to walk back into: each side took 30-100 places a day while what it held hardly changed.)
+    /// A battalion just back from an operation
     /// consolidates and reorganises first, and one down to half its strength isn't sent on another (US doctrine reckons
     /// a unit below 50% combat ineffective). (Battalions used to be sent on the next objective the moment they finished
     /// one, so whole armies were on the move into the enemy all day, and the median company fought 11 times in 3 days.)
@@ -197,8 +207,12 @@ public static class Command
         int side = bde.Side;
         var bns = Kids(war, bde, Echelon.Battalion).Where(Manoeuvre).ToList();
         foreach (var bn in bns)
+            if (bn.Holds >= 0 && (war.Objectives[bn.Holds].Owner != side || !FrontLine(war, side, war.Objectives[bn.Holds]))) bn.Holds = -1;
+        int committed = bns.Count(bn => bn.Holds >= 0 || bn.Next != null || bn.Order is { Kind: OrderKind.Occupy, Done: false });
+        foreach (var bn in bns)
         {
-            if (bn.Next != null || bn.Order is { Done: false } || war.Time < bn.RestUntil || Strength(war, bn) < 0.5f) continue;
+            if (bns.Count >= 3 && committed >= bns.Count - 1) break; // one kept back in reserve
+            if (bn.Holds >= 0 || bn.Next != null || bn.Order is { Done: false } || war.Time < bn.RestUntil || Strength(war, bn) < 0.5f) continue;
             var (x, z) = Pos(war, bn);
             int pick = bde.Tasks.Where(id =>
                 {
@@ -210,6 +224,7 @@ public static class Command
             var obj = war.Objectives[pick];
             obj.Claims[side]++;
             Give(war, bn, new Order { Kind = OrderKind.Occupy, Target = pick, X = obj.X, Z = obj.Z });
+            committed++;
         }
         if (bns.Count == 0) return;
         var (cx, cz) = Centre(war, bns);
@@ -304,6 +319,7 @@ public static class Command
             bn.RestUntil = war.Time + 3 * 3600; // consolidate on it: dig in, resupply, evacuate the wounded
             obj.Claims[bn.Side] = Math.Max(0, obj.Claims[bn.Side] - 1);
             if (obj.Owner != bn.Side) war.Taken(obj, bn);
+            if (FrontLine(war, bn.Side, obj)) bn.Holds = obj.Id;
             return;
         }
         // Every company stopped, too few of them there: beaten off or held up by the enemy (try again in six hours), or
@@ -323,8 +339,11 @@ public static class Command
         }
     }
 
+    /// <summary>A fighting battalion free for an operation, now or once it has rested: not holding ground, and at half strength or more.</summary>
+    static bool Free(War war, Unit bn) => bn.Echelon == Echelon.Battalion && Manoeuvre(bn) && bn.Holds < 0 && Strength(war, bn) >= 0.5f;
+
     /// <summary>What's left of a unit: its movers' fit soldiers against what they were raised with.</summary>
-    static float Strength(War war, Unit u)
+    public static float Strength(War war, Unit u)
     {
         int now = 0, raised = 0;
         foreach (var m in u.IsMover ? new[] { u } : TopMovers(war, u))
@@ -387,6 +406,9 @@ public static class Command
     }
 
     static float Sq(float dx, float dz) => dx * dx + dz * dz;
+
+    /// <summary>In the front line: enemy or contested ground within 5 km of it.</summary>
+    static bool FrontLine(War war, int side, Objective o) => EnemyNear(war, side, o.X, o.Z, 5000f);
 
     static bool EnemyNear(War war, int side, float x, float z, float r)
     {

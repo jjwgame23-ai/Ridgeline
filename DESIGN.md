@@ -328,13 +328,14 @@ The code is in `src/Conquest/War/`.
   - wheeled, 50/35/20 km/h by road class;
   - tracked, 35 on roads and 8–20 off them.
 - Rivers are crossed only at bridges and fords, except on foot.
-- Units march by day, at most 8 hours on foot and 10 at the wheel. A unit rides if its vehicles seat three in four of its people.
+- Units march by day, at most 8 hours on foot and 10 at the wheel. Pulling back from a fight isn't a march: it goes on by night at two thirds of the pace. A unit rides if its vehicles seat three in four of its people.
 - Routes keep off enemy-held and contested ground.
 
 **Command** (`Command`): the army plans every 3 h, divisions every hour, brigades every half hour. Orders take an hour to reach battalions and half an hour to reach companies.
-- The army shares out objectives (towns, ports, nodes, main-road bridges, big hills) nearest first.
+- The army shares out objectives (towns, ports, nodes, main-road bridges, big hills), nearest and most valuable first. Each goes to the nearest division with battalions free for it, two tasks a free battalion, so idle divisions are committed rather than left waiting behind a busy one.
 - Once the open ground is mostly taken, or from day 3, it goes over to the offensive. It picks the enemy whose nearby ground is worth most against the least known strength, and keeps to that choice unless the other enemy becomes twice as good a target.
-- Brigades send one battalion to an empty objective and two to a held one. A battalion rings the objective with its line companies.
+- Brigades send one battalion to an empty objective and two to a held one, and keep one back in reserve ("two up, one back"). A battalion rings the objective with its line companies.
+- A battalion that takes ground in the front line (enemy ground within 5 km) stays on it as its garrison while it's in the front line.
 - After an operation a battalion consolidates: 3 h after taking an objective, 6 h after being beaten off or held up. One below half strength isn't sent on another.
 
 **Territory and intel** (`Territory`, `WarIntel`): 1 km squares, held by whoever alone has troops within 1.5 km. Commanders plan on the enemy their side has seen, for six hours after.
@@ -361,7 +362,8 @@ The code is in `src/Conquest/War/`.
   - pull back by bounds, half the squads covering, when outnumbered 2:1 or after losing 30%;
   - otherwise hold.
 - A fight ends when it's quiet, when one side is gone, or after half an hour with nobody coming on.
-- A company held up by enemies still standing in its way halts and its battalion decides what next. One that was beaten off falls back 2 km.
+- A company held up by enemies still standing in its way halts and its battalion decides what next. One that was beaten off falls back 2 km, away from the enemy and toward its own rear.
+- A squad with nobody left who can fight is nothing to see or attack.
 - The holding side's down are evacuated. A side pulling back carries out most of its own.
 
 **Reading a run.** The report lists:
@@ -378,16 +380,17 @@ The code is in `src/Conquest/War/`.
 
 | | Seed 2 | Seed 1 |
 |---|---|---|
-| ALPHA | 3.8% | 0.7% |
-| BRAVO | 2.9% | 1.4% |
-| CHARLIE | 2.7% | 2.3% |
+| ALPHA | 2.3% | 1.5% |
+| BRAVO | 0.9% | 1.6% |
+| CHARLIE | 0.9% | 3.2% |
 
 Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
-- Fighting peaks on day 2, at about 600 dead for the hardest-hit army on seed 2. By day 7 it runs at 250–320 a day there, and at 0–160 on seed 1, where fronts settled.
+- Fighting peaks on days 2–4, at about 500 dead a day for the hardest-hit army. By day 7 it runs at 20–230 a day.
 - About a third of fights are brushes where nobody is hurt.
 - Hits come mostly at 50–400 m, mostly from rifles, then vehicle machine guns, autocannon and grenades.
-- Each side lost 80–1,100 vehicles in the week, most of them light vehicles and APCs.
-- On seed 2, CHARLIE took the island's west and south while BRAVO and ALPHA fought along a north–south front, and late in the week both turned on ALPHA. On seed 1, BRAVO grew from 34% of the land to 45% and wore CHARLIE down.
+- Each side lost 270–1,100 vehicles in the week, most of them light vehicles and APCs.
+- About half of each army's fighting battalions are holding ground or on an operation at the end of the week. Most of the rest are brigade reserves.
+- On seed 2, ALPHA and BRAVO went over to the offensive against each other on day 2 and fought it out along a north–south front, while CHARLIE held the west and south. On seed 1, CHARLIE was crushed between the other two: it fell from 18% of the land to 12%, at 68% strength with 11 battalions below half. BRAVO grew from 33% to 44% and ALPHA from 14% to 26%.
 
 How the fights were brought down to this, all in the code's comments. In the first runs, armies lost 10% a day. The causes were:
 - squads standing in a 40 m square;
@@ -399,10 +402,15 @@ How the fights were brought down to this, all in the code's comments. In the fir
 - fights opening with companies mixed together after driving into each other between two looks;
 - soldiers of companies that had left a fight going on shooting in it, out of reach;
 - companies marching straight back into the enemy that had stopped them;
-- battalions sent on the next objective the moment they finished one.
+- battalions sent on the next objective the moment they finished one;
+- battalions leaving everything they took empty for the enemy to walk back into;
+- every target going to the nearest division, so one had forty tasks while another sat idle;
+- units beaten off at night sitting where they were until morning, fighting every five minutes.
+
+The busiest unit now fights 70–85 times a week. Before the last three fixes, pairs of units caught each other 200–350 times.
 
 Not done yet:
-- **Too much fighting on some islands.** Seed 2 runs about twice Dupuy's division rates. Units still wander through each other's ground: there are no unit boundaries, reserves or held lines in command yet.
+- **Points, not lines.** Ground is held where troops are, and a battalion garrisons an objective, not a stretch of front. An offensive finds the towns the enemy left empty behind his garrisons and walks into them, so 70–130 places change hands a day, many without a fight. Continuous fronts, with sectors held between objectives and unit boundaries, are next.
 - **Artillery,** which caused most casualties in modern wars and will add its own.
 - **Supply:** ammunition, fuel and food running down and brought up.
 - **The medical chain returning the wounded, and reinforcement by sea.**

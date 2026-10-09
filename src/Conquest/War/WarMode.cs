@@ -137,6 +137,21 @@ public static class WarMode
                     sb.AppendLine($"             vehicles lost: " + string.Join(", ", wrecks.Select(g => $"{g.Key.ToString().ToLowerInvariant()} {g.Count()}"))
                         + "; to " + string.Join(", ", Enum.GetValues<Cause>().Where(c => war.Wrecked[i, (int)c] > 0).Select(c => $"{c.ToString().ToLowerInvariant()} {war.Wrecked[i, (int)c]}")));
             }
+            int takes = war.Events.Count(e => e.Text.Contains(" takes "));
+            sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day");
+            foreach (var sd in war.Sides)
+            {
+                var bns = war.Below(war.Units[sd.Army]).Where(u => u.Echelon == Echelon.Battalion && Command.Manoeuvre(u)).ToList();
+                int holding = bns.Count(u => u.Holds >= 0), going = bns.Count(u => u.Holds < 0 && (u.Next != null || u.Order is { Kind: OrderKind.Occupy, Done: false }));
+                int weak = bns.Count(u => u.Holds < 0 && Command.Strength(war, u) < 0.5f), resting = bns.Count(u => u.Holds < 0 && war.Time < u.RestUntil);
+                sb.AppendLine($"      {sd.Name} battalions at the end: {bns.Count}: {holding} holding, {going} on an operation, {resting} resting, {weak} below half strength, "
+                              + $"{bns.Count - holding - going} otherwise idle; mean strength {bns.Average(u => Command.Strength(war, u)):P0}");
+                var objs = war.Objectives;
+                sb.AppendLine($"        objectives: {objs.Count(o => o.Owner < 0)} unheld, {objs.Count(o => o.Owner >= 0 && o.Owner != sd.Index)} the enemy's; "
+                              + $"{objs.Count(o => o.Unreachable[sd.Index])} marked out of reach, {objs.Count(o => war.Time < o.Retry[sd.Index])} waiting to retry, "
+                              + $"{objs.Count(o => o.Claims[sd.Index] > 0)} claimed; tasks: {string.Join(" ", war.Below(war.Units[sd.Army]).Where(u => u.Echelon == Echelon.Division).Select(d => d.Tasks.Count))}; "
+                              + $"offensive against {(sd.Offensive >= 0 ? war.Sides[sd.Offensive].Name : "nobody")}");
+            }
             sb.AppendLine("    (real, after Dupuy: divisions in battle lost 1-3% a day, whole armies well under 1%, and tanks went at four to");
             sb.AppendLine("    seven times the rate of the soldiers)");
             // Where the casualties come from: the range of the hits, how big the fights were, how often a company fought.

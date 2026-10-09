@@ -33,6 +33,8 @@ public sealed class FightSquad
     public int Bounds;
     /// <summary>Dug in where it stands: halted two hours or more when the fight found it.</summary>
     public bool Dug;
+    /// <summary>Anyone left in it who can fight, or a vehicle still running, as of the last look.</summary>
+    public bool Alive;
     /// <summary>The enemy squads this one can see, as of the last look.</summary>
     public readonly List<int> Visible = new();
     public readonly List<int> Fighters = new();
@@ -514,7 +516,13 @@ public static class Combat
     {
         int n = f.S.Count;
         if (f.Sight.GetLength(0) != n) f.Sight = new float[n, n];
-        foreach (var sq in f.S) sq.Visible.Clear();
+        // A squad with nobody left who can fight is nothing to see or shoot at. (Companies used to go on attacking
+        // squads of the dead and wounded, counted as no enemy at all, and one fight ran 27 hours.)
+        foreach (var sq in f.S)
+        {
+            sq.Visible.Clear();
+            sq.Alive = Fit(war, f, sq) > 0 || sq.Vehicles.Any(v => !f.V[v].Dead);
+        }
         f.Close = false;
         for (int a = 0; a < n; a++)
         for (int b = a + 1; b < n; b++)
@@ -522,7 +530,7 @@ public static class Combat
             var sa = f.S[a];
             var sb = f.S[b];
             float v = 0f;
-            if (sa.Side != sb.Side)
+            if (sa.Side != sb.Side && sa.Alive && sb.Alive)
             {
                 float d2 = (sa.X - sb.X) * (sa.X - sb.X) + (sa.Z - sb.Z) * (sa.Z - sb.Z);
                 if (d2 < 1500f * 1500f) v = Sight(war, sa.X, sa.Z, sb.X, sb.Z, 1.5f, 1.5f);
@@ -1009,7 +1017,7 @@ public static class Combat
             float bd = float.MaxValue, tx = ex, tz = ez;
             foreach (var o in f.S)
             {
-                if (o.Side == s.Side || o.Fighters.Count == 0) continue;
+                if (o.Side == s.Side || !o.Alive) continue;
                 float d = (o.X - s.X) * (o.X - s.X) + (o.Z - s.Z) * (o.Z - s.Z);
                 if (d < bd)
                 {
@@ -1081,7 +1089,7 @@ public static class Combat
         Settle(war, f, m, mine, !fell);
         m.InFight = -1;
         m.Broke = war.Time;
-        if (fell) FallBack(war, m);
+        if (fell) FallBack(war, f, m);
         else Resume(war, m, Standing(war, f));
         // Its soldiers and vehicles are out of this fight. (They used to stay on its roll and go on shooting from where
         // they'd been, out of reach of any reply, and twice over if the company came back.)
@@ -1125,13 +1133,34 @@ public static class Combat
         war.Recount(m);
     }
 
-    /// <summary>A company that was beaten off heads 2 km further back, toward its port. That holds up its battalion too.</summary>
-    static void FallBack(War war, Unit m)
+    /// <summary>
+    /// A company that was beaten off goes 2 km back, away from the enemy that beat it and toward its own rear (half
+    /// one, half the other). That holds up its battalion too. (It used to head straight for its port, and when an enemy
+    /// was going the same way it was caught again and again: a headquarters was run down 238 times in a week.)
+    /// </summary>
+    static void FallBack(War war, Fight f, Unit m)
     {
         var port = war.Isl.Towns[war.Sides[m.Side].Port];
-        float dx = port.X - m.X, dz = port.Z - m.Z, d = MathF.Max(1f, MathF.Sqrt(dx * dx + dz * dz));
+        float px = port.X - m.X, pz = port.Z - m.Z, pl = MathF.Max(1f, MathF.Sqrt(px * px + pz * pz));
+        float ex = 0f, ez = 0f;
+        int n = 0;
+        foreach (var s in f.S)
+            if (s.Side != m.Side && s.Alive)
+            {
+                ex += s.X;
+                ez += s.Z;
+                n++;
+            }
+        float dx = px / pl, dz = pz / pl;
+        if (n > 0)
+        {
+            float ax = m.X - ex / n, az = m.Z - ez / n, al = MathF.Max(1f, MathF.Sqrt(ax * ax + az * az));
+            dx += ax / al;
+            dz += az / al;
+        }
+        float d = MathF.Max(1e-3f, MathF.Sqrt(dx * dx + dz * dz));
         m.HeldUp = war.Time;
-        m.Order = new Order { Kind = OrderKind.Move, X = m.X + dx / d * 2000f, Z = m.Z + dz / d * 2000f, At = war.Time };
+        m.Order = new Order { Kind = OrderKind.Move, X = m.X + dx / d * 2000f, Z = m.Z + dz / d * 2000f, At = war.Time, Tactical = true };
         if (!war.StartMove(m, m.Order.X, m.Order.Z)) m.Order.Done = true;
     }
 
@@ -1200,7 +1229,7 @@ public static class Combat
             m.Broke = war.Time;
             // A company that was pulling back when the fight ended keeps going back. (It used to march on with its old
             // move, often straight back at the enemy.)
-            if (mine.Any(s => s.Mode == SquadMode.Withdraw)) FallBack(war, m);
+            if (mine.Any(s => s.Mode == SquadMode.Withdraw)) FallBack(war, f, m);
             else Resume(war, m, standing);
         }
         // A brush where nobody was hurt isn't news: it stays out of the events (a third of fights are like that).

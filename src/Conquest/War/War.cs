@@ -210,15 +210,20 @@ public sealed class War
             u.WasX = u.X;
             u.WasZ = u.Z;
         }
-        if (!MarchingHours) return;
+        bool light = MarchingHours;
         foreach (var u in Units)
         {
             if (u.Path == null || u.InFight >= 0) continue;
-            double budget = (u.Mob == Mobility.Foot ? 8 : 10) * 3600.0 - u.MovedToday;
+            // Getting out of contact isn't a march: it goes on by night, at two thirds of the day's pace (doctrine's
+            // night rates), and past the day's limit. (Units used to sit where they'd been beaten off until morning,
+            // and two of them 80 m apart fought every five minutes all night.)
+            bool tactical = u.Order is { Tactical: true };
+            if (!light && !tactical) continue;
+            double budget = tactical ? dt : (u.Mob == Mobility.Foot ? 8 : 10) * 3600.0 - u.MovedToday;
             if (budget <= 0) continue;
             float seconds = (float)Math.Min(dt, budget);
             u.MovedToday += seconds;
-            Advance(u, seconds);
+            Advance(u, light ? seconds : seconds * 2f / 3f);
         }
     }
 
