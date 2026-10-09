@@ -141,6 +141,13 @@ public sealed class Island
     public float X(int i) => (i % N + 0.5f) * Cell - Extent / 2f;
     /// <summary>Metres south of the island's centre.</summary>
     public float Z(int i) => (i / N + 0.5f) * Cell - Extent / 2f;
+    /// <summary>The cell at a point (metres east and south of the centre), or -1 off the map.</summary>
+    public int CellAtWorld(float x, float z)
+    {
+        int cx = (int)MathF.Floor((x + Extent / 2f) / Cell), cz = (int)MathF.Floor((z + Extent / 2f) / Cell);
+        return (uint)cx < (uint)N && (uint)cz < (uint)N ? cz * N + cx : -1;
+    }
+
     public float Dist(int a, int b)
     {
         float dx = (a % N - b % N) * Cell, dz = (a / N - b / N) * Cell;

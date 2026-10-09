@@ -38,7 +38,14 @@ public static class IslandRender
         ? Hex(0xd4ecf7).Lerp(Hex(0x9cc7e4), depth / 200f)
         : Hex(0x9cc7e4).Lerp(Hex(0x6a9fcd), MathF.Min(1f, (depth - 200f) / 1200f));
 
-    public static void Map(Island isl, string path)
+    public static void Map(Island isl, string path) => Draw(isl).Save(path);
+
+    /// <summary>Map pixels for a point in metres east and south of the island's centre.</summary>
+    public static (float X, float Y) Px(Island isl, float x, float z) =>
+        ((x + isl.Extent / 2f) / isl.Extent * MapPx, (z + isl.Extent / 2f) / isl.Extent * MapPx);
+
+    /// <summary>The map, ready to draw more on.</summary>
+    public static Canvas Draw(Island isl)
     {
         int n = isl.N, W = MapPx;
         float s = (float)W / n, cell = isl.Cell;
@@ -180,7 +187,7 @@ public static class IslandRender
             cv.Diamond(p.X, p.Y, 7.5f, Hex(0x111111));
             cv.Diamond(p.X, p.Y, 5.5f, node.Kind == NodeKind.Fuel ? Hex(0x8e44ad) : Hex(0xc0560f));
         }
-        cv.Save(path);
+        return cv;
     }
 
     static int CellAt(int n, float cx, float cy) =>
@@ -296,7 +303,7 @@ public static class IslandRender
     static string Esc(string s) => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
     /// <summary>An RGB raster with anti-aliased drawing, saved as PNG.</summary>
-    sealed class Canvas
+    public sealed class Canvas
     {
         public readonly int W, H;
         readonly Color[] _px;
@@ -310,7 +317,7 @@ public static class IslandRender
 
         public void Set(int x, int y, Color c) => _px[y * W + x] = c;
 
-        void Blend(int x, int y, Color c, float a)
+        public void Blend(int x, int y, Color c, float a)
         {
             if ((uint)x >= (uint)W || (uint)y >= (uint)H || a <= 0f) return;
             int i = y * W + x;

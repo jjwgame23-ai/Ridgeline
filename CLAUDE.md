@@ -36,6 +36,8 @@ The main test is a match nobody plays, run headless and logged.
 
 The report checks the island against laws measured on real landscapes, and each line says "ok" or "OUTSIDE". About 20 s an island.
 
+**Conquest war.** `<godot> --path . --headless -- mode=war seed=2 days=7 [trace=N]` makes island N, raises the three armies and runs the war. It writes `war-N-report.txt` (casualties against real rates, the biggest fights, the units that fought most) and `war-N.html` (the replay) to `worldgen/`. `trace=N` adds fight N's state every 30 s to the report. About 1–2 min for 7 days.
+
 **Reading a run.** `tools/telemetry.py` (class `Match`) reads the `.jsonl` file:
 - a sample of everyone every 0.5 s;
 - events: shot, hit, kill, down, boom, st (state change), drill, order, cross, reinf, radio, score.

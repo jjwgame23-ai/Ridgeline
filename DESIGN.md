@@ -230,7 +230,7 @@ A whole war on a generated island of about 100 × 100 km. Each side fields an ar
 
 **Build order**
 1. **The island generator** (built: see below). It produces map images and is checked against real measures.
-2. **The abstract war, headless.** Campaign telemetry and a replay of the war.
+2. **The abstract war, headless** (in progress: see below). Campaign telemetry and a replay of the war.
 3. **Calibration.** Abstract fights fitted to embodied matches.
 4. **The playable window.** Promotion and demotion, and the distant layer.
 5. **The soldier's life.** The player in the war: time skip, briefings, dying and carrying on, the journal.
@@ -306,6 +306,107 @@ Not done yet:
 - **One climate.**
 - **Towns are points with a radius.** Their streets and buildings come with the playable window (phase 4).
 - **Nothing saves the island yet.** It's made fresh from the seed each time, so it's the same island every time.
+
+### The abstract war (phase 2, in progress)
+
+`-- mode=war [seed=1] [days=7] [trace=N]` raises the three armies on island N and runs the war headless, about 5,000–13,000 times faster than real time. It writes to `worldgen/`:
+- `war-N-report.txt`: the orders of battle, then day by day the ground and objectives held, the dead and evacuated, and the fights (see below);
+- `war-N.html`: the replay. Every company moves hour by hour over the island map, with territory shading, fights as red rings and the events list. Hover over a unit for its name.
+- `war-N-start.png` and `war-N-progress.txt`.
+
+The code is in `src/Conquest/War/`.
+
+**The armies** (`Orbat`, `People`): about 47,000 each, built from templates of the real organisations.
+- Every soldier has a name, rank, job and skill computed from the seed and their number, plus a record of what's happened to them: state, blood, ammunition (a rifleman's 210 rounds, a machine gunner's 600...).
+- Vehicles are records too, with main-gun and machine-gun rounds. Armour starts at three-quarters of establishment.
+- Tank counts differ the way the real armies do: BRAVO about 600, ALPHA 190, CHARLIE 90.
+
+**Deployment and movement** (`Deployment`, `MoveGrid`):
+- Army troops start by the port, divisions in sectors inland, fighting battalions at the edge of the starting area.
+- A 400 m grid of speeds by mobility:
+  - on foot, 4 km/h on roads and Tobler's slope function across country;
+  - wheeled, 50/35/20 km/h by road class;
+  - tracked, 35 on roads and 8–20 off them.
+- Rivers are crossed only at bridges and fords, except on foot.
+- Units march by day, at most 8 hours on foot and 10 at the wheel. A unit rides if its vehicles seat three in four of its people.
+- Routes keep off enemy-held and contested ground.
+
+**Command** (`Command`): the army plans every 3 h, divisions every hour, brigades every half hour. Orders take an hour to reach battalions and half an hour to reach companies.
+- The army shares out objectives (towns, ports, nodes, main-road bridges, big hills) nearest first.
+- Once the open ground is mostly taken, or from day 3, it goes over to the offensive. It picks the enemy whose nearby ground is worth most against the least known strength, and keeps to that choice unless the other enemy becomes twice as good a target.
+- Brigades send one battalion to an empty objective and two to a held one. A battalion rings the objective with its line companies.
+- After an operation a battalion consolidates: 3 h after taking an objective, 6 h after being beaten off or held up. One below half strength isn't sent on another.
+
+**Territory and intel** (`Territory`, `WarIntel`): 1 km squares, held by whoever alone has troops within 1.5 km. Commanders plan on the enemy their side has seen, for six hours after.
+
+**Contact** (`Combat.Detect`): enemy units within 3 km, by sight line, range, light and how much they show.
+- A fight starts only within 1.5 km (2.5 with gun vehicles), and only if:
+  - one side is coming on;
+  - or it's a first sighting inside 600 m;
+  - or they're within 200 m.
+- Two units that know of each other and hold still don't fight: that's a front.
+- Contact is looked for once a minute. Units found within 400 m are put back where they were when they came within 400 m during that minute.
+- A headquarters or support unit that sees an enemy ahead halts and waits for orders.
+
+**Fights** (`Combat`): soldier by soldier, in 4-second steps.
+- A company deploys in line facing the enemy: squads 50 m apart, headquarters 150 m back, soldiers about 10 m apart.
+- Cover and concealment come from the ground (buildings, rock, woods, scrub), with trenches after 2 hours dug in.
+- Seeing a man gets harder with range and in the dark: half as likely at 300 m by eye, at 800 m through a vehicle's thermal sight, and at a third of the range at night through goggles. It also needs a clear line of sight, and the chance of one halves every kilometre.
+- Fire discipline: aimed fire at someone seen. Fire at a place only to cover an attack, or to answer fire.
+- A near miss pins a man (0.3 a rifle round). Pinned, he lies flat, shows less, fires slower and worse. A squad pinned flat doesn't move until the fire lifts.
+- Tanks and IFVs fire their machine guns at troops. They keep shells for men behind hard cover, anti-tank teams and, for autocannon, troops out of machine-gun range. Shells and grenades land off the aim by the weapon's error.
+- Wounds: a fifth killed outright, a third down (a third of those bleed to death within the hour unless a medic or squadmate stops it), the rest lightly wounded and fighting on.
+- Companies decide every 30 s:
+  - attack if advancing, at 3:1 against a dug-in enemy and 2.5:1 against a hasty one (FM 3-90's planning ratios), bounding and assaulting from 60 m;
+  - pull back by bounds, half the squads covering, when outnumbered 2:1 or after losing 30%;
+  - otherwise hold.
+- A fight ends when it's quiet, when one side is gone, or after half an hour with nobody coming on.
+- A company held up by enemies still standing in its way halts and its battalion decides what next. One that was beaten off falls back 2 km.
+- The holding side's down are evacuated. A side pulling back carries out most of its own.
+
+**Reading a run.** The report lists:
+- casualties against Dupuy's rates;
+- hits by range;
+- fights grouped by casualties;
+- the biggest fights, with their causes;
+- the units that fought most;
+- the share of those who fought who were hit.
+
+`trace=N` adds fight N's state every 30 s to the report: fit, hit, suppressed, flat, in cover, what each side can see and how far.
+
+**Measured** (7 days, seeds 2 and 1). Each army's casualties of all kinds, as a share of the army a day:
+
+| | Seed 2 | Seed 1 |
+|---|---|---|
+| ALPHA | 3.8% | 0.7% |
+| BRAVO | 2.9% | 1.4% |
+| CHARLIE | 2.7% | 2.3% |
+
+Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
+- Fighting peaks on day 2, at about 600 dead for the hardest-hit army on seed 2. By day 7 it runs at 250–320 a day there, and at 0–160 on seed 1, where fronts settled.
+- About a third of fights are brushes where nobody is hurt.
+- Hits come mostly at 50–400 m, mostly from rifles, then vehicle machine guns, autocannon and grenades.
+- Each side lost 80–1,100 vehicles in the week, most of them light vehicles and APCs.
+- On seed 2, CHARLIE took the island's west and south while BRAVO and ALPHA fought along a north–south front, and late in the week both turned on ALPHA. On seed 1, BRAVO grew from 34% of the land to 45% and wore CHARLIE down.
+
+How the fights were brought down to this, all in the code's comments. In the first runs, armies lost 10% a day. The causes were:
+- squads standing in a 40 m square;
+- spotting that didn't fall off with range;
+- shells landing exactly on the man aimed at;
+- tanks firing HE at anyone they saw;
+- suppression that wore off in 6 s and was barely raised by a near miss;
+- companies withdrawing all at once, upright;
+- fights opening with companies mixed together after driving into each other between two looks;
+- soldiers of companies that had left a fight going on shooting in it, out of reach;
+- companies marching straight back into the enemy that had stopped them;
+- battalions sent on the next objective the moment they finished one.
+
+Not done yet:
+- **Too much fighting on some islands.** Seed 2 runs about twice Dupuy's division rates. Units still wander through each other's ground: there are no unit boundaries, reserves or held lines in command yet.
+- **Artillery,** which caused most casualties in modern wars and will add its own.
+- **Supply:** ammunition, fuel and food running down and brought up.
+- **The medical chain returning the wounded, and reinforcement by sea.**
+- **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
 
 ## Milestones
 
