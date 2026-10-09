@@ -84,6 +84,15 @@ public sealed class Unit
     public double RestUntil;
     /// <summary>The objective a battalion garrisons, or -1: one it took in the front line, which it stays on.</summary>
     public int Holds = -1;
+    /// <summary>
+    /// Supply, for a mover: fuel in its tanks and their size (L), what it burns per km and per hour running, its food
+    /// (kg), and since when it has had none (-1: fed). For a division or brigade, the depot of its support area; for a
+    /// mover, the depot that supplies it. Hauls: a logistics company driving depot runs, kept off other moves.
+    /// </summary>
+    public float Fuel, FuelCap, PerKm, Idle, Food;
+    public double HungrySince = -1;
+    public int Depot = -1;
+    public bool Hauls;
     /// <summary>The fight it's in, or -1.</summary>
     public int InFight = -1;
     /// <summary>When it last pulled out of a fight: it won't be drawn into another straight away.</summary>
@@ -121,6 +130,8 @@ public sealed class Order
     public bool Done;
     /// <summary>A move to get out of contact, not a march: made by night too, and past the day's march limit.</summary>
     public bool Tactical;
+    /// <summary>A move made by night as well as by day, within the day's limit (supply convoys).</summary>
+    public bool Night;
 }
 
 public enum ObjKind : byte { Town, Port, Node, Bridge, Hill }

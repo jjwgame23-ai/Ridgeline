@@ -458,7 +458,7 @@ public static class Orbat
     /// rounds, a grenadier's 24 40 mm, an anti-tank gunner's two rockets; crews and support troops a carbine and four
     /// magazines. Most also have two hand grenades.
     /// </summary>
-    static (short Ammo, byte Grenades, byte Rockets) Load(Job j) => j switch
+    public static (short Ammo, byte Grenades, byte Rockets) Load(Job j) => j switch
     {
         Job.MachineGunner => (600, 2, 0),
         Job.Grenadier => (210, 24, 0),
@@ -469,7 +469,7 @@ public static class Orbat
     };
 
     /// <summary>Main-gun rounds carried: an IFV's autocannon (Bradley 900, BMP-2 500, Warrior 230), a tank's main gun, the guns of air defence and artillery.</summary>
-    static short VehicleLoad(VClass v) => v switch
+    public static short VehicleLoad(VClass v) => v switch
     {
         VClass.Ifv => 400, VClass.Tank => 40, VClass.LightTank => 30, VClass.Spaa => 600,
         VClass.Howitzer => 40, VClass.Rocket => 12, VClass.Mortar => 60, _ => 0,
@@ -479,7 +479,7 @@ public static class Orbat
     /// Machine-gun rounds carried: a tank's coax (M1A2 10,800, T-90 2,000, Challenger 2 4,000), an IFV's (Bradley
     /// 2,200, BMP-2 2,000), an APC's roof gun (Stryker 2,000), a light vehicle's.
     /// </summary>
-    static short MgLoad(VClass v) => v switch
+    public static short MgLoad(VClass v) => v switch
     {
         VClass.Tank => 4000, VClass.LightTank => 2000, VClass.Ifv => 2000, VClass.Apc => 2000, VClass.Ltv => 600, _ => 0,
     };

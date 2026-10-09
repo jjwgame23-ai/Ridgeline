@@ -167,7 +167,8 @@ public static class Combat
                     // A headquarters or support unit that sees an enemy ahead halts where it is and waits for orders: it
                     // doesn't march on into a fight. (Battalion headquarters used to fight 50 times a day, running into
                     // the enemy and pulling back over and over.)
-                    if (seen && u.InFight < 0 && !Command.Manoeuvre(u) && Closing(u, v, d)) Halt(war, u);
+                    // A supply convoy, knowing where the front runs, halts only for an enemy close ahead (1.5 km).
+                    if (seen && u.InFight < 0 && !Command.Manoeuvre(u) && Closing(u, v, d) && (!u.Hauls || d < 1500f)) Halt(war, u);
                     // Seen further off than rifles and guns reach, it's a sighting, not a fight. A fight takes one side
                     // coming on, or a first sighting inside 600 m, or the two within 200 m. Otherwise a unit pulling
                     // back or passing by, or one facing another it already knows of, watches and reports. (Any unit on
@@ -265,7 +266,26 @@ public static class Combat
 
     static bool IsCrew(Job j) => j is Job.Crewman or Job.Gunner or Job.Driver or Job.Pilot;
 
-    static bool Armed(VClass v) => v is VClass.Ifv or VClass.Tank or VClass.LightTank or VClass.Apc or VClass.Ltv;
+    public static bool Armed(VClass v) => v is VClass.Ifv or VClass.Tank or VClass.LightTank or VClass.Apc or VClass.Ltv;
+
+    /// <summary>Armour: what anti-armour weapons go for first.</summary>
+    static bool Armoured(VClass v) => v is VClass.Tank or VClass.LightTank or VClass.Ifv or VClass.Apc or VClass.Howitzer or VClass.Spaa or VClass.Engineer or VClass.Mortar;
+
+    /// <summary>The vehicle in a squad to fire at: armour first, then the rest. Ambulances, marked, aren't fired on.</summary>
+    static int VehicleTarget(War war, Fight f, FightSquad t)
+    {
+        int soft = -1;
+        foreach (int k in t.Vehicles)
+        {
+            if (f.V[k].Dead) continue;
+            var vc = war.Vehicles[f.V[k].Vehicle].Class;
+            if (Armoured(vc)) return k;
+            if (soft < 0 && vc != VClass.Ambulance) soft = k;
+        }
+        return soft;
+    }
+
+    static int ArmedLeft(War war, Fight f, FightSquad s) => s.Vehicles.Count(v => !f.V[v].Dead && Armed(war.Vehicles[f.V[v].Vehicle].Class));
 
     /// <summary>
     /// A company comes into a fight with an enemy at (<paramref name="ex"/>, <paramref name="ez"/>). Its squads deploy in
@@ -316,8 +336,13 @@ public static class Combat
                 f.F.Add(fi);
                 fit++;
             }
+            // Vehicles are there to be shot at, and armed ones shoot. A fighting company's trucks stay back with its
+            // trains, a km or more behind; a convoy's or a headquarters' are the unit itself. (Trucks used to be left
+            // out of every fight, so a supply convoy could be ambushed without losing one; put into all of them, the
+            // companies' own trucks died by the hundred 150 m behind the firing line.)
+            bool trains = Command.Manoeuvre(m);
             foreach (int vi in c.Vehicles)
-                if (!war.Vehicles[vi].Lost && Armed(war.Vehicles[vi].Class))
+                if (!war.Vehicles[vi].Lost && war.Vehicles[vi].Class is not (VClass.Helicopter or VClass.Gunship) && (Armed(war.Vehicles[vi].Class) || !trains))
                 {
                     sq.Vehicles.Add(f.V.Count);
                     f.V.Add(new FightVehicle { Vehicle = vi, Squad = si, Side = (byte)m.Side, Ready = (float)rng.NextDouble() * 8f });
@@ -486,7 +511,7 @@ public static class Combat
         }
         foreach (var fv in f.V)
         {
-            if (fv.Dead || fv.Gone) continue;
+            if (fv.Dead || fv.Gone || !Armed(war.Vehicles[fv.Vehicle].Class)) continue;
             fv.Ready -= Tick;
             if (fv.Ready > 0f) continue;
             Gun(war, f, fv, rng);
@@ -556,7 +581,7 @@ public static class Combat
             foreach (int k in sq.Fighters)
                 if (war.Soldiers[f.F[k].Soldier].State is SoldierState.Fit or SoldierState.Wounded && sq.Mode != SquadMode.Withdraw) f.In[sq.Side] = true;
         foreach (var fv in f.V)
-            if (!fv.Dead && f.S[fv.Squad].Mode != SquadMode.Withdraw) f.In[fv.Side] = true;
+            if (!fv.Dead && !fv.Gone && Armed(war.Vehicles[fv.Vehicle].Class) && f.S[fv.Squad].Mode != SquadMode.Withdraw) f.In[fv.Side] = true;
     }
 
     /// <summary>
@@ -600,15 +625,16 @@ public static class Combat
             fi.Ready = Tick;
             return;
         }
-        float steady = (0.5f + fi.Skill) * (1f - 0.75f * fi.Supp) * (so.State == SoldierState.Wounded ? 0.7f : 1f) * Aim(war);
+        float steady = (0.5f + fi.Skill) * (1f - 0.75f * fi.Supp) * (so.State == SoldierState.Wounded ? 0.7f : 1f) * Aim(war) * Supply.Fed(war, war.Units[sq.Mover]);
         // An anti-tank gunner goes for a vehicle in sight.
-        if (so.Job == Job.AntiTank && so.Rockets > 0 && d < 500f && t.Vehicles.Any(v => !f.V[v].Dead))
+        int vt = so.Job == Job.AntiTank && so.Rockets > 0 && d < 500f ? VehicleTarget(war, f, t) : -1;
+        if (vt >= 0)
         {
             so.Rockets--;
             f.Shots[fi.Side]++;
             fi.Fired = 8f;
             f.LastShot = war.Time;
-            var fv = f.V[t.Vehicles.First(v => !f.V[v].Dead)];
+            var fv = f.V[vt];
             // A rocket hit kills a light vehicle almost always, an APC or IFV more often than not, a tank one time in four.
             var vc = war.Vehicles[fv.Vehicle].Class;
             double kill = vc switch { VClass.Tank => 0.25, VClass.Ifv => 0.6, VClass.Apc => 0.7, _ => 0.9 };
@@ -694,8 +720,8 @@ public static class Combat
         // whole), through thermal sights half as often at 3 km as close in. Light trucks and jeeps only when there's no
         // armour to engage. (Vehicles used to be made out at the same rate at any range, which set tanks duelling
         // across 2.5 km of open country all day.)
-        var armour = t.Vehicles.Where(x => !f.V[x].Dead).ToList();
-        var heavy = armour.Where(x => war.Vehicles[f.V[x].Vehicle].Class != VClass.Ltv).ToList();
+        var armour = t.Vehicles.Where(x => !f.V[x].Dead && war.Vehicles[f.V[x].Vehicle].Class != VClass.Ambulance).ToList();
+        var heavy = armour.Where(x => Armoured(war.Vehicles[f.V[x].Vehicle].Class)).ToList();
         if (heavy.Count > 0) armour = heavy;
         if (armour.Count > 0 && v.Ammo > 0 && v.Class is VClass.Tank or VClass.Ifv or VClass.LightTank && d < 2500f
             && rng.NextDouble() < 0.3 * vis / (1.0 + d * d / 9e6))
@@ -799,7 +825,7 @@ public static class Combat
         foreach (int s in unit.Members)
         {
             ref var so = ref war.Soldiers[s];
-            if (!IsCrew(so.Job) || so.State is not (SoldierState.Fit or SoldierState.Wounded) || crew >= 4) continue;
+            if (!IsCrew(so.Job) || so.State is not (SoldierState.Fit or SoldierState.Wounded) || crew >= War.Crew(war.Vehicles[fv.Vehicle].Class)) continue;
             crew++;
             double r = rng.NextDouble();
             if (r < 0.35) Die(war, f, s, cause);
@@ -959,7 +985,7 @@ public static class Combat
             var m = war.Units[mid];
             if (m.InFight != f.Id) continue;
             var mine = f.S.Where(s => s.Mover == mid).ToList();
-            int own = mine.Sum(s => Fit(war, f, s) + 4 * s.Vehicles.Count(v => !f.V[v].Dead));
+            int own = mine.Sum(s => Fit(war, f, s) + 4 * ArmedLeft(war, f, s));
             if (own == 0)
             {
                 Leave(war, f, m);
@@ -969,7 +995,7 @@ public static class Combat
             var seen = new HashSet<int>();
             foreach (var s in mine)
                 foreach (int k in s.Visible) seen.Add(k);
-            int enemy = seen.Sum(k => Fit(war, f, f.S[k]) + 4 * f.S[k].Vehicles.Count(v => !f.V[v].Dead));
+            int enemy = seen.Sum(k => Fit(war, f, f.S[k]) + 4 * ArmedLeft(war, f, f.S[k]));
             if (seen.Count == 0)
             {
                 // Nobody in sight: a company pulling back has broken contact; one that was going somewhere goes on; one

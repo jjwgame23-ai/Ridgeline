@@ -57,6 +57,7 @@ public static class WarMode
         var sw = Stopwatch.StartNew();
         var war = new War(isl, seed) { Note = Note, Trace = a.TryGetValue("trace", out var tr) && int.TryParse(tr, out var tv) ? tv : -1 };
         war.Raise(new Random(seed * 31 + 7));
+        Supply.Setup(war);
         GD.Print($"war: raised {war.SoldierCount:N0} soldiers, {war.Units.Count:N0} units, {war.Vehicles.Count:N0} vehicles in {sw.Elapsed.TotalSeconds:0.0} s");
         DrawStart(war, stem + "-start.png");
         int days = a.TryGetValue("days", out var dy) && int.TryParse(dy, out var dv) ? Math.Max(0, dv) : 7;
@@ -67,7 +68,7 @@ public static class WarMode
         var marches = new List<(Mobility Mob, double Km)>();
         var run = Stopwatch.StartNew();
         // Where the time goes, for the daily note.
-        var clocks = new Dictionary<string, Stopwatch> { ["march"] = new(), ["contact"] = new(), ["fights"] = new(), ["command"] = new(), ["ground"] = new() };
+        var clocks = new Dictionary<string, Stopwatch> { ["march"] = new(), ["supply"] = new(), ["contact"] = new(), ["fights"] = new(), ["command"] = new(), ["ground"] = new() };
         void Timed(string k, Action a)
         {
             war.Doing = k;
@@ -90,6 +91,7 @@ public static class WarMode
         {
             int dayBefore = war.Day;
             Timed("march", () => war.Step(Dt));
+            Timed("supply", () => Supply.Step(war, Dt));
             int t = (int)war.Time;
             Timed("contact", () => Combat.Detect(war, t % 300 == 0));
             Timed("fights", () => Combat.Step(war, Dt));
@@ -165,6 +167,35 @@ public static class WarMode
             }
             int takes = war.Events.Count(e => e.Text.Contains(" takes "));
             sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day");
+            sb.AppendLine("    Supply, in tonnes of food/fuel/ammunition:");
+            foreach (var sd in war.Sides)
+            {
+                int i = sd.Index;
+                string T(float[,] a) => $"{a[i, 0]:0}/{a[i, 1]:0}/{a[i, 2]:0}";
+                var movers = war.Units.Where(u => u.IsMover && u.Side == i && u.People > 0).ToList();
+                int dry = movers.Count(u => u.Mob != Mobility.Foot && u.FuelCap > 0f && u.Fuel <= 0f), hungry = movers.Count(u => u.HungrySince >= 0);
+                int low = movers.Count(u => Supply.AmmoShare(war, u) < 0.5f);
+                sb.AppendLine($"      {sd.Name}: landed {T(war.Landed)}; hauled to depots {T(war.Hauled)} in {war.Convoys[i]} convoy runs; issued to units {T(war.Issued)}; "
+                              + $"lost on the road {T(war.CargoLost)}; {war.CutOff[i]} unit-nights cut off from their depot and {war.TooFar[i]} too far from it; at the end {dry} units out of fuel, {hungry} hungry, "
+                              + $"{low} below half their ammunition");
+                var deps = war.Depots.Where(d => d.Side == i && d.Unit >= 0).ToList();
+                string Fill(int c) => string.Join(" ", deps.Select(d => d.Target[c] > 0f ? (int)(100 * d.Stock[c] / d.Target[c]) : 100).OrderBy(x => x).Select(x => x.ToString()));
+                sb.AppendLine($"        depots' stocks as % of what they aim for: food {Fill(0)}; fuel {Fill(1)}; ammunition {Fill(2)}");
+                foreach (var d in deps.Where(d => d.Target[0] > 0f && d.Stock[0] < 0.05f * d.Target[0]))
+                {
+                    var hs = war.Hauls.Where(h => h.Home == d.Id || h.To == d.Id).ToList();
+                    var par = d.Parent >= 0 ? war.Depots[d.Parent] : null;
+                    int dc = war.Ctl.CellOf(d.X, d.Z);
+                    sb.AppendLine($"        empty: {d.Name} (its ground {(dc < 0 ? "off the map" : !war.Ctl.Land[dc] ? "sea" : war.Ctl.Owner[dc] == i ? (war.Ctl.Contested[dc] ? "ours, contested" : "ours") : war.Ctl.Owner[dc] < 0 ? "nobody's" : "the enemy's")}), {(par == null ? "" : $"draws on {par.Name} ({(int)(100 * par.Stock[0] / Math.Max(1e-3f, par.Target[0]))}% food, {MathF.Sqrt((d.X - par.X) * (d.X - par.X) + (d.Z - par.Z) * (d.Z - par.Z)) / 1000f:0} km off)")}; "
+                                  + $"{hs.Count} hauling for it: " + string.Join(", ", hs.Select(h => $"{war.Units[h.Unit].Short} {h.State} {(war.Time < h.Wait ? $"waiting ({h.Why})" : "")} {(war.Units[h.Unit].Path != null ? "moving" : "still")} {MathF.Sqrt((war.Units[h.Unit].X - d.X) * (war.Units[h.Unit].X - d.X) + (war.Units[h.Unit].Z - d.Z) * (war.Units[h.Unit].Z - d.Z)) / 1000f:0} km")));
+                }
+                var hung = movers.Where(u => u.HungrySince >= 0).ToList();
+                if (hung.Count > 0)
+                    sb.AppendLine($"        hungry: {hung.Count(u => u.Hauls)} hauling, {hung.Count(u => u.InFight >= 0)} in a fight, median {hung.Select(u => MathF.Sqrt((u.X - war.Depots[u.Depot].X) * (u.X - war.Depots[u.Depot].X) + (u.Z - war.Depots[u.Depot].Z) * (u.Z - war.Depots[u.Depot].Z)) / 1000f).OrderBy(x => x).ElementAt(hung.Count / 2):0} km from their depot, "
+                                  + $"median {hung.Select(u => (war.Time - u.HungrySince) / 3600).OrderBy(x => x).ElementAt(hung.Count / 2):0} h without food, "
+                                  + $"{hung.Count(u => !Supply.ClearToDepot(war, u))} cut off; by arm: "
+                                  + string.Join(", ", hung.GroupBy(u => u.Arm).OrderByDescending(g => g.Count()).Take(5).Select(g => $"{g.Key.ToString().ToLowerInvariant()} {g.Count()}")));
+            }
             foreach (var sd in war.Sides)
             {
                 var bns = war.Below(war.Units[sd.Army]).Where(u => u.Echelon == Echelon.Battalion && Command.Manoeuvre(u)).ToList();
@@ -205,7 +236,7 @@ public static class WarMode
                 {
                     var ms = f.Movers.Where(id => war.Units[id].Side == s).ToList();
                     int came = ms.Sum(id => f.Strength.GetValueOrDefault(id));
-                    int veh = f.V.Where(v => v.Side == s).Select(v => v.Vehicle).Distinct().Count();
+                    int veh = f.V.Where(v => v.Side == s && Combat.Armed(war.Vehicles[v.Vehicle].Class)).Select(v => v.Vehicle).Distinct().Count();
                     return $"{war.Sides[s].Name} {ms.Count} movers ({ms.Count(id => Command.Manoeuvre(war.Units[id]))} combat), {came} men, {veh} armed vehicles: "
                            + $"{f.Killed[s] + f.Down[s] + f.Hurt[s]} hit, {f.Lost[s]} vehicles lost";
                 }));

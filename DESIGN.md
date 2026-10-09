@@ -369,13 +369,31 @@ The code is in `src/Conquest/War/`.
 - A unit holding ground engages whatever moves through its field of fire.
 - The holding side's down are evacuated. A side pulling back carries out most of its own.
 
+**Supply** (`Supply`): food, fuel and ammunition used up, and brought forward from the port by the armies' own trucks.
+- **Using it.**
+  - A soldier eats 1.8 kg of rations a day.
+  - Vehicles burn fuel by the km and, engines running, by the hour in a fight, at their makers' figures (M1A2 1,900 L at about 4 L/km, T-90 2.5 L/km, Bradley 660 L, Stryker 200 L...). Every day they also run a couple of hours for power and heat, and generators burn half a litre a soldier.
+  - Ammunition goes as it's fired, weighed packed: 25 g a rifle round, 30 kg a tank round.
+- **Depots.** Ships land 4,000 t a day at the side's port while it holds it; a port lost takes its depot with it. Each division has a support area 15 km behind its brigades, each brigade one 8 km behind its battalions (US doctrine puts them 10–20 km and further behind the front; the island is small). They aim to hold three and two days of what their units use, and stand where trucks can reach them from the port.
+- **Convoys.**
+  - The armies' logistics companies (US distribution and forward support companies, Russian material support battalions, British logistic regiments) drive the depot runs by night and day. Cargo trucks carry 6 t, tankers 8 t.
+  - A brigade's companies fetch from their division's support area, a division's from the port, and the army's take from the port to whichever division is shortest.
+  - Convoys are units on the map. They halt for an enemy close ahead, can be ambushed, and lose the load of every truck destroyed. Their crews eat and fuel at the depots.
+- **The nightly resupply (LOGPAC).** At 22:00 every unit within 30 km of its depot by land, round ground the enemy holds alone, is topped up: food to three days, fuel to full, ammunition to its basic load. The forward support companies' trucks that carry it aren't moved on the map yet. A depot short of something shares out what it has.
+- **Going without.**
+  - Out of fuel, vehicles don't move. Out of ammunition, soldiers don't fire.
+  - Hungry, they shoot 15% worse for each day without food.
+  - A battalion short of fuel or food, or below half its ammunition, isn't sent on an operation until it has been resupplied.
+- **In fights,** unarmed vehicles are targets now; guns take armour first and leave ambulances alone. A fighting company's trucks stay back with its trains, but a convoy's or a headquarters' are the unit itself.
+
 **Reading a run.** The report lists:
 - casualties against Dupuy's rates;
 - hits by range;
 - fights grouped by casualties;
 - the biggest fights, with their causes;
 - the units that fought most;
-- the share of those who fought who were hit.
+- the share of those who fought who were hit;
+- supply: tonnes landed, hauled and issued, convoy runs, cargo lost, unit-nights cut off, and units out of fuel, hungry or low on ammunition at the end. It also lists the depots' fill and any depot standing empty with its convoys' state.
 
 `trace=N` adds fight N's state every 30 s to the report: fit, hit, suppressed, flat, in cover, what each side can see and how far. If the war sits in one place for 15 s of real time, the progress file says where, and an exception ends the run with an error instead of leaving Godot idling.
 
@@ -383,18 +401,19 @@ The code is in `src/Conquest/War/`.
 
 | | Seed 2 | Seed 1 |
 |---|---|---|
-| ALPHA | 2.4% | 1.6% |
-| BRAVO | 1.6% | 1.2% |
-| CHARLIE | 1.0% | 2.7% |
+| ALPHA | 2.1% | 1.6% |
+| BRAVO | 1.1% | 1.5% |
+| CHARLIE | 1.1% | 2.9% |
 
 Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
-- Fighting peaks on days 2–4, at about 450 dead a day for the hardest-hit army. It goes on all week, at 70–330 a day on days 5–7.
+- Fighting peaks on days 2–4, at about 450 dead a day for the hardest-hit army. It goes on all week, at 40–310 a day on days 5–7.
 - About a third of fights are brushes where nobody is hurt.
 - Hits come mostly at 50–400 m, mostly from rifles, then vehicle machine guns, autocannon and grenades.
-- Each side lost 290–1,000 vehicles in the week, most of them light vehicles and APCs.
+- Each side lost 360–1,300 vehicles in the week, most of them light vehicles and APCs. Up to 340 trucks went with them, from headquarters, logistics units and convoys caught in fights.
+- Supply in a week: each army made 78–122 convoy runs and issued its units about 500 t of food, 900–2,000 t of fuel and 20–250 t of ammunition (no artillery yet). Up to 90 t was lost on the road to ambushes. At the end 0–57 units per army are hungry, nearly all of them cut off behind enemy ground.
 - At the end of the week, 40–80% of each army's fighting battalions hold ground. Another 5–25% are on an operation, and 4–13 battalions per army are reserves or idle.
 - 60–80 places change hands a day.
-- On seed 2, ALPHA and BRAVO fought each other along a north–south front while CHARLIE grew from 21% of the land to 29% in the west and south. On seed 1, CHARLIE was crushed between the other two: it fell from 18% of the land to 11%, at 73% strength. BRAVO grew from 33% to 50%.
+- On seed 2, all three pushed a little into open ground (ALPHA 22% of the land to 30%, BRAVO 27% to 31%, CHARLIE 22% to 27%) while ALPHA and BRAVO fought along a north–south front. On seed 1, CHARLIE was crushed between the other two, from 17% of the land to 12%, while BRAVO grew from 34% to 44% and ALPHA from 15% to 23%.
 
 How the fights were brought down to this, all in the code's comments. In the first runs, armies lost 10% a day. The causes were:
 - squads standing in a 40 m square;
@@ -421,9 +440,10 @@ Not done yet:
   - what's here sits between the two.
 
   Real offensives pause for supply and replacements, which aren't modelled yet. Until they are, how hard the war runs comes from these command rules rather than from logistics.
+- **Supply seldom binds.** No unit ran out of fuel in a week, and few ran short of ammunition. Without artillery, an army fires 20–250 t a week. It will matter when guns need 45 kg a shell, when ports are taken, and when cargo can blow up (the hazard divisions under "Economy and supply").
+- **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
 - **Artillery,** which caused most casualties in modern wars and will add its own.
-- **Supply:** ammunition, fuel and food running down and brought up.
 - **The medical chain returning the wounded, and reinforcement by sea.**
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
 

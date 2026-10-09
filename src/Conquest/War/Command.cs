@@ -194,6 +194,8 @@ public static class Command
         var (cx, cz) = Centre(war, brigades);
         var (hx, hz) = Home(war, side);
         var (fx, fz) = Toward(cx, cz, hx, hz, 4000f);
+        var (sx, sz) = Toward(cx, cz, hx, hz, Supply.DivisionBack);
+        Supply.Place(war, div, sx, sz);
         Follow(war, div, fx, fz, 5000f);
         foreach (var t in div.Children.Select(c => war.Units[c]).Where(c => !brigades.Contains(c)))
             Follow(war, t, fx, fz, 6000f);
@@ -226,6 +228,7 @@ public static class Command
         {
             if (bns.Count >= 3 && free >= 2 && committed >= free - 1) break; // one kept back in reserve
             if (bn.Holds >= 0 || bn.Next != null || bn.Order is { Done: false } || war.Time < bn.RestUntil || Strength(war, bn) < 0.5f) continue;
+            if (!Supplied(war, bn)) continue; // waiting for the night's resupply
             var (x, z) = Pos(war, bn);
             int pick = bde.Tasks.Where(id =>
                 {
@@ -256,6 +259,8 @@ public static class Command
         var (cx, cz) = Centre(war, bns);
         var (hx, hz) = Home(war, side);
         var (fx, fz) = Toward(cx, cz, hx, hz, 2500f);
+        var (sx, sz) = Toward(cx, cz, hx, hz, Supply.BrigadeBack);
+        Supply.Place(war, bde, sx, sz);
         Follow(war, bde, fx, fz, 4000f);
         foreach (var t in bde.Children.Select(c => war.Units[c]).Where(c => !bns.Contains(c)))
             Follow(war, t, fx, fz, 5000f);
@@ -271,7 +276,7 @@ public static class Command
     /// <summary>Move a unit (or, if it has no headquarters of its own, all of it) to within reach of a point, if it's further off than <paramref name="slack"/>.</summary>
     static void Follow(War war, Unit u, float x, float z, float slack)
     {
-        if (Busy(war, u)) return;
+        if (u.Hauls || Busy(war, u)) return; // a company on depot runs goes where the runs take it
         var (ux, uz) = Pos(war, u);
         if (Sq(ux - x, uz - z) < slack * slack) return;
         Give(war, u, new Order { Kind = OrderKind.Move, X = x, Z = z });
@@ -300,6 +305,7 @@ public static class Command
         var (cx, cz) = Pos(war, u);
         foreach (var m in TopMovers(war, u))
         {
+            if (m.Hauls) continue;
             m.Next = null;
             m.Order = new Order { Kind = OrderKind.Move, X = o.X + m.X - cx, Z = o.Z + m.Z - cz, At = war.Time };
             if (!war.StartMove(m, m.Order.X, m.Order.Z)) m.Order.Done = true;
@@ -368,11 +374,17 @@ public static class Command
     /// <summary>A fighting battalion free for an operation, now or once it has rested: not holding ground, and at half strength or more.</summary>
     static bool Free(War war, Unit bn) => bn.Echelon == Echelon.Battalion && Manoeuvre(bn) && bn.Holds < 0 && Strength(war, bn) >= 0.5f;
 
+    /// <summary>Supplied for an operation: every part of it with fuel, food and half its ammunition (see <see cref="Supply.Ready"/>).</summary>
+    static bool Supplied(War war, Unit bn) => Movers(war, bn).All(m => Supply.Ready(war, m));
+
+    /// <summary>A unit's movers: itself if it moves on its own, and those its parts make up.</summary>
+    static IEnumerable<Unit> Movers(War war, Unit u) => u.IsMover ? TopMovers(war, u).Prepend(u) : TopMovers(war, u);
+
     /// <summary>What's left of a unit: its movers' fit soldiers against what they were raised with.</summary>
     public static float Strength(War war, Unit u)
     {
         int now = 0, raised = 0;
-        foreach (var m in u.IsMover ? new[] { u } : TopMovers(war, u))
+        foreach (var m in Movers(war, u))
         {
             now += m.People;
             raised += m.Raised;

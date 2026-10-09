@@ -128,6 +128,71 @@ public sealed class MoveGrid
     public bool Passable(int c, Mobility m) => _speed[(int)m][c] > 0f;
 
     /// <summary>The nearest cell a mover of this kind can stand on, within 3 km; -1 if none.</summary>
+    int[]? _part;
+
+    /// <summary>
+    /// The stretch of country a cell belongs to for wheeled vehicles: cells that wheels can drive between share a
+    /// number; -1 where wheels can't go. Rivers without a bridge or ford, woods and steep ground split the island into
+    /// such stretches.
+    /// </summary>
+    public int Part(int c)
+    {
+        if (_part == null)
+        {
+            _part = new int[N * N];
+            Array.Fill(_part, -1);
+            var q = new Queue<int>();
+            int next = 0;
+            for (int s = 0; s < N * N; s++)
+            {
+                if (_part[s] >= 0 || !Passable(s, Mobility.Wheeled)) continue;
+                _part[s] = next;
+                q.Enqueue(s);
+                while (q.Count > 0)
+                {
+                    int i = q.Dequeue(), x = i % N, y = i / N;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        int nx = x + Island.DX[k], ny = y + Island.DY[k];
+                        if ((uint)nx >= (uint)N || (uint)ny >= (uint)N) continue;
+                        int j = ny * N + nx;
+                        if (_part[j] >= 0 || !Passable(j, Mobility.Wheeled)) continue;
+                        _part[j] = next;
+                        q.Enqueue(j);
+                    }
+                }
+                next++;
+            }
+        }
+        return c >= 0 ? _part[c] : -1;
+    }
+
+    /// <summary>The cell nearest (x, z), within 12 km, that wheels can reach from <paramref name="from"/>; -1 if none.</summary>
+    public int Reachable(float x, float z, int from)
+    {
+        int part = Part(Nearest(from, Mobility.Wheeled));
+        if (part < 0) return -1;
+        int c = CellOf(x, z);
+        if (c < 0) return -1;
+        if (Part(c) == part) return c;
+        int cx = c % N, cy = c / N, best = -1;
+        float bd = float.MaxValue;
+        for (int r = 1; r <= (int)(12000f / Cell) && best < 0; r++)
+            for (int y = Math.Max(0, cy - r); y <= Math.Min(N - 1, cy + r); y++)
+            for (int xx = Math.Max(0, cx - r); xx <= Math.Min(N - 1, cx + r); xx++)
+            {
+                int i = y * N + xx;
+                if (Part(i) != part) continue;
+                float d = (xx - cx) * (xx - cx) + (y - cy) * (y - cy);
+                if (d < bd)
+                {
+                    bd = d;
+                    best = i;
+                }
+            }
+        return best;
+    }
+
     public int Nearest(int c, Mobility m)
     {
         if (Passable(c, m)) return c;

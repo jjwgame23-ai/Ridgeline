@@ -31,6 +31,13 @@ public sealed class War
     public readonly int[,] Hits = new int[3, 10], Kills = new int[3, 10];
     /// <summary>Each side's vehicles destroyed, by cause.</summary>
     public readonly int[,] Wrecked = new int[3, 10];
+    /// <summary>The supply points and the logistics companies hauling between them.</summary>
+    public readonly List<Depot> Depots = new();
+    public readonly List<Haul> Hauls = new();
+    /// <summary>Each side's tonnes by cargo (food, fuel, ammunition): landed by ships, hauled to depots, issued to units, lost on the road.</summary>
+    public readonly float[,] Landed = new float[3, 3], Hauled = new float[3, 3], Issued = new float[3, 3], CargoLost = new float[3, 3];
+    /// <summary>Each side's convoy runs made, and unit-nights a unit missed its resupply: cut off from its depot by the enemy, or too far from it.</summary>
+    public readonly int[] Convoys = new int[3], CutOff = new int[3], TooFar = new int[3];
     /// <summary>What the war is doing just now, for the watchdog that reports a run stuck in one place.</summary>
     public volatile string Doing = "";
     /// <summary>A fight to trace (trace=N): its state every 30 s, for reading how fights go.</summary>
@@ -163,7 +170,7 @@ public sealed class War
         Ctl.Update(this);
     }
 
-    static int Crew(VClass v) => v switch
+    public static int Crew(VClass v) => v switch
     {
         VClass.Tank => 4, VClass.Ifv => 3, VClass.Apc => 2, VClass.Howitzer => 5, VClass.Rocket => 3, VClass.Spaa => 3, VClass.Mortar => 4,
         VClass.Engineer => 2, VClass.LightTank => 4, _ => 1,
@@ -219,13 +226,17 @@ public sealed class War
             // Getting out of contact isn't a march: it goes on by night, at two thirds of the day's pace (doctrine's
             // night rates), and past the day's limit. (Units used to sit where they'd been beaten off until morning,
             // and two of them 80 m apart fought every five minutes all night.)
-            bool tactical = u.Order is { Tactical: true };
-            if (!light && !tactical) continue;
+            bool tactical = u.Order is { Tactical: true }, night = tactical || u.Order is { Night: true };
+            if (!light && !night) continue;
+            // Out of fuel, a unit on wheels or tracks goes nowhere.
+            if (u.Mob != Mobility.Foot && u.FuelCap > 0f && u.Fuel <= 0f) continue;
             double budget = tactical ? dt : (u.Mob == Mobility.Foot ? 8 : 10) * 3600.0 - u.MovedToday;
             if (budget <= 0) continue;
             float seconds = (float)Math.Min(dt, budget);
             u.MovedToday += seconds;
+            double before = u.Marched;
             Advance(u, light ? seconds : seconds * 2f / 3f);
+            if (u.Mob != Mobility.Foot) u.Fuel = MathF.Max(0f, u.Fuel - u.PerKm * (float)(u.Marched - before) / 1000f);
         }
     }
 
