@@ -17,7 +17,9 @@ public sealed class AreaObjective : IObjective
     {
         if (Spots.Count > 0 && b.Squad != null)
         {
-            var spot = Spots[Math.Max(0, b.Squad.Members.IndexOf(b)) % Spots.Count];
+            // His own place: the one he was put in when he came in (see ConquestWindow.Bring), not one along from it.
+            var spot = Spots.OrderBy(s => (s - b.FeetPos with { Y = s.Y }).LengthSquared()).First();
+            if ((spot - b.FeetPos with { Y = spot.Y }).Length() > 3f) spot = Spots[Math.Max(0, b.Squad.Members.IndexOf(b)) % Spots.Count];
             if (Threat is { } th && (th - spot) with { Y = 0f } is { } look && look.LengthSquared() > 1f) b.LookOut = look.Normalized();
             return spot;
         }
@@ -66,6 +68,14 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     /// <summary>The window's middle on the island (metres east and south of its centre).</summary>
     public float CX, CZ;
     public int Cap = 160;
+    /// <summary>
+    /// The embodied assault test (assault=1): AttackPlatoons of ALPHA's rifle platoons attack DefendPlatoons of BRAVO's,
+    /// dug in round Target's near edge, with their vehicles, for at most AssaultMinutes; then it reports and quits.
+    /// </summary>
+    public bool Assault;
+    public int AttackPlatoons = 2, DefendPlatoons = 1;
+    public Objective? Target;
+    public double AssaultMinutes = 45;
     /// <summary>
     /// calib=1: the war runs on beside the fight, abstractly, minute by minute from the same moment, so the same soldiers'
     /// fates can be set side by side: how many of the bubble's soldiers the abstract fight has killed, downed or wounded
@@ -143,12 +153,14 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         {
             if (!Map.Nav.Finished || !Map.VehicleNav.Finished || NavigationServer3D.MapGetIterationId(Map.GetWorld3D().NavigationMap) == 0) return;
             _embodied = true;
-            Embody();
+            if (Assault) EmbodyAssault();
+            else Embody();
             return;
         }
         Motor.Tick();
         Telemetry.Tick(this);
         if (Calibrate) Abstract();
+        if (Assault) Judge();
         if (Verbose && Clock.Now >= _nextLog)
         {
             _nextLog = Clock.Now + 30.0;
@@ -237,17 +249,137 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         _startedAt = Clock.Now;
     }
 
+    // ---------------------------------------------------------------- the embodied assault test
+
+    readonly List<ICombatant>[] _sides = { new(), new(), new() };
+    double _judgeAt, _firstShot = -1;
+    Vector3 _townAt;
+    float _lineR;
+    string _setup = "";
+
+    /// <summary>
+    /// The assault test, embodied: the same attack the abstract assault test fights (AssaultTest), at platoon scale so it
+    /// fits the bots the battle maps run. BRAVO's platoons dig in round the near (west) edge of the town, squads 50 m
+    /// apart across the line, their vehicles 60 m behind. ALPHA's platoons start 800 m out, 250 m apart, and attack:
+    /// each squad the stretch of the line opposite it, while its platoon's vehicles support by fire from 450 m.
+    /// Three to one is what FM 3-90 plans an attack on a prepared position at.
+    /// </summary>
+    void EmbodyAssault()
+    {
+        var obj = Target!;
+        var t2 = Local(obj.X, obj.Z);
+        _townAt = Map.Ground(new Vector3(t2.X, 0f, t2.Y));
+        _lineR = obj.Radius + 40f;
+        // Rifle platoons (1st, 2nd, 3rd...), not a battalion's anti-tank or mortar platoon.
+        bool Rifles(Unit u) => u.Echelon == Echelon.Platoon && u.Arm is Arm.Mechanised or Arm.Infantry or Arm.Motorised && u.Children.Count > 0
+                               && char.IsDigit(u.Name[0]);
+        var att = War.Units.Where(u => u.Side == 0 && Rifles(u)).Take(AttackPlatoons).ToList();
+        var def = War.Units.Where(u => u.Side == 1 && Rifles(u)).Take(DefendPlatoons).ToList();
+        List<int> Fit(Unit u) => u.Members.Where(s => War.Soldiers[s].State is SoldierState.Fit or SoldierState.Wounded).ToList();
+        var west = new Vector3(-1f, 0f, 0f);
+        var lineMid = _townAt + west * _lineR;
+        var attackFrom = lineMid + west * 800f;
+        // The defence: every defending squad on the line, 50 m apart, north to south; the platoons' vehicles behind.
+        var defSquads = def.SelectMany(p => p.Children.Select(c => War.Units[c]).Where(c => c.Members.Count > 0)).ToList();
+        var linePts = new List<Vector3>();
+        for (int i = 0; i < defSquads.Count; i++)
+        {
+            float off = (i - (defSquads.Count - 1) / 2f) * 50f;
+            linePts.Add(Map.Ground(lineMid + new Vector3(0f, 0f, off)));
+        }
+        for (int i = 0; i < defSquads.Count; i++)
+        {
+            var sq = defSquads[i];
+            var at = new Vector2(linePts[i].X, linePts[i].Z);
+            var hold = new AreaObjective { Center = linePts[i], Radius = 20f, Threat = attackFrom with { Z = linePts[i].Z }, Map = Map };
+            Bring(sq, War.Units[sq.Mover], at, Fit(sq), (hold, null, true, "Defend", obj.Name), digIn: true);
+        }
+        foreach (var p in def)
+        {
+            var back = lineMid - west * 60f;
+            var at = new Vector2(back.X, back.Z);
+            var hold = new AreaObjective { Center = Map.Ground(back), Radius = 25f, Threat = attackFrom, Map = Map };
+            Bring(p, War.Units[p.Mover], at, Fit(p), (hold, null, true, "Defend", obj.Name), digIn: false);
+        }
+        // The attack: each platoon's squads on the start line opposite their stretch of the defence, 60 m apart.
+        for (int pi = 0; pi < att.Count; pi++)
+        {
+            var p = att[pi];
+            float plat = (pi - (att.Count - 1) / 2f) * 250f;
+            var squads = p.Children.Select(c => War.Units[c]).Where(c => c.Members.Count > 0).ToList();
+            for (int si = 0; si < squads.Count; si++)
+            {
+                var start = Map.Ground(attackFrom + new Vector3(0f, 0f, plat + (si - (squads.Count - 1) / 2f) * 60f));
+                var target = linePts.OrderBy(l => MathF.Abs(l.Z - start.Z)).First();
+                var go = new AreaObjective { Center = target, Radius = 25f, Threat = target, Map = Map };
+                Bring(squads[si], War.Units[squads[si].Mover], new Vector2(start.X, start.Z), Fit(squads[si]), (go, null, false, "Attack", obj.Name), digIn: false);
+            }
+            var support = Map.Ground(lineMid + west * 450f + new Vector3(0f, 0f, plat));
+            var sbf = new AreaObjective { Center = support, Radius = 30f, Threat = lineMid, Map = Map };
+            var hq = Map.Ground(attackFrom + new Vector3(0f, 0f, plat) + west * 40f);
+            Bring(p, War.Units[p.Mover], new Vector2(hq.X, hq.Z), Fit(p), (new AreaObjective { Center = Opposite(plat), Radius = 30f, Threat = lineMid, Map = Map }, null, false, "Attack", obj.Name),
+                  digIn: false, crewOrder: (sbf, null, true, "Support", obj.Name), parkAt: new Vector2(hq.X, hq.Z));
+        }
+        Vector3 Opposite(float plat) => linePts.OrderBy(l => MathF.Abs(l.Z - (lineMid.Z + plat))).First();
+        foreach (var b in Bots) _sides[b.Team].Add(b);
+        int Vehicles(int t) => Motor.Slots.Count(s => s.Team == t);
+        _setup = $"{att.Count} ALPHA platoons ({_sides[0].Count} soldiers, {Vehicles(0)} vehicles) against {def.Count} BRAVO platoon{(def.Count > 1 ? "s" : "")} "
+                 + $"dug in ({_sides[1].Count} soldiers, {Vehicles(1)} vehicles, {Dug} fighting positions)";
+        Log($"--- EMBODIED ASSAULT on {obj.Name}: {_setup}; start line 800 m out ---");
+        foreach (var p in att.Concat(def)) Log($"  {War.Sides[p.Side].Name} {p.Name}");
+        if (PlayerJoins) JoinPlayer();
+        else Spec.Activate(Bots.FirstOrDefault());
+        _points = Map.Sites.Select(s => new SiteObjective { Site = s, Map = Map, R = s.Radius }).ToArray();
+        _owner = Enumerable.Repeat(-1, _points.Length).ToArray();
+        if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
+        _startedAt = Clock.Now;
+        Combatants.Killed += (_, _) => { if (_firstShot < 0) _firstShot = Clock.Now; };
+    }
+
+    /// <summary>
+    /// Every 10 s: is it over? Carried, when no defender is left on his feet on the line and an attacker is on it; held, when
+    /// the attackers are down to half (the species fights on to half its men); or out of time. Then the report, and quit.
+    /// </summary>
+    void Judge()
+    {
+        if (Clock.Now < _judgeAt) return;
+        _judgeAt = Clock.Now + 10.0;
+        bool OnLine(ICombatant c) => (c.FeetPos - _townAt with { Y = c.FeetPos.Y }).Length() < _lineR + 60f;
+        int Up(int t) => _sides[t].Count(c => c.Alive);
+        int attUp = Up(0), defUp = Up(1);
+        bool carried = defUp == 0 || !_sides[1].Any(c => c.Alive && OnLine(c)) && _sides[0].Any(c => c.Alive && OnLine(c));
+        bool held = attUp * 2 <= _sides[0].Count;
+        double minutes = (Clock.Now - _startedAt) / 60.0;
+        if (!carried && !held && minutes < AssaultMinutes) return;
+        int Killed(int t) => _sides[t].Count(c => c.Dead);
+        int Lost(int t) => _sides[t].Count(c => !c.Alive);
+        string Pc(int a, int b) => $"{100.0 * a / Math.Max(1, b):0}%";
+        GD.Print($"EMBODIED ASSAULT: {_setup}");
+        GD.Print($"  {(carried ? "carried" : held ? "held: the attack fought down to half" : "still going")} after {minutes:0} min (first casualty {(_firstShot < 0 ? "none" : $"{(_firstShot - _startedAt) / 60:0} min in")})");
+        GD.Print($"  attackers lost {Pc(Lost(0), _sides[0].Count)} ({Pc(Killed(0), _sides[0].Count)} killed); defenders lost {Pc(Lost(1), _sides[1].Count)} ({Pc(Killed(1), _sides[1].Count)} killed); "
+                 + $"vehicles lost {Motor.Slots.Count(s => s.Team == 0 && s.Live is not { Destroyed: false })}/{Motor.Slots.Count(s => s.Team == 1 && s.Live is not { Destroyed: false })}");
+        GD.Print("  (the abstract assault test, 9 companies on 3 dug in with mortars: attackers lost 25%, defenders 57%, carried 7 times in 12 in a median 2¾ h;");
+        GD.Print("   marks: a battalion attack at three to one on a prepared company position cost attackers about 5-15% and defenders more, over hours)");
+        GetTree().Quit();
+    }
+
     static string Doing(Unit m) => m.InFight >= 0 ? "fighting" : m.Path != null ? "moving" : "halted";
 
-    /// <summary>One war unit's soldiers and vehicles onto the ground, as a squad and its vehicles' crews.</summary>
-    void Bring(Unit u, Unit m, Vector2 at, List<int> fit)
+    /// <summary>
+    /// One war unit's soldiers and vehicles onto the ground, as a squad and its vehicles' crews. Its order, its vehicles'
+    /// order and where they park, and whether it's dug in, come from what the war has it doing, unless given (the
+    /// assault test sets them).
+    /// </summary>
+    void Bring(Unit u, Unit m, Vector2 at, List<int> fit, (IObjective Obj, Site? Site, bool Defend, string Verb, string What)? given = null,
+               bool? digIn = null, (IObjective Obj, Site? Site, bool Defend, string Verb, string What)? crewOrder = null, Vector2? parkAt = null)
     {
         int side = u.Side;
         var crewJobs = fit.Where(s => War.Soldiers[s].Job is Job.Driver or Job.Gunner or Job.Crewman or Job.Commander).ToList();
         var rest = fit.Except(crewJobs).ToList();
         // Vehicles with an embodied model, each with its crew from the drivers, gunners and crewmen.
         var vehicles = u.Vehicles.Where(v => !War.Vehicles[v].Lost).Select(v => (V: v, K: Kind(War.Vehicles[v].Class))).Where(x => x.K != null).ToList();
-        var order = OrderFor(u, m, at, side);
+        var order = given ?? OrderFor(u, m, at, side);
+        var vAt = parkAt ?? at;
         int k = 0;
         foreach (var (v, kind) in vehicles)
         {
@@ -257,9 +389,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             if (crew.Count < need) { crew.AddRange(rest.Take(need - crew.Count)); rest = rest.Skip(need - crew.Count).ToList(); }
             if (crew.Count == 0) continue;
             var sq = NewSquad(side, MotorPool.CrewKind(kind.Value), u);
-            Give(sq, order);
+            Give(sq, crewOrder ?? order);
             float a = k++ * 1.3f;
-            var park = Map.Ground(new Vector3(at.X + MathF.Cos(a) * 14f, 0f, at.Y + MathF.Sin(a) * 14f));
+            var park = Map.Ground(new Vector3(vAt.X + MathF.Cos(a) * 14f, 0f, vAt.Y + MathF.Sin(a) * 14f));
             foreach (int s in crew) Spawn(s, sq, Role.Crewman, park + new Vector3(_rng.RandfRange(-3f, 3f), 0f, _rng.RandfRange(-3f, 3f)));
             Motor.Add(kind.Value, side, sq, park, _rng.RandfRange(0f, Mathf.Tau));
         }
@@ -267,7 +399,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         if (rest.Count == 0) return;
         var squad = NewSquad(side, KindOf(u), u);
         var c = new Vector3(at.X, 0f, at.Y);
-        bool dug = _dug.Contains(u.Id) || m.Path == null && m.InFight < 0 && War.Time - m.HaltedAt >= 2 * 3600;
+        bool dug = digIn ?? (_dug.Contains(u.Id) || m.Path == null && m.InFight < 0 && War.Time - m.HaltedAt >= 2 * 3600);
         var spots = dug && order.Obj is AreaObjective { Threat: { } enemy } area ? DigIn(c, enemy, rest.Count) : null;
         if (spots != null) ((AreaObjective)order.Obj).Spots.AddRange(spots);
         Give(squad, order);

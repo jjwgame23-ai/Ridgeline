@@ -614,6 +614,38 @@ what turns abstract units into embodied squads and back, which is what calibrati
 - **Still to do.**
   - **Cover from one side only.** Of the men hit in cover, the biggest group (34) now had nothing between them and the gun that hit them: their cover faced one enemy while another, off to the flank, shot them. BRAVO's 11 vehicles stand in a line, and a straight wall shields one direction.
   - **A fair test.** The war's fight was a standoff 30 minutes old in which nobody had been hit for 2 minutes; the embodied one starts at full intensity. A fairer yardstick is the assault bench embodied (an attack on a dug-in position) against history.
+- **Run to run, a 5-minute embodied fight varies a lot.** The round-2 setup run twice gave CHARLIE 59 and 72 dead, BRAVO 25 and 16. A change has to beat that to be judged on one run.
+- **Tried and set aside** (round 3):
+  - **Flanked in cover:** fire from a side the cover doesn't shut off blows it, and the man takes cover from the new shooter. It fired 49 times in a run, and the result (CHARLIE 76, BRAVO 31) was inside the noise.
+  - **Horseshoe parapets:** the ends turned back 50° round the flanks. Together with the flank rule, more rounds came through the sand (25 against 9–16).
+  - Neither is in.
+
+**The embodied assault test** (`-- mode=window seed=2 assault=1 [attack=2] [defend=1] [minutes=45] [join=1] [verbose]`, `ConquestWindow.EmbodyAssault`). The abstract assault test fought with bots, at platoon scale so it fits the bots the battle maps run.
+- **The setup.** ALPHA's rifle platoons attack BRAVO's dug in round the near (west) edge of the town nearest the island's middle (Froltosa).
+  - The defending squads stand 50 m apart across the line, in fighting positions with metre-thick parapets, their vehicles 60 m behind.
+  - The attackers start 800 m out: each squad goes for the stretch of the line opposite it, and each platoon's vehicles support by fire from 450 m.
+  - Two platoons on one is about three to one, the odds FM 3-90 plans an attack on a prepared position at.
+- **How it ends.** Carried, when no defender is on his feet on the line and an attacker is. Held, when the attack is fought down to half. Or out of time. It reports what each side lost and how long it took, against the abstract test and the historical marks, and quits.
+- **First runs** (16:00, clear):
+
+| | Attackers lost | Defenders lost | Took |
+|---|---|---|---|
+| 3 platoons (126, 9 Bradleys) on BRAVO's anti-tank platoon (22, 4 vehicles) | 9% | 100% | 4 min, carried |
+| 2 platoons (84, 6 Bradleys) on a motor rifle platoon (26, 3 BMPs) | 50% (44% killed) | 54% | 5 min, held |
+| The abstract test (9 companies on 3) | 25% | 57% | 2¾ h, carried 7 in 12 |
+| History, 3:1 on a prepared position | 5–15% | more | hours |
+
+- **What it shows.** The embodied attack is a brawl of minutes, not an attack of hours.
+  - The Bradleys carried their infantry in mounted, 800 m to 170 m in two minutes, and dismounted about 150 m short of the position. Doctrine dismounts 300–500 m out and fights forward under covering fire.
+  - Both sides spent the first two and a half minutes out of contact while the attack closed across open ground in daylight. The defenders' platoon never opened fire at range.
+  - Then most of the killing was close: the defenders' dead fell within 5 m of their killers.
+  - Calibrating the embodied fights to history means the battle engine fighting at company level by doctrine, not more single tweaks:
+    - seeing and engaging at long range;
+    - attackers dismounting short of the position;
+    - suppression and bounds across the last 300–500 m;
+    - preparatory fire.
+
+  Each needs several runs per setting, at 5–10 minutes each.
 
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.

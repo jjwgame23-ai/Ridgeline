@@ -28,6 +28,9 @@ public static partial class WindowMode
         GD.Print($"[window] island {seed} made in {(Time.GetTicksMsec() - t0) / 1000.0:0.0}s");
         // day=N: the war, run headless to dawn on day N (and hour=H past that), with its armies in the window.
         int day = a.TryGetValue("day", out var dv) && int.TryParse(dv, out int d) ? d : 0;
+        // assault=1: the embodied assault test, on the war as raised (ConquestWindow.EmbodyAssault).
+        bool assault = a.TryGetValue("assault", out var asv) && asv != "0";
+        if (assault) day = Math.Max(day, 1);
         War? war = null;
         if (day > 0)
         {
@@ -42,7 +45,14 @@ public static partial class WindowMode
                      + string.Join(", ", war.Sides.Select(sd => $"{sd.Name} {war.Dead[sd.Index]} dead")) + $"; {war.Fights.Count(f => !f.Over)} fights going on");
         }
         float cx, cz;
-        if (a.TryGetValue("at", out var at) && at.Split(',') is { Length: 2 } xy && float.TryParse(xy[0], out float ax) && float.TryParse(xy[1], out float az))
+        Objective? target = null;
+        if (assault)
+        {
+            target = war!.Objectives.Where(o => o.Kind == ObjKind.Town).OrderBy(o => o.X * o.X + o.Z * o.Z).First();
+            (cx, cz) = (target.X, target.Z);
+            GD.Print($"[window] the assault test on {target.Name}");
+        }
+        else if (a.TryGetValue("at", out var at) && at.Split(',') is { Length: 2 } xy && float.TryParse(xy[0], out float ax) && float.TryParse(xy[1], out float az))
             (cx, cz) = (ax * 1000f, az * 1000f);
         else if (war != null && !a.ContainsKey("town"))
         {
@@ -80,8 +90,12 @@ public static partial class WindowMode
             {
                 War = war, Map = map, PlayerHud = hud, CX = cx, CZ = cz,
                 Cap = a.TryGetValue("bots", out var bv) && int.TryParse(bv, out int bn) ? bn : 160,
-                PlayerJoins = !a.TryGetValue("join", out var jv) || jv != "0",
+                PlayerJoins = assault ? a.TryGetValue("join", out var jv) && jv == "1" : !a.TryGetValue("join", out jv) || jv != "0",
                 Calibrate = a.TryGetValue("calib", out var cv) && cv != "0",
+                Assault = assault, Target = target,
+                AttackPlatoons = a.TryGetValue("attack", out var atv) && int.TryParse(atv, out int an) ? an : 2,
+                DefendPlatoons = a.TryGetValue("defend", out var dfv) && int.TryParse(dfv, out int dn) ? dn : 1,
+                AssaultMinutes = a.TryGetValue("minutes", out var mv) && double.TryParse(mv, out double mn) ? mn : 45,
             });
             return;
         }
