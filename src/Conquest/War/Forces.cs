@@ -29,13 +29,15 @@ public struct Soldier
     public byte Rockets;      // anti-tank rounds
     public double Since;      // when they were hit, for the wounded and the down
     public bool Treated;      // a medic has stopped the bleeding
+    public bool Replaced;     // dead or invalided, and a replacement has taken their place
 }
 
 /// <summary>
 /// Fit; wounded but still going (a light wound); down (out of the fight, dying without help); evacuated (in the
-/// medical chain, out of their unit for now); dead.
+/// medical chain, out of their unit for now); dead; recovering in hospital, due back; invalided home, out of the war;
+/// joining their unit (back from hospital, or a replacement), on the way.
 /// </summary>
-public enum SoldierState : byte { Fit, Wounded, Down, Evacuated, Dead }
+public enum SoldierState : byte { Fit, Wounded, Down, Evacuated, Dead, Recovering, Invalided, Joining }
 
 public struct WarVehicle
 {
@@ -80,6 +82,8 @@ public sealed class Unit
     public Mobility Mob;
     /// <summary>For a mover, how many fit soldiers it carries (its own and its platoons' and squads'), and how many it was raised with.</summary>
     public int People, Raised;
+    /// <summary>The places in the unit itself (its members when raised), which replacements fill.</summary>
+    public int Establishment;
     /// <summary>Consolidating and reorganising after an operation: no new one before this.</summary>
     public double RestUntil;
     /// <summary>The objective a battalion garrisons, or -1: one it took in the front line, which it stays on.</summary>

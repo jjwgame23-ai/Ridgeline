@@ -92,7 +92,11 @@ public static class WarMode
         {
             int dayBefore = war.Day;
             Timed("march", () => war.Step(Dt));
-            Timed("supply", () => Supply.Step(war, Dt));
+            Timed("supply", () =>
+            {
+                Supply.Step(war, Dt);
+                Medical.Step(war);
+            });
             int t = (int)war.Time;
             Timed("contact", () => Combat.Detect(war, t % 300 == 0));
             Timed("fights", () => Combat.Step(war, Dt));
@@ -190,6 +194,22 @@ public static class WarMode
             foreach (var (id, n) in war.StruckUnit.OrderByDescending(kv => kv.Value).Take(5))
                 sb.AppendLine($"      most shelled outside fights: {war.Units[id].Name} ({war.Sides[war.Units[id].Side].Name}, raised {war.Units[id].Raised}, {war.Units[id].Carries.Count} parts): {n} hit");
             sb.AppendLine("    (real: artillery caused about 60% of casualties in the World Wars, and most in Ukraine)");
+            sb.AppendLine("    The wounded and replacements:");
+            foreach (var sd in war.Sides)
+            {
+                int i = sd.Index;
+                int recovering = 0, joining = 0;
+                for (int s = 0; s < war.SoldierCount; s++)
+                {
+                    if (war.Soldiers[s].Side != i) continue;
+                    if (war.Soldiers[s].State == SoldierState.Recovering) recovering++;
+                    else if (war.Soldiers[s].State == SoldierState.Joining) joining++;
+                }
+                sb.AppendLine($"      {sd.Name}: {war.Evacuated[i]:N0} carried into the medical chain, {war.DiedOfWounds[i]:N0} died of wounds, {war.Invalided[i]:N0} invalided home, "
+                              + $"{war.Recovered[i]:N0} back to duty from hospital, {war.Healed[i]:N0} light wounds healed; {war.Replacements[i]:N0} replacements landed; "
+                              + $"{war.Joined[i]:N0} joined their units; at the end {recovering:N0} in hospital and {joining:N0} on their way; "
+                              + $"tickets {Medical.Tickets - war.Dead[i] + war.Replacements[i]:N0}");
+            }
             sb.AppendLine("    Supply, in tonnes of food/fuel/ammunition:");
             foreach (var sd in war.Sides)
             {
@@ -224,6 +244,7 @@ public static class WarMode
                 var bns = war.Below(war.Units[sd.Army]).Where(u => u.Echelon == Echelon.Battalion && Command.Manoeuvre(u)).ToList();
                 int holding = bns.Count(u => u.Holds >= 0), going = bns.Count(u => u.Holds < 0 && (u.Next != null || u.Order is { Kind: OrderKind.Occupy, Done: false }));
                 int weak = bns.Count(u => u.Holds < 0 && Command.Strength(war, u) < 0.5f), resting = bns.Count(u => u.Holds < 0 && war.Time < u.RestUntil);
+                sb.AppendLine($"      {sd.Name} battalions, why idle: " + string.Join(", ", bns.Select(u => Command.Why(war, u)).GroupBy(w => w).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}")));
                 sb.AppendLine($"      {sd.Name} battalions at the end: {bns.Count}: {holding} holding, {going} on an operation, {resting} resting, {weak} below half strength, "
                               + $"{bns.Count - holding - going} otherwise idle; mean strength {bns.Average(u => Command.Strength(war, u)):P0}");
                 var objs = war.Objectives;

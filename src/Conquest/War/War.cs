@@ -31,6 +31,11 @@ public sealed class War
     public readonly int[,] Hits = new int[3, 12], Kills = new int[3, 12];
     /// <summary>Each side's vehicles destroyed, by cause.</summary>
     public readonly int[,] Wrecked = new int[3, 12];
+    /// <summary>
+    /// Each side's medical chain and replacements: died of wounds, invalided home, light wounds healed, recovered and
+    /// sent back, joined their unit (back from hospital or new), replacements landed.
+    /// </summary>
+    public readonly int[] DiedOfWounds = new int[3], Invalided = new int[3], Healed = new int[3], Recovered = new int[3], Joined = new int[3], Replacements = new int[3];
     /// <summary>The units that move on their own, for loops that only care about those.</summary>
     public readonly List<int> MoverIds = new();
     /// <summary>Fire missions on their way, and the units that fire them.</summary>
@@ -185,6 +190,8 @@ public sealed class War
         }
         foreach (var u in Units)
             u.Raised = u.People;
+        foreach (var u in Units)
+            u.Establishment = u.Members.Count;
         foreach (var u in Units)
             if (u.IsMover) u.Mob = seats[u.Id] >= u.People * 0.75f && seats[u.Id] > 0 ? (tracks[u.Id] ? Mobility.Tracked : Mobility.Wheeled) : Mobility.Foot;
         Ctl = new Territory(Isl);

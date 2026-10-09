@@ -392,6 +392,7 @@ public static class Artillery
         var bursts = new (float X, float Z)[ms.Rounds];
         for (int r = 0; r < ms.Rounds; r++) bursts[r] = (ms.X + ms.Sigma * Gauss(rng), ms.Z + ms.Sigma * Gauss(rng));
         float R = ms.Reach, reach4 = R * 4f;
+        bool? cut = null;
         var vs = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(war.Vehicles);
         foreach (int ci in t.Carries)
         {
@@ -419,7 +420,7 @@ public static class Artillery
                         war.StruckArm[t.Side][t.Arm] = war.StruckArm[t.Side].GetValueOrDefault(t.Arm) + 1;
                         war.StruckUnit[t.Id] = war.StruckUnit.GetValueOrDefault(t.Id) + 1;
                         if (ms.CounterBattery) war.StruckByCb[t.Side]++;
-                        Wound(war, ref so, cause, rng);
+                        Wound(war, s, cause, rng, ref cut, t);
                         if (so.State is not (SoldierState.Fit or SoldierState.Wounded)) break;
                     }
                 }
@@ -449,24 +450,30 @@ public static class Artillery
         Supply.Measure(war, t);
     }
 
-    static void Wound(War war, ref Soldier so, Cause cause, Random rng)
+    /// <summary>A soldier hit by a shell outside a fight: one in ten killed, three in ten carried into the medical chain (as is anyone hit a second time), the rest lightly wounded.</summary>
+    static void Wound(War war, int s, Cause cause, Random rng, ref bool? cut, Unit t)
     {
+        ref var so = ref war.Soldiers[s];
         war.Hits[so.Side, (int)cause]++;
         war.StruckHit[so.Side]++;
         double r = rng.NextDouble();
-        if (r < 0.1 || (r < 0.4 && rng.NextDouble() < 0.05))
+        if (r < 0.1)
         {
             so.State = SoldierState.Dead;
+            so.Since = war.Time;
             war.Dead[so.Side]++;
             war.Kills[so.Side, (int)cause]++;
         }
         else if (r < 0.4 || so.State == SoldierState.Wounded)
         {
-            so.State = SoldierState.Evacuated;
-            war.Evacuated[so.Side]++;
+            cut ??= !Supply.ClearToDepot(war, t);
+            Medical.Admit(war, s, cut.Value);
         }
-        else so.State = SoldierState.Wounded;
-        so.Since = war.Time;
+        else
+        {
+            so.State = SoldierState.Wounded;
+            so.Since = war.Time;
+        }
     }
 
     static float Gauss(Random rng) => (float)(Math.Sqrt(-2.0 * Math.Log(1.0 - rng.NextDouble())) * Math.Cos(2.0 * Math.PI * rng.NextDouble()));

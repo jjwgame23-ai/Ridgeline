@@ -377,6 +377,30 @@ public static class Command
     /// <summary>Supplied for an operation: every part of it with fuel, food and half its ammunition (see <see cref="Supply.Ready"/>).</summary>
     static bool Supplied(War war, Unit bn) => Movers(war, bn).All(m => Supply.Ready(war, m));
 
+    /// <summary>Why an idle battalion isn't on an operation, for the report.</summary>
+    public static string Why(War war, Unit bn)
+    {
+        if (bn.Holds >= 0) return "holding";
+        if (bn.Next != null || bn.Order is { Done: false }) return "on an operation";
+        if (war.Time < bn.RestUntil) return "resting";
+        if (Strength(war, bn) < 0.5f) return "below half strength";
+        if (!Supplied(war, bn))
+        {
+            var ms = Movers(war, bn).ToList();
+            if (ms.Any(m => m.Food <= 0f)) return "unsupplied: hungry";
+            if (ms.Any(m => m.Mob != Mobility.Foot && m.FuelCap > 0f && m.Fuel < m.FuelCap / 3f)) return "unsupplied: fuel";
+            return "unsupplied: ammunition";
+        }
+        var bde = bn.Parent >= 0 ? war.Units[bn.Parent] : null;
+        if (bde == null || bde.Tasks.Count == 0) return "brigade has no tasks";
+        bool open = bde.Tasks.Any(id =>
+        {
+            var o = war.Objectives[id];
+            return o.Owner != bn.Side && !o.Unreachable[bn.Side] && war.Time >= o.Retry[bn.Side] && o.Claims[bn.Side] < (o.Owner >= 0 ? 2 : 1);
+        });
+        return open ? "kept back in reserve" : "brigade's tasks all taken or barred";
+    }
+
     /// <summary>A unit's movers: itself if it moves on its own, and those its parts make up.</summary>
     static IEnumerable<Unit> Movers(War war, Unit u) => u.IsMover ? TopMovers(war, u).Prepend(u) : TopMovers(war, u);
 

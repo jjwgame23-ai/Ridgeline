@@ -503,6 +503,7 @@ public static class Supply
     /// </summary>
     static void Provision(War war, Unit u, Depot d)
     {
+        Medical.Rejoin(war, u);
         float food = MathF.Min(d.Stock[0] * 1000f, MathF.Max(0f, u.People * RationKg * 3f - u.Food));
         float fuel = MathF.Min(d.Stock[1] * 1000f / DieselKgPerL, MathF.Max(0f, u.FuelCap - u.Fuel));
         u.Food += food;
@@ -584,6 +585,8 @@ public static class Supply
                     war.TooFar[u.Side]++;
                     continue;
                 }
+                // Soldiers back from hospital, and replacements, come up with the resupply.
+                Medical.Rejoin(war, u);
                 Measure(war, u);
                 var need = new[]
                 {

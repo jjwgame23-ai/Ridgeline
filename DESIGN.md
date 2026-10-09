@@ -406,6 +406,17 @@ The code is in `src/Conquest/War/`.
   - Each gun may fire a daily allowance (the controlled supply rate): about a unit of fire for BRAVO's guns (60 rounds of 152 mm), two thirds of that for the others', 60 bombs a mortar, and a launcher's load.
   - A gun and its ammunition carrier hold 90 rounds, a mortar 80, a launcher 12. They're brought up by the supply system at 45 kg a shell.
 
+**The wounded and replacements** (`Medical`):
+- **Light wounds.** A soldier lightly wounded fights on, and is fit again a week later.
+- **Serious wounds.** A soldier down and carried out (from a fight his side held, or most of them when it pulled back; anyone seriously hurt by shelling) goes back through the battalion's aid post to hospital.
+  - One in twenty dies of his wounds, as in recent wars with quick evacuation; one in four if his unit is cut off from its depot.
+  - Of the rest, two in five return to duty after one to four weeks; the others are invalided home, out of the war. In the Second World War about half of those hospitalised came back.
+- **Replacements.** Each port a side holds lands 500 soldiers a day (a troopship every two days).
+  - They fill vacancies only, the units shortest of men first, each in the job of the soldier he replaces (a lost leader's place goes to a private: promotion within the unit isn't modelled). An army is made up to strength but never grows past it.
+  - Each replacement is a new soldier, with his own name and skill.
+- **Joining.** Soldiers back from hospital and replacements reach their unit with its nightly resupply, if it gets through to them, and are issued their basic load.
+- **Tickets.** A side's headcount: 50,000 at the start, less the dead, plus the replacements landed.
+
 **Reading a run.** The report lists:
 - casualties against Dupuy's rates;
 - hits by range;
@@ -414,6 +425,7 @@ The code is in `src/Conquest/War/`.
 - the units that fought most;
 - the share of those who fought who were hit;
 - artillery: rounds and tonnes fired, shells a gun a day, missions by kind, guns lost to counter-battery, soldiers hit by shellfire, and how those outside fights were caught;
+- the wounded and replacements: carried into the medical chain, died of wounds, invalided, back to duty, replacements landed and joined, tickets;
 - supply: tonnes landed, hauled and issued, convoy runs, cargo lost, unit-nights cut off, and units out of fuel, hungry or low on ammunition at the end. It also lists the depots' fill and any depot standing empty with its convoys' state.
 
 `trace=N` adds fight N's state every 30 s to the report: fit, hit, suppressed, flat, in cover, what each side can see and how far. If the war sits in one place for 15 s of real time, the progress file says where, and an exception ends the run with an error instead of leaving Godot idling.
@@ -422,11 +434,11 @@ The code is in `src/Conquest/War/`.
 
 | | Seed 2 | Seed 1 |
 |---|---|---|
-| ALPHA | 2.4% | 2.0% |
-| BRAVO | 1.6% | 1.1% |
-| CHARLIE | 1.3% | 3.4% |
+| ALPHA | 3.1% | 2.2% |
+| BRAVO | 1.9% | 1.3% |
+| CHARLIE | 1.4% | 3.8% |
 
-Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
+Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%. Replacements keep units fighting at strength, which raises the first week's rates. Over 30 days on seed 2 the armies averaged 1.1%, 0.7% and 0.6% a day.
 - Fighting peaks on days 1–3, at 560–830 dead a day for the hardest-hit army. It goes on all week, at 40–380 a day on days 5–7.
 - About a third of fights are brushes where nobody is hurt.
 - Shell and mortar fire causes 47–71% of the hits, against about 60–75% in the World Wars. Guns fire 17–37 shells a day each. Each army fires 2,400–5,900 t of shells, bombs and rockets in the week, and loses 27–76 guns to counter-battery.
@@ -463,11 +475,14 @@ Not done yet:
 
   Real offensives pause for supply and replacements, which aren't modelled yet. Until they are, how hard the war runs comes from these command rules rather than from logistics.
 
-  Over 30 days (seed 2) the war goes quiet after about two weeks. From day 13 each army loses 10–50 dead a day, and the land shares freeze. At the end the armies stand at 60–77% of their strength on average, with 4–16 battalions each below half strength and no operations under way. With nothing to make losses good, the attacks run out. Replacements by sea and the wounded coming back should restart them; if not, command needs offensives planned ahead with massed reserves.
+  Over 30 days (seed 2), without replacements, the war went quiet after about two weeks, the armies at 60–77% strength.
+  - With replacements and the wounded returning, it goes on to about day 25: 60–170 dead a day for the hardest-hit army in the third week. The armies end at 84–90% strength.
+  - But the fronts still freeze after the first week. Most battalions are tied down holding ground (21 of ALPHA's 36, 44 of BRAVO's 59 at day 14), and a few wait on a hungry company. Only 0–4 per army are on an operation.
+  - Command needs offensives planned ahead: quiet sectors thinned out, forces massed on the main axis, garrisons relieved. That's next.
+  - The other lever is the 500 soldiers a day each port lands. It sets how long an army can be fed into a losing fight: CHARLIE on seed 1 had 8,775 replacements in a week while it was crushed.
 - **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
-- **The medical chain returning the wounded, and reinforcement by sea.**
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
 

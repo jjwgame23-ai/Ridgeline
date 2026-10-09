@@ -1196,12 +1196,18 @@ public static class Combat
             m.X = x / n;
             m.Z = z / n;
         }
+        bool? cut = null;
         foreach (var s in mine)
             foreach (int k in s.Fighters)
             {
                 ref var so = ref war.Soldiers[f.F[k].Soldier];
                 if (so.State != SoldierState.Down) continue;
-                if (heldField || so.Treated || so.Blood >= 0.5f || war.Rng.NextDouble() < 0.8) Evacuate(war, f, ref so);
+                if (heldField || so.Treated || so.Blood >= 0.5f || war.Rng.NextDouble() < 0.8)
+                {
+                    // Into the medical chain: slower, and deadlier, from a unit cut off from its depot.
+                    cut ??= !Supply.ClearToDepot(war, m);
+                    Medical.Admit(war, f.F[k].Soldier, cut.Value);
+                }
                 else Die(war, f, f.F[k].Soldier, Cause.LeftBehind);
             }
         war.Recount(m);
@@ -1277,12 +1283,6 @@ public static class Combat
         m.Path = null;
         m.HaltedAt = m.HeldUp = war.Time;
         if (m.Order != null) m.Order.Done = true;
-    }
-
-    static void Evacuate(War war, Fight f, ref Soldier so)
-    {
-        so.State = SoldierState.Evacuated;
-        war.Evacuated[so.Side]++;
     }
 
     static void End(War war, Fight f)
