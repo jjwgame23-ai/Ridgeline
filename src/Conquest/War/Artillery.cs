@@ -345,6 +345,34 @@ public static class Artillery
         }
     }
 
+    /// <summary>
+    /// The preparation before an offensive goes in: in its last hour, up to three batteries each on the enemy units
+    /// known to be within 4 km of its axis, the biggest first. Where they were seen may be hours old.
+    /// </summary>
+    public static void Preparation(War war, Operation op)
+    {
+        int side = op.Side;
+        var axis = op.Axis.Select(id => war.Objectives[id]).ToList();
+        var targets = war.Intel.Known[side]
+            .Where(kv => war.Units[kv.Key].Side == op.Enemy && war.Units[kv.Key].People > 0 && axis.Any(o => Dist(o.X, o.Z, kv.Value.X, kv.Value.Z) < 4000f))
+            .OrderByDescending(kv => kv.Value.Strength).Take(30).ToList();
+        foreach (var (id, e) in targets)
+        {
+            float own = float.MaxValue;
+            foreach (int mid in war.MoverIds)
+            {
+                var u = war.Units[mid];
+                if (u.Side == side && u.People > 0) own = MathF.Min(own, Dist(u.X, u.Z, e.X, e.Z));
+            }
+            for (int k = 0; k < 3; k++)
+            {
+                var fu = Pick(war, side, e.X, e.Z, own, true, false);
+                if (fu == null) break;
+                if (Fire(war, fu, e.X + 75f * Gauss(war.Rng), e.Z + 75f * Gauss(war.Rng), 75f, -1, id, false) != null) war.ArtyMissions[side, 1]++;
+            }
+        }
+    }
+
     /// <summary>The rounds land: on a fight's squads, or on a unit outside fights if it's still there.</summary>
     static void Land(War war, Mission ms)
     {

@@ -88,6 +88,8 @@ public sealed class Unit
     public double RestUntil;
     /// <summary>The objective a battalion garrisons, or -1: one it took in the front line, which it stays on.</summary>
     public int Holds = -1;
+    /// <summary>The planned offensive a battalion is massed for, or -1.</summary>
+    public int Op = -1;
     /// <summary>
     /// Supply, for a mover: fuel in its tanks and their size (L), what it burns per km and per hour running, its food
     /// (kg), and since when it has had none (-1: fed). For a division or brigade, the depot of its support area; for a
@@ -168,6 +170,8 @@ public sealed class Objective
     public readonly bool[] Unreachable = new bool[3];
     /// <summary>For each side, when it may next try for it after an attack on it failed.</summary>
     public readonly double[] Retry = new double[3];
+    /// <summary>When it last changed hands by being taken.</summary>
+    public double TakenAt = double.MinValue;
 }
 
 /// <summary>One of the three armies at war.</summary>
@@ -179,4 +183,6 @@ public sealed class Side
     public int Offensive = -1;
     public int Army = -1;    // the army's top unit
     public int Port = -1;    // the town it landed at
+    /// <summary>When its army may plan its next offensive.</summary>
+    public double NextOp;
 }

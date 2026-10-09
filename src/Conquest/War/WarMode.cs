@@ -173,6 +173,11 @@ public static class WarMode
             }
             int takes = war.Events.Count(e => e.Text.Contains(" takes "));
             sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day");
+            sb.AppendLine("    Offensives:");
+            foreach (var op in war.Operations)
+                sb.AppendLine($"      {war.Sides[op.Side].Name} against {war.Sides[op.Enemy].Name} near {op.Where}: planned day {1 + (int)((6 + op.Planned / 3600) / 24)}, "
+                              + $"{op.Bns.Count} battalions at {op.StartStrength:P0}, in at day {1 + (int)((6 + op.HHour / 3600) / 24)} dawn; "
+                              + (op.Ended < 0 ? $"still going, {op.Taken.Count} places taken" : $"{op.Outcome} after {(op.Ended - op.HHour) / 3600:0} h, {op.Taken.Count} places taken, {op.Bounds} bounds deeper, battalions at {op.EndStrength:P0}"));
             sb.AppendLine("    Artillery:");
             foreach (var sd in war.Sides)
             {

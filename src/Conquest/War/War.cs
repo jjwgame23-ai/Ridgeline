@@ -38,6 +38,8 @@ public sealed class War
     public readonly int[] DiedOfWounds = new int[3], Invalided = new int[3], Healed = new int[3], Recovered = new int[3], Joined = new int[3], Replacements = new int[3];
     /// <summary>The units that move on their own, for loops that only care about those.</summary>
     public readonly List<int> MoverIds = new();
+    /// <summary>The armies' planned offensives, past and running.</summary>
+    public readonly List<Operation> Operations = new();
     /// <summary>Fire missions on their way, and the units that fire them.</summary>
     public readonly List<Mission> Missions = new();
     public readonly List<int> FireUnits = new();
@@ -326,6 +328,7 @@ public sealed class War
     public void Taken(Objective o, Unit by)
     {
         o.Owner = by.Side;
+        o.TakenAt = Time;
         Events.Add((Time, by.Side, $"{Sides[by.Side].Name} takes {o.Name} ({by.Short})", o.X, o.Z));
     }
 }
