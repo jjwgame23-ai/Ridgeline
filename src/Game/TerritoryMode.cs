@@ -68,7 +68,7 @@ public sealed class SiteObjective : IObjective
 ///   out orders: attack a neutral or enemy point, or defend one of ours that's
 ///   under threat. The player's squad can be ordered from the map instead.
 /// </summary>
-public partial class TerritoryMode : Node, IMatch
+public partial class TerritoryMode : Node, IMatch, IMotorHost
 {
     public const float CaptureExtra = 14f;
     const double TickEvery = 1.0, BleedEvery = 15.0, RespawnDelay = 10.0, CommandEvery = 20.0;
@@ -90,6 +90,9 @@ public partial class TerritoryMode : Node, IMatch
     /// <summary>Test runs (tickets=N): start every side with this many, to get to the end game sooner.</summary>
     public static int TicketsOverride;
     public readonly bool[] Out = new bool[3];
+    Valley IMotorHost.Map => Map;
+    List<Squad>[] IMotorHost.Squads => Squads;
+    bool[] IMotorHost.Out => Out;
     /// <summary>
     /// Each side's headquarters, at its base: the last thing it has. An enemy can go for it once the front reaches
     /// it (they hold a point linked to it). Worn down to nothing by more attackers than defenders on it, it's

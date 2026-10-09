@@ -36,9 +36,10 @@ public sealed class Personality
         "Kip", "Lowe", "Moxie", "Noel", "Otis", "Price", "Rudy", "Stroud", "Tully", "Wade",
     };
 
-    public static Personality Roll(RandomNumberGenerator rng, string name)
+    /// <param name="skill">A soldier's own skill (a Conquest soldier's, from the war); rolled on the curve when null.</param>
+    public static Personality Roll(RandomNumberGenerator rng, string name, float? skill = null)
     {
-        float s = Mathf.Clamp(rng.Randfn(0.58f, 0.17f), 0.15f, 0.97f);
+        float s = skill ?? Mathf.Clamp(rng.Randfn(0.58f, 0.17f), 0.15f, 0.97f);
         float J() => rng.RandfRange(0.85f, 1.2f); // individual quirks around the skill curve
         return new Personality
         {

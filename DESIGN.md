@@ -547,7 +547,7 @@ what turns abstract units into embodied squads and back, which is what calibrati
 
 **Slices**
 1. **The ground** (built): the window's terrain, water, roads, woods, fields and towns, read off the island.
-2. **The armies, frozen**: the war run headless to a chosen day, then every unit inside the window embodied where it is, as squads of bots with their soldiers' names and kit, its vehicles, and its orders (holding a place, moving, attacking).
+2. **The armies, frozen** (built): the war run headless to a chosen day, then the units nearest the window's middle embodied where they are, as squads of bots with their soldiers' names, their vehicles and their orders.
 3. **Live**: the abstract war runs on outside in real time. Units crossing the window's edge are promoted or demoted. What happens inside (casualties, ammunition, ground taken) is written back to the war's records.
 4. **The distant layer**: low-detail land and sea to the horizon, and what the war is doing out there (flashes, fires, smoke, flares, sound).
 5. **Moving the window**: rebuilt round the player as they near its edge, behind a load at first.
@@ -569,6 +569,23 @@ what turns abstract units into embodied squads and back, which is what calibrati
   - the port of Porto Tuca (9,300) builds in 8 s, with 1,286 buildings. Its navmesh bakes in 22 s the first time (tiles are cached after), with 686 stretches of sea and inlet barred;
   - making the island itself takes 18 s;
   - both run at 150–160 FPS.
+
+**The armies, frozen** (`ConquestWindow`). `-- mode=window seed=2 day=3 [hour=H] [bots=160] [join=0] [verbose]` runs the war headless to dawn on day 3 (17 s on island 2), opens the window on the biggest fight going on (or midway between the two nearest enemy companies), and brings the armies near its middle in once the navmesh is up. The war is stopped while you play; nothing goes back to it yet (slice 3).
+- **Who comes in.** The battle maps run at about 100–150 bots, and a 4 km stretch of front holds 1,500 or more soldiers, so only the squads, crews and sections nearest the middle are embodied, each whole, up to the cap (160 by default). The cap is shared between the sides by their strength within a kilometre of the middle, so the bubble keeps the war's odds. (Taken nearest first regardless of side, a fight came in at 131 BRAVO to 37 CHARLIE, and CHARLIE's were all down within a minute.)
+- **Who they are.** Each soldier fit to fight (or lightly wounded) becomes a bot under their rank and surname, with their skill from the war. Their role comes from their job: squad leaders lead, machine gunners carry the light machine gun, grenadiers the launcher, anti-tank gunners the light anti-tank weapon, marksmen the marksman's rifle, medics the bag, and the rest are riflemen. Every army still carries the same rifles (there are no per-army infantry kits yet).
+- **Vehicles.** Each vehicle the war unit still has comes in beside it, crewed from its drivers, gunners and crewmen, in its army's model (Bradley, BMP-2, Warrior...). Guns, rocket launchers and engineer vehicles have no embodied model and stay out. Crewmen beyond what a vehicle seats fight on foot.
+- **Where.** A soldier in a fight comes in exactly where the war's fight has him (his squad's place, and his own within it), so a fight carries on rather than restarting. Units not fighting come in at their squad's place in their company.
+- **Orders.**
+  - In a fight, the attackers go for the enemy in it, and the rest hold where they are, facing it.
+  - A unit on the move goes where it was going, clipped to the window.
+  - A unit holding or halted defends where it is: the town district, when it's on one.
+- **The player** takes a rifleman's place in the embodied rifle squad nearest the middle (ALPHA's if it has one there), as that soldier.
+- **The vehicle system** (`MotorPool`) now serves any match through `IMotorHost`. In the window, vehicles lost stay lost: the war decides replacements.
+- **War.Tick** is one step of the whole war, shared by `mode=war` and the window. A 3-day war gives the same results to the last soldier as before it was split out.
+- **Measured** (island 2, day 3, the biggest fight: 11 companies of BRAVO's 75th Motor Rifle Regiment against CHARLIE's 42nd Armoured Infantry Brigade).
+  - 164 soldiers came in (78 BRAVO, 87 CHARLIE) in 42 squads from 6 companies, with 17 vehicles. 1,368 more in the window were left abstract.
+  - The rendered run played at 82 FPS; headless, 179 s of game took 121 s.
+  - **The embodied fight is far bloodier than the abstract one.** 68 of the 164 were killed in 90 seconds, most by BRAVO's BMP gunners at about 220 m, and some crews died with their vehicles. The abstract fight it continues was calibrated to historical casualty rates, a few per cent an hour. Fitting the two together is the calibration this phase folds in. Bots in the open at 200 m in front of autocannons are the first suspects.
 
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.

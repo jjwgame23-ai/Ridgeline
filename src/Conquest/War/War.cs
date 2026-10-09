@@ -250,6 +250,34 @@ public sealed class War
     /// most 8 hours on foot, the most of a normal march day (FM 3-21.18), or 10 hours at the wheel (FM 55-30's drivers'
     /// limit). After that a unit halts until the next day.
     /// </summary>
+    /// <summary>
+    /// One step of the whole war, <paramref name="dt"/> seconds (a minute, as WarMode runs it): marching, supply, the
+    /// wounded and sleep, contact, fights, the guns, and every 10 minutes command, every half hour the ground.
+    /// <paramref name="timed"/> wraps each part (to time it).
+    /// </summary>
+    public void Tick(double dt, Action<string, Action>? timed = null)
+    {
+        timed ??= (_, a) => a();
+        timed("march", () => Step(dt));
+        timed("supply", () =>
+        {
+            Supply.Step(this, dt);
+            Medical.Step(this);
+            Rest.Step(this, dt);
+        });
+        int t = (int)Time;
+        timed("contact", () => Combat.Detect(this, t % 300 == 0));
+        timed("fights", () => Combat.Step(this, dt));
+        timed("guns", () => Artillery.Step(this));
+        if (t % 600 == 0) timed("command", () => Command.Think(this));
+        if (t % 1800 == 0)
+            timed("ground", () =>
+            {
+                UpdateControl();
+                Intel.Forget(Time);
+            });
+    }
+
     public void Step(double dt)
     {
         int day = Day;

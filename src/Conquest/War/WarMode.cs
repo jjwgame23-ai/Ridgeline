@@ -92,24 +92,8 @@ public static class WarMode
         for (int step = 1; step <= days * 86400 / (int)Dt; step++)
         {
             int dayBefore = war.Day;
-            Timed("march", () => war.Step(Dt));
-            Timed("supply", () =>
-            {
-                Supply.Step(war, Dt);
-                Medical.Step(war);
-                Rest.Step(war, Dt);
-            });
+            war.Tick(Dt, Timed);
             int t = (int)war.Time;
-            Timed("contact", () => Combat.Detect(war, t % 300 == 0));
-            Timed("fights", () => Combat.Step(war, Dt));
-            Timed("guns", () => Artillery.Step(war));
-            if (t % 600 == 0) Timed("command", () => Command.Think(war));
-            if (t % 1800 == 0)
-                Timed("ground", () =>
-                {
-                    war.UpdateControl();
-                    war.Intel.Forget(war.Time);
-                });
             if (t % 3600 == 0) rec.Frame();
             if (t % 10800 == 0) rec.Ground();
             if (t % 10800 == 0)

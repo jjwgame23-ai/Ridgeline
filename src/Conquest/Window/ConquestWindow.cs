@@ -1,0 +1,368 @@
+using Godot;
+
+namespace Ridgeline;
+
+/// <summary>Somewhere for a squad to be: a patch of ground round a point, the near side toward a threat when there is one.</summary>
+public sealed class AreaObjective : IObjective
+{
+    public Vector3 Center { get; set; }
+    public float Radius { get; set; } = 30f;
+    /// <summary>Where the enemy is, if known: half the squad's places are on the side facing it.</summary>
+    public Vector3? Threat;
+    public Valley Map = null!;
+
+    public Vector3 PointFor(Bot b, RandomNumberGenerator rng)
+    {
+        float a = rng.Randf() * Mathf.Tau, r = MathF.Sqrt(rng.Randf()) * Radius * 0.8f;
+        var off = new Vector3(MathF.Cos(a) * r, 0f, MathF.Sin(a) * r);
+        if (Threat is { } t && rng.Randf() < 0.5f)
+        {
+            var dir = (t - Center) with { Y = 0f };
+            if (dir.LengthSquared() > 1f && off.Dot(dir) < 0f) off = -off;
+        }
+        return Map.Ground(Center + off);
+    }
+}
+
+/// <summary>
+/// The armies in a Conquest window, frozen at a moment of the war (slice 2 of the playable window). The war, run
+/// headless to that moment, is stopped; every unit near the middle of the window comes in where it is, as squads of
+/// bots, with its vehicles and its orders.
+/// - Who comes in. The battle maps run at about 100-150 bots. So not everyone in a 4 km window can be embodied: the
+///   squads, crews and sections nearest the window's middle are, whole, until the cap is reached (160 by default),
+///   shared between the sides as their strengths within a kilometre of the middle are, so the bubble keeps the war's
+///   odds. (Nearest first regardless of side, a fight of BRAVO against CHARLIE came in at 131 to 37, and CHARLIE's
+///   were all down within a minute.) The rest of the window's units aren't on the ground yet (slice 3 keeps them
+///   abstract round the bubble).
+/// - Where. A soldier in a fight comes in where the war's fight has him: his squad's place and his own within it. Units
+///   not fighting come in at their squad's place in their company.
+/// - Who they are. Each war soldier fit to fight (or lightly wounded) becomes a bot with their name and rank, their
+///   skill from the war, and a role from their job: squad leaders lead, machine gunners carry the light machine gun,
+///   grenadiers the launcher, anti-tank gunners the light anti-tank weapon, marksmen the marksman's rifle, medics their
+///   bag; crews and the rest are riflemen.
+/// - Vehicles. Each vehicle the war unit still has comes in beside it, crewed from its drivers, gunners and crewmen:
+///   IFVs, APCs, tanks, light vehicles, trucks, mortars, air defence, helicopters. Guns and rocket launchers have no
+///   embodied model yet and stay out.
+/// - Orders. A unit holding ground, or halted, defends where it is (a town district, when it's on one). A unit on the
+///   move goes where it was going, clipped to the window. Nothing here is told to the war yet (slice 3).
+/// </summary>
+public partial class ConquestWindow : Node, IMatch, IMotorHost
+{
+    public War War = null!;
+    public Valley Map = null!;
+    public Hud PlayerHud = null!;
+    /// <summary>The window's middle on the island (metres east and south of its centre).</summary>
+    public float CX, CZ;
+    public int Cap = 160;
+    public bool PlayerJoins = true;
+    public static bool Verbose;
+
+    public List<Bot> Bots { get; } = new();
+    public Spectator Spec { get; private set; } = null!;
+    public readonly List<Squad>[] Squads = { new(), new(), new() };
+    public readonly bool[] Out = { true, true, true }; // what's lost here stays lost: the war decides replacements
+    public MotorPool Motor = null!;
+    public Player? PlayerBody { get; private set; }
+    /// <summary>Each embodied squad's war unit, and each bot's war soldier.</summary>
+    public readonly Dictionary<Squad, Unit> UnitOf = new();
+    public readonly Dictionary<ICombatant, int> SoldierOf = new();
+
+    Valley IMotorHost.Map => Map;
+    List<Squad>[] IMotorHost.Squads => Squads;
+    bool[] IMotorHost.Out => Out;
+    public bool Spent(int team) => true;
+    public void BuildFob(int team, Vector3 at) { }
+
+    readonly RandomNumberGenerator _rng = new();
+    readonly Dictionary<int, Vector2> _squadAt = new(), _fighterAt = new(), _enemyAt = new();
+    readonly HashSet<int> _attacking = new();
+    readonly int[] _numbers = new int[3];
+    readonly int[] _killed = new int[3];
+    bool _embodied;
+    double _nextLog;
+
+    public override void _Ready()
+    {
+        _rng.Seed = (ulong)(War.Seed * 7919 + (int)War.Time);
+        BotBrain.ResetStatics();
+        BotBrain.DefaultObjective = null;
+        Squad.ResetAll();
+        Drone.Clear();
+        SmokeScreen.Clear();
+        PerchClaims.Clear();
+        MotorPool.ResetCounters();
+        Fortifications.Clear();
+        Radio.Reset();
+        global::Ridgeline.Intel.Reset();
+        Motor = new MotorPool(this);
+        Spec = new Spectator { Mode = this };
+        AddChild(Spec);
+        // A town district is hostile with an enemy in it.
+        Squad.Hostile = (site, team) => Combatants.All.Any(c => c.Alive && c.Team != team && (c.FeetPos - site.Center with { Y = c.FeetPos.Y }).Length() < site.Radius + 30f);
+        Combatants.Killed += OnKilled;
+    }
+
+    public override void _ExitTree() => Combatants.Killed -= OnKilled;
+
+    public override void _Process(double delta)
+    {
+        // Everyone comes in once the navmeshes are up: before that there's nowhere to put them or for them to go.
+        if (!_embodied)
+        {
+            if (!Map.Nav.Finished || !Map.VehicleNav.Finished || NavigationServer3D.MapGetIterationId(Map.GetWorld3D().NavigationMap) == 0) return;
+            _embodied = true;
+            Embody();
+            return;
+        }
+        Motor.Tick();
+        if (Verbose && Clock.Now >= _nextLog)
+        {
+            _nextLog = Clock.Now + 30.0;
+            Log($"[{Clock.Now:0}s] alive " + string.Join(" / ", Enumerable.Range(0, 3).Select(t => $"{War.Sides[t].Name} {Bots.Count(b => b.Alive && b.Team == t)}"))
+                + $"; killed {_killed[0]}/{_killed[1]}/{_killed[2]}; vehicles " + string.Join(" / ", Enumerable.Range(0, 3).Select(t => Motor.Slots.Count(s => s.Team == t && s.Live is { Destroyed: false })))
+                + "; states " + string.Join(" ", Bots.Where(b => b.Alive).GroupBy(b => b.Brain.State).Select(g => $"{g.Key}:{g.Count()}")));
+        }
+    }
+
+    // ---------------------------------------------------------------- who comes in
+
+    Vector2 Local(float x, float z) => new(x - CX, z - CZ);
+
+    void Embody()
+    {
+        float edge = Map.Half - 150f;
+        // Every war unit with soldiers in it (squads, crews, headquarters sections), where it is in the window.
+        // The fights going on: where each squad and soldier in them is, who's attacking, and where their enemy is.
+        foreach (var f in War.Fights)
+        {
+            if (f.Over) continue;
+            foreach (var s in f.S) _squadAt[s.Unit] = Local(s.X, s.Z);
+            foreach (var fi in f.F)
+                if (!fi.Gone) _fighterAt[fi.Soldier] = Local(f.S[fi.Squad].X + fi.OffX, f.S[fi.Squad].Z + fi.OffZ);
+            foreach (int mid in f.Movers)
+            {
+                var enemy = f.S.Where(s => s.Side != War.Units[mid].Side && s.Alive).ToList();
+                if (enemy.Count > 0) _enemyAt[mid] = Local(enemy.Average(s => s.X), enemy.Average(s => s.Z));
+                if (f.Attacking.Contains(mid)) _attacking.Add(mid);
+            }
+        }
+        var cands = new List<(Unit U, Unit M, Vector2 At, List<int> Fit)>();
+        foreach (var u in War.Units)
+        {
+            if (u.Members.Count == 0 || u.Mover < 0) continue;
+            var m = War.Units[u.Mover];
+            if (m.People <= 0) continue;
+            var at = _squadAt.TryGetValue(u.Id, out var fat) ? fat : Local(m.X + u.OffX, m.Z + u.OffZ);
+            if (MathF.Abs(at.X) > edge || MathF.Abs(at.Y) > edge) continue;
+            var fit = u.Members.Where(s => War.Soldiers[s].State is SoldierState.Fit or SoldierState.Wounded).ToList();
+            if (fit.Count == 0) continue;
+            cands.Add((u, m, at, fit));
+        }
+        // Each side's share of the cap: its share of the soldiers within a kilometre of the middle.
+        var near = new int[3];
+        foreach (var c in cands)
+            if (c.At.LengthSquared() < 1000f * 1000f) near[c.U.Side] += c.Fit.Count;
+        int all = Math.Max(1, near.Sum());
+        var quota = Enumerable.Range(0, 3).Select(t => (int)MathF.Round(Cap * (float)near[t] / all)).ToArray();
+        int n = 0, skipped = 0;
+        var took = new int[3];
+        var movers = new HashSet<int>();
+        foreach (var c in cands.OrderBy(c => c.At.LengthSquared()))
+        {
+            int t = c.U.Side;
+            if (took[t] >= quota[t]) { skipped += c.Fit.Count; continue; }
+            took[t] += c.Fit.Count;
+            n += c.Fit.Count;
+            movers.Add(c.M.Id);
+            Bring(c.U, c.M, c.At, c.Fit);
+        }
+        Log($"--- CONQUEST WINDOW: {War.Isl.Name} day {War.Day} {War.Hour:00.0}h at ({CX / 1000f:0.0}, {CZ / 1000f:0.0}) km ---");
+        Log($"embodied {n} soldiers in {Squads.Sum(s => s.Count)} squads from {movers.Count} companies ("
+            + string.Join(", ", Enumerable.Range(0, 3).Select(t => $"{War.Sides[t].Name} {Bots.Count(b => b.Team == t)}")) + $"), {Motor.Slots.Count} vehicles; "
+            + $"{skipped} more soldiers in the window left abstract, in {cands.Count} units in all");
+        foreach (var mid in movers)
+        {
+            var m = War.Units[mid];
+            Log($"  {War.Sides[m.Side].Name} {m.Name}: {m.People} fit, {Doing(m)}, at {Local(m.X, m.Z).Length():0} m from the middle");
+        }
+        if (PlayerJoins) JoinPlayer();
+        else Spec.Activate(Bots.FirstOrDefault());
+    }
+
+    static string Doing(Unit m) => m.InFight >= 0 ? "fighting" : m.Path != null ? "moving" : "halted";
+
+    /// <summary>One war unit's soldiers and vehicles onto the ground, as a squad and its vehicles' crews.</summary>
+    void Bring(Unit u, Unit m, Vector2 at, List<int> fit)
+    {
+        int side = u.Side;
+        var crewJobs = fit.Where(s => War.Soldiers[s].Job is Job.Driver or Job.Gunner or Job.Crewman or Job.Commander).ToList();
+        var rest = fit.Except(crewJobs).ToList();
+        // Vehicles with an embodied model, each with its crew from the drivers, gunners and crewmen.
+        var vehicles = u.Vehicles.Where(v => !War.Vehicles[v].Lost).Select(v => (V: v, K: Kind(War.Vehicles[v].Class))).Where(x => x.K != null).ToList();
+        var order = OrderFor(u, m, at, side);
+        int k = 0;
+        foreach (var (v, kind) in vehicles)
+        {
+            int need = MotorPool.Crew(kind!.Value);
+            var crew = crewJobs.Take(need).ToList();
+            crewJobs.RemoveRange(0, crew.Count);
+            if (crew.Count < need) { crew.AddRange(rest.Take(need - crew.Count)); rest = rest.Skip(need - crew.Count).ToList(); }
+            if (crew.Count == 0) continue;
+            var sq = NewSquad(side, MotorPool.CrewKind(kind.Value), u);
+            Give(sq, order);
+            float a = k++ * 1.3f;
+            var park = Map.Ground(new Vector3(at.X + MathF.Cos(a) * 14f, 0f, at.Y + MathF.Sin(a) * 14f));
+            foreach (int s in crew) Spawn(s, sq, Role.Crewman, park + new Vector3(_rng.RandfRange(-3f, 3f), 0f, _rng.RandfRange(-3f, 3f)));
+            Motor.Add(kind.Value, side, sq, park, _rng.RandfRange(0f, Mathf.Tau));
+        }
+        rest.AddRange(crewJobs); // crewmen left over (more crew than vehicles: the rest of a tank's four) fight on foot
+        if (rest.Count == 0) return;
+        var squad = NewSquad(side, KindOf(u), u);
+        Give(squad, order);
+        var c = new Vector3(at.X, 0f, at.Y);
+        foreach (int s in rest.OrderBy(s => War.Soldiers[s].Job == Job.SquadLeader ? 0 : 1))
+            Spawn(s, squad, RoleOf(War.Soldiers[s].Job), _fighterAt.TryGetValue(s, out var fp) ? new Vector3(fp.X, 0f, fp.Y)
+                : c + new Vector3(_rng.RandfRange(-6f, 6f), 0f, _rng.RandfRange(-6f, 6f)));
+    }
+
+    Squad NewSquad(int side, SquadKind kind, Unit u)
+    {
+        var sq = new Squad { Team = side, Number = ++_numbers[side], Kind = kind };
+        Squads[side].Add(sq);
+        UnitOf[sq] = u;
+        return sq;
+    }
+
+    void Spawn(int soldier, Squad sq, Role role, Vector3 near)
+    {
+        ref var so = ref War.Soldiers[soldier];
+        string full = People.Name(so.Side, War.Seed, soldier);
+        string call = $"{People.Title(so.Side, so.Rank)} {full[(full.IndexOf(' ') + 1)..]}";
+        var p = Personality.Roll(_rng, call, People.Skill(War.Seed, soldier));
+        var b = new Bot { TeamId = so.Side, P = p, Role = role, Def = Roles.Primary(role), Squad = sq };
+        GetParent().AddChild(b);
+        b.GlobalPosition = Map.Ground(near) + Vector3.Up * 0.3f;
+        if (sq.Objective is { } o) b.Aim.Yaw = Mathf.RadToDeg(MathF.Atan2(-(o.Center.X - near.X), -(o.Center.Z - near.Z)));
+        sq.Join(b);
+        Bots.Add(b);
+        SoldierOf[b] = soldier;
+    }
+
+    /// <summary>What a squad is to do, from what its war unit was doing.</summary>
+    (IObjective Obj, Site? Site, bool Defend, string Verb, string What) OrderFor(Unit u, Unit m, Vector2 at, int side)
+    {
+        float edge = Map.Half - 150f;
+        var threat = _enemyAt.TryGetValue(m.Id, out var ea) ? new Vector3(ea.X, 0f, ea.Y) : Threat(m);
+        // In a fight: the attackers go for the enemy in it, the rest hold where they are, facing it.
+        if (m.InFight >= 0 && _attacking.Contains(m.Id) && threat is { } enemy)
+            return (new AreaObjective { Center = Map.Ground(enemy), Radius = 40f, Threat = enemy, Map = Map }, null, false, "Attack", "");
+        if (m.Path != null && m.InFight < 0)
+        {
+            var go = Local(m.GoX + u.OffX, m.GoZ + u.OffZ);
+            go = new Vector2(Math.Clamp(go.X, -edge, edge), Math.Clamp(go.Y, -edge, edge));
+            bool attack = m.Order is { Kind: OrderKind.Occupy } || War.Units[Math.Max(0, m.Parent)].Order is { Kind: OrderKind.Occupy };
+            return (new AreaObjective { Center = Map.Ground(new Vector3(go.X, 0f, go.Y)), Radius = 30f, Threat = threat, Map = Map }, null, false, attack ? "Attack" : "Move", "");
+        }
+        // Holding: a town district it stands on, or the ground where it is.
+        var here = new Vector3(at.X, 0f, at.Y);
+        var site = Map.Sites.Where(s => (s.Center - here with { Y = s.Center.Y }).Length() < s.Radius + 60f).OrderBy(s => (s.Center - here with { Y = s.Center.Y }).Length()).FirstOrDefault();
+        if (site != null) return (new SiteObjective { Site = site, Map = Map, R = site.Radius + 20f }, site, true, "Defend", site.Name);
+        return (new AreaObjective { Center = Map.Ground(here), Radius = 30f, Threat = threat, Map = Map }, null, true, "Defend", "");
+    }
+
+    static void Give(Squad sq, (IObjective Obj, Site? Site, bool Defend, string Verb, string What) o) => sq.Order(o.Site, o.Obj, o.Defend, o.Verb, o.What);
+
+    /// <summary>The nearest enemy unit the war's side knows of within 3 km, in window coordinates.</summary>
+    Vector3? Threat(Unit m)
+    {
+        Unit? best = null;
+        float bd = 3000f * 3000f;
+        foreach (int id in War.MoverIds)
+        {
+            var e = War.Units[id];
+            if (e.Side == m.Side || e.People <= 0) continue;
+            float d = (e.X - m.X) * (e.X - m.X) + (e.Z - m.Z) * (e.Z - m.Z);
+            if (d >= bd) continue;
+            bd = d;
+            best = e;
+        }
+        if (best == null) return null;
+        var l = Local(best.X, best.Z);
+        return new Vector3(l.X, 0f, l.Y);
+    }
+
+    // ---------------------------------------------------------------- the war's terms in the battle's
+
+    static VKind? Kind(VClass c) => c switch
+    {
+        VClass.Ltv => VKind.LTV,
+        VClass.Truck or VClass.Tanker or VClass.Ambulance => VKind.Transport,
+        VClass.Apc => VKind.APC,
+        VClass.Ifv => VKind.IFV,
+        VClass.Tank => VKind.MBT,
+        VClass.LightTank => VKind.MGS,
+        VClass.Mortar => VKind.Mortar,
+        VClass.Spaa => VKind.SPAA,
+        VClass.Helicopter => VKind.UH,
+        VClass.Gunship => VKind.AH,
+        _ => null, // guns, rocket launchers and engineer vehicles have no embodied model yet
+    };
+
+    static Role RoleOf(Job j) => j switch
+    {
+        Job.SquadLeader or Job.Commander => Role.Leader,
+        Job.MachineGunner => Role.AutoRifleman,
+        Job.Grenadier => Role.Grenadier,
+        Job.AntiTank => Role.AntiTank,
+        Job.Marksman => Role.Marksman,
+        Job.Medic => Role.Medic,
+        Job.Engineer => Role.Engineer,
+        Job.Supply => Role.Ammo,
+        _ => Role.Rifleman,
+    };
+
+    static SquadKind KindOf(Unit u) => u.Arm switch
+    {
+        Arm.Recon => SquadKind.Recon,
+        Arm.Engineers => SquadKind.Engineer,
+        Arm.Logistics or Arm.Maintenance or Arm.Medical => SquadKind.Logistics,
+        _ => SquadKind.Rifle,
+    };
+
+    // ---------------------------------------------------------------- the player
+
+    /// <summary>The player takes a rifleman's place in the embodied rifle squad nearest the middle (ALPHA's if it has one there).</summary>
+    void JoinPlayer()
+    {
+        var sq = Squads[0].Concat(Squads[1]).Concat(Squads[2]).Where(s => s.Kind == SquadKind.Rifle && s.Members.Count > 1)
+            .OrderBy(s => s.Team == 0 ? 0 : 1).ThenBy(s => s.Position?.LengthSquared() ?? float.MaxValue).FirstOrDefault();
+        if (sq == null)
+        {
+            Spec.Activate(Bots.FirstOrDefault());
+            return;
+        }
+        var stand = sq.Members.OfType<Bot>().LastOrDefault(b => b.Role == Role.Rifleman) ?? sq.Members.OfType<Bot>().Last();
+        var p = new Player { TeamId = sq.Team, Kit = Role.Rifleman };
+        GetParent().AddChild(p);
+        p.GlobalPosition = stand.GlobalPosition;
+        sq.Members.Remove(stand);
+        Bots.Remove(stand);
+        if (SoldierOf.Remove(stand, out int soldier)) SoldierOf[p] = soldier;
+        stand.QueueFree();
+        sq.Join(p);
+        PlayerBody = p;
+        PlayerHud.P = p;
+        Log($"the player is {War.Who(soldier)}, {sq.Name} ({UnitOf[sq].Name})");
+    }
+
+    void OnKilled(ICombatant victim, HitInfo hit)
+    {
+        _killed[victim.Team]++;
+        Log($"[{Clock.Now:0}s] {hit.Shooter?.Callsign ?? "?"} ({(hit.Shooter != null ? War.Sides[hit.Shooter.Team].Name : "?")}) killed {victim.Callsign} ({War.Sides[victim.Team].Name}), {hit.Distance:0} m");
+    }
+
+    static void Log(string s)
+    {
+        if (Verbose) GD.Print(s);
+    }
+}

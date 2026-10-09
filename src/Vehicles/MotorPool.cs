@@ -2,6 +2,18 @@ using Godot;
 
 namespace Ridgeline;
 
+/// <summary>What the motor pool needs of the match it serves (TerritoryMode, or a Conquest window's).</summary>
+public interface IMotorHost
+{
+    Valley Map { get; }
+    List<Squad>[] Squads { get; }
+    /// <summary>Sides out of reserves: their lost vehicles don't come back.</summary>
+    bool[] Out { get; }
+    bool Spent(int team);
+    Node GetParent();
+    void BuildFob(int team, Vector3 at);
+}
+
 /// <summary>
 /// Each side's vehicles: which it fields (by team size), where they park at base,
 /// who crews them, when a lost one comes back, and the jobs the non-combat ones do:
@@ -47,11 +59,11 @@ public sealed partial class MotorPool
         public double ShotsCheckedAt;
     }
 
-    readonly TerritoryMode _m;
+    readonly IMotorHost _m;
     public readonly List<Slot> Slots = new();
     double _next;
 
-    public MotorPool(TerritoryMode m) => _m = m;
+    public MotorPool(IMotorHost m) => _m = m;
 
     /// <summary>What a side of n fields: more, and heavier, as the side grows.</summary>
     /// <summary>
