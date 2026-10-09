@@ -89,4 +89,7 @@ public sealed class Territory
 
     /// <summary>Squares held by an enemy of <paramref name="side"/>, or with enemy troops on them.</summary>
     public bool Hostile(int c, int side) => (Owner[c] >= 0 && Owner[c] != side) || (_present[c] & ~(1 << side) & 7) != 0;
+
+    /// <summary>A square one enemy holds or has troops in.</summary>
+    public bool HeldBy(int c, int enemy) => Owner[c] == enemy || (_present[c] & (1 << enemy)) != 0;
 }

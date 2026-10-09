@@ -31,6 +31,8 @@ public sealed class War
     public readonly int[,] Hits = new int[3, 10], Kills = new int[3, 10];
     /// <summary>Each side's vehicles destroyed, by cause.</summary>
     public readonly int[,] Wrecked = new int[3, 10];
+    /// <summary>What the war is doing just now, for the watchdog that reports a run stuck in one place.</summary>
+    public volatile string Doing = "";
     /// <summary>A fight to trace (trace=N): its state every 30 s, for reading how fights go.</summary>
     public int Trace = -1;
     public readonly List<string> TraceLines = new();

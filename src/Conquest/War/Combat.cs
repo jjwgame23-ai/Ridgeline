@@ -173,12 +173,18 @@ public static class Combat
                     // back or passing by, or one facing another it already knows of, watches and reports. (Any unit on
                     // the move used to count as coming on, so a company falling back started a new fight with the one
                     // it had just left; and two holding 500 m apart fought all day.)
-                    bool coming = d < 200f || (fresh && d < 600f) || Closing(u, v, d) || Closing(v, u, d);
+                    // A unit holding ground engages whatever moves through its field of fire: defending a sector is
+                    // stopping what crosses it. (Garrisons used to watch enemy columns drive past into their rear.)
+                    bool coming = d < 200f || (fresh && d < 600f) || Closing(u, v, d) || Closing(v, u, d)
+                                  || (v.Path != null && Holding(war, u)) || (u.Path != null && Holding(war, v));
                     if (seen && coming && d <= (u.Armed || v.Armed ? 2500f : 1500f)) Contact(war, u, v);
                 }
             }
         }
     }
+
+    /// <summary>Holding ground: a battalion garrisoning an objective, or one of its companies.</summary>
+    static bool Holding(War war, Unit u) => u.Holds >= 0 || (u.Parent >= 0 && war.Units[u.Parent].Holds >= 0);
 
     /// <summary>Whether a unit is on the move toward another: where it's going is at least 300 m nearer the other than it is now.</summary>
     static bool Closing(Unit a, Unit b, float d) =>
@@ -390,6 +396,7 @@ public static class Combat
         foreach (var f in war.Fights)
         {
             if (f.Over) continue;
+            war.Doing = $"fight {f.Id}";
             for (float t = 0f; t < dt && !f.Over;)
             {
                 int k = f.Close ? 1 : 3;

@@ -58,6 +58,7 @@ public static class Command
             var army = war.Units[side.Army];
             if (now >= army.ThinkAt)
             {
+                war.Doing = $"plan army {side.Name}";
                 PlanArmy(war, army);
                 army.ThinkAt = now + ArmyEvery;
             }
@@ -65,12 +66,14 @@ public static class Command
             {
                 if (now < d.ThinkAt) continue;
                 d.ThinkAt = now + DivisionEvery;
+                war.Doing = $"plan division {d.Short}";
                 PlanDivision(war, d);
             }
             foreach (var b in war.Below(army).Where(b => b.Echelon == Echelon.Brigade && Manoeuvre(b)))
             {
                 if (now < b.ThinkAt) continue;
                 b.ThinkAt = now + BrigadeEvery;
+                war.Doing = $"plan brigade {b.Short}";
                 PlanBrigade(war, b);
             }
         }
@@ -79,10 +82,15 @@ public static class Command
             {
                 u.Order = u.Next;
                 u.Next = null;
+                war.Doing = $"execute {u.Short}";
                 Execute(war, u);
             }
         foreach (var bn in war.Units)
-            if (bn.Echelon == Echelon.Battalion && bn.Order is { Kind: OrderKind.Occupy, Done: false } o) CheckHeld(war, bn, o);
+            if (bn.Echelon == Echelon.Battalion && bn.Order is { Kind: OrderKind.Occupy, Done: false } o)
+            {
+                war.Doing = $"check {bn.Short}";
+                CheckHeld(war, bn, o);
+            }
     }
 
     /// <summary>The army's task forces: its divisions, and the manoeuvre brigades directly under it.</summary>
@@ -208,10 +216,15 @@ public static class Command
         var bns = Kids(war, bde, Echelon.Battalion).Where(Manoeuvre).ToList();
         foreach (var bn in bns)
             if (bn.Holds >= 0 && (war.Objectives[bn.Holds].Owner != side || !FrontLine(war, side, war.Objectives[bn.Holds]))) bn.Holds = -1;
-        int committed = bns.Count(bn => bn.Holds >= 0 || bn.Next != null || bn.Order is { Kind: OrderKind.Occupy, Done: false });
+        // A reserve is kept from the battalions free to manoeuvre, when there are two or more of them; those holding
+        // ground are in place already. (With every battalion but one holding, the last used to stay back as the reserve,
+        // and a third of each army's battalions sat idle while its offensive died.)
+        int holding = bns.Count(bn => bn.Holds >= 0), free = bns.Count - holding;
+        int committed = bns.Count(bn => bn.Holds < 0 && (bn.Next != null || bn.Order is { Kind: OrderKind.Occupy, Done: false }));
+        var held = war.Units.Where(u => u.Side == side && u.Holds >= 0).Select(u => u.Holds).ToHashSet();
         foreach (var bn in bns)
         {
-            if (bns.Count >= 3 && committed >= bns.Count - 1) break; // one kept back in reserve
+            if (bns.Count >= 3 && free >= 2 && committed >= free - 1) break; // one kept back in reserve
             if (bn.Holds >= 0 || bn.Next != null || bn.Order is { Done: false } || war.Time < bn.RestUntil || Strength(war, bn) < 0.5f) continue;
             var (x, z) = Pos(war, bn);
             int pick = bde.Tasks.Where(id =>
@@ -220,6 +233,19 @@ public static class Command
                     return o.Owner != side && !o.Unreachable[side] && war.Time >= o.Retry[side] && o.Claims[side] < (o.Owner >= 0 ? 2 : 1);
                 })
                 .OrderBy(id => Sq(war.Objectives[id].X - x, war.Objectives[id].Z - z)).FirstOrDefault(-1);
+            if (pick < 0)
+            {
+                // Nothing to take: hold one of the side's own objectives in the front line that nobody holds yet, within
+                // 12 km, so the front is a line of strongpoints 4-5 km apart, not the odd garrison where something was
+                // taken. Only facing an enemy the army isn't attacking: against that one, its strength goes into the
+                // attack (economy of force, FM 3-0). (Ground between garrisons used to lie open, and an offensive walked
+                // into the towns behind them: 70-130 places changed hands a day, many without a shot.)
+                pick = war.Objectives.Where(o => o.Owner == side && o.Claims[side] == 0 && !held.Contains(o.Id) && Sq(o.X - x, o.Z - z) < 12_000f * 12_000f
+                                                 && Enumerable.Range(0, 3).Any(e => e != side && e != war.Sides[side].Offensive && Faces(war, o, e)))
+                    .OrderBy(o => Sq(o.X - x, o.Z - z)).Select(o => o.Id).FirstOrDefault(-1);
+                if (pick < 0) continue;
+                held.Add(pick);
+            }
             if (pick < 0) continue;
             var obj = war.Objectives[pick];
             obj.Claims[side]++;
@@ -406,6 +432,17 @@ public static class Command
     }
 
     static float Sq(float dx, float dz) => dx * dx + dz * dz;
+
+    /// <summary>Facing one enemy: ground it holds or has troops in within 5 km.</summary>
+    static bool Faces(War war, Objective o, int enemy)
+    {
+        var ctl = war.Ctl;
+        int n = (int)MathF.Ceiling(5000f / Territory.CellM), c = ctl.CellOf(o.X, o.Z), cx = c % ctl.N, cz = c / ctl.N;
+        for (int y = cz - n; y <= cz + n; y++)
+        for (int xx = cx - n; xx <= cx + n; xx++)
+            if ((uint)xx < (uint)ctl.N && (uint)y < (uint)ctl.N && ctl.HeldBy(y * ctl.N + xx, enemy)) return true;
+        return false;
+    }
 
     /// <summary>In the front line: enemy or contested ground within 5 km of it.</summary>
     static bool FrontLine(War war, int side, Objective o) => EnemyNear(war, side, o.X, o.Z, 5000f);

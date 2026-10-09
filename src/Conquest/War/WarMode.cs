@@ -21,6 +21,21 @@ public static class WarMode
             a[kv[0]] = kv.Length > 1 ? kv[1] : "";
         }
         if (!a.TryGetValue("mode", out var mode) || mode != "war") return false;
+        try
+        {
+            Run(from, a);
+        }
+        catch (Exception e)
+        {
+            // Left to Godot, an exception would end the war half run and leave Godot idling, which looks like a hang.
+            GD.PrintErr($"war: Exception: {e}");
+            from.GetTree().Quit(1);
+        }
+        return true;
+    }
+
+    static void Run(Node from, Dictionary<string, string> a)
+    {
         System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
         int seed = a.TryGetValue("seed", out var s) && int.TryParse(s, out var sv) ? sv : 1;
         int n = a.TryGetValue("size", out var z) && int.TryParse(z, out var zv) ? Math.Max(64, zv / 4 * 4) : 1280;
@@ -55,10 +70,21 @@ public static class WarMode
         var clocks = new Dictionary<string, Stopwatch> { ["march"] = new(), ["contact"] = new(), ["fights"] = new(), ["command"] = new(), ["ground"] = new() };
         void Timed(string k, Action a)
         {
+            war.Doing = k;
             clocks[k].Start();
             a();
             clocks[k].Stop();
         }
+        // A watchdog: if the war sits in one place for 15 s of real time, say where, so a hang can be found.
+        string seen = "";
+        int still = 0;
+        using var watch = new System.Threading.Timer(_ =>
+        {
+            string now = $"{war.Time:0} {war.Doing}";
+            still = now == seen ? still + 5 : 0;
+            seen = now;
+            if (still == 15) Note($"war: stuck at {war.Time:0} s in {war.Doing}");
+        }, null, 5000, 5000);
         const double Dt = 60;
         for (int step = 1; step <= days * 86400 / (int)Dt; step++)
         {
@@ -103,7 +129,7 @@ public static class WarMode
         rec.Write(stem + "-map.png", stem + ".html", report);
         Note($"war: wrote {stem}-report.txt, -start.png and .html");
         from.GetTree().Quit();
-        return true;
+        return;
     }
 
     /// <summary>
