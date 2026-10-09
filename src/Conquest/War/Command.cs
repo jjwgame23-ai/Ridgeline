@@ -385,7 +385,7 @@ public static class Command
     static bool Free(War war, Unit bn) => bn.Echelon == Echelon.Battalion && Manoeuvre(bn) && bn.Holds < 0 && bn.Op < 0 && Strength(war, bn) >= 0.5f;
 
     /// <summary>Supplied for an operation: every part of it with fuel, food and half its ammunition (see <see cref="Supply.Ready"/>).</summary>
-    internal static bool Supplied(War war, Unit bn) => Movers(war, bn).All(m => Supply.Ready(war, m));
+    internal static bool Supplied(War war, Unit bn) => Movers(war, bn).All(m => Supply.Ready(war, m) && Rest.Ready(m));
 
     /// <summary>Why an idle battalion isn't on an operation, for the report.</summary>
     public static string Why(War war, Unit bn)
@@ -398,6 +398,7 @@ public static class Command
         {
             var ms = Movers(war, bn).ToList();
             if (ms.Any(m => m.Food <= 0f)) return "unsupplied: hungry";
+            if (ms.Any(m => !Rest.Ready(m))) return "tired";
             if (ms.Any(m => m.Mob != Mobility.Foot && m.FuelCap > 0f && m.Fuel < m.FuelCap / 3f)) return "unsupplied: fuel";
             return "unsupplied: ammunition";
         }

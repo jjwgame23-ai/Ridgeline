@@ -11,7 +11,7 @@ public sealed class Operation
     public double Planned, HHour, Ended = -1, LastTake;
     public bool Attacking, Prepared;
     public int Bounds;
-    public float StartStrength, EndStrength;
+    public float StartStrength, EndStrength, StartOwed, EndOwed;
     public string Outcome = "";
 }
 
@@ -23,14 +23,15 @@ public sealed class Operation
 /// - The force. Enough battalions for three to one against that strength (at least a strong company assumed on each
 ///   enemy place), 4 to 12: first those not tied down, then
 ///   garrisons pulled out of quiet stretches of the front against the same enemy, nearest first. Those holding against
-///   the other enemy stay (economy of force). Each has to be at 80% strength or more and supplied.
-/// - Assembly. They move to an assembly area 6 km short of the axis and attack at dawn (05:30), at least 8 hours after
+///   the other enemy stay (economy of force). Each has to be at 80% strength or more, supplied and rested.
+/// - Assembly. They move to an assembly area 6 km short of the axis and attack at dawn (05:30), at least 12 hours after
 ///   the plan. In the last hour the guns fire a preparation on the enemy units known to be on the axis.
 /// - The attack. The battalions go in together, two on each held place. They don't stop to hold what they take: other
 ///   battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper.
-/// - The end. The offensive stops when its battalions are worn to 70% of their strength on average, after three days,
-///   when it has taken nothing for a day, or when it has nothing left to take; the army regroups for three days before
-///   the next. (Battalions used to go each for
+/// - The end. The offensive stops when its battalions are worn to half their strength on average (the species will
+///   spend itself where human armies stopped at 70%), when its companies are exhausted, when it has taken no new ground
+///   for a day, or when it has nothing left to take. The army plans the next for at least a day, and launches it once
+///   enough battalions are rested, fed, supplied and strong (at 80% or more) again. (Battalions used to go each for
 ///   whatever was nearest and then hold it, so within a week most of every army was holding ground and the fronts froze.)
 /// </summary>
 public static class Offensive
@@ -109,7 +110,7 @@ public static class Offensive
         var op = new Operation
         {
             Id = war.Operations.Count, Side = side.Index, Enemy = enemy, X = seed.X, Z = seed.Z, Where = seed.Name, Planned = war.Time,
-            HHour = NextDawn(war.Time + 8 * 3600),
+            HHour = NextDawn(war.Time + 12 * 3600),
         };
         op.Axis.AddRange(cands.Where(p => Sq(p.X - seed.X, p.Z - seed.Z) < Cluster * Cluster)
             .OrderBy(p => reach[war.Ctl.CellOf(p.X, p.Z)]).Select(p => p.Id));
@@ -143,6 +144,7 @@ public static class Offensive
     static void Launch(War war, Operation op)
     {
         op.Attacking = true;
+        op.StartOwed = Owed(war, op.Bns.Select(id => war.Units[id]));
         op.LastTake = war.Time;
         war.Events.Add((war.Time, op.Side, $"{war.Sides[op.Side].Name}'s offensive near {op.Where} goes in", op.X, op.Z));
         foreach (int id in op.Bns) Next(war, op, war.Units[id]);
@@ -170,10 +172,12 @@ public static class Offensive
     {
         var bns = op.Bns.Select(id => war.Units[id]).ToList();
         float strength = bns.Average(b => Command.Strength(war, b));
-        // Called off when its battalions are worn to 70% (US doctrine reckons a unit below that unfit for offensive
-        // operations), after three days, or when it has taken nothing for a day. (Offensives that took nothing used to
-        // grind on for the full three days, and those that did were fought down to 60%.)
-        string end = strength < 0.7f ? "worn down" : war.Time - op.HHour > 3 * 86400 ? "ran its course" : war.Time - op.LastTake > 86400 ? "stalled" : "";
+        // Called off when its battalions are worn to half their strength (they'll put their lives on the line where
+        // human armies stopped at 70%), when its companies are exhausted (16 hours of sleep owed on average), or when
+        // it has taken nothing for a day. No limit of days: it goes on as long as the troops can. (It used to stop after
+        // three days, a human army's rhythm; that, not the troops, ended most offensives.)
+        float owed = Owed(war, bns);
+        string end = strength < 0.5f ? "worn down" : owed >= Rest.Exhausted ? "exhausted" : war.Time - op.LastTake > 86400 ? "stalled" : "";
         bool waiting = false, any = false;
         if (end == "")
             foreach (var b in bns)
@@ -192,17 +196,25 @@ public static class Offensive
         if (end == "") return;
         op.Ended = war.Time;
         op.EndStrength = strength;
+        op.EndOwed = owed;
         op.Outcome = end;
         foreach (var b in bns)
         {
             b.Op = -1;
             b.RestUntil = Math.Max(b.RestUntil, war.Time + 6 * 3600);
         }
-        // The army regroups before the next: resupply, replacements absorbed, a new plan. Three days for an offensive
-        // of a few brigades (Soviet practice gave weeks between front operations). (With a day's pause, the armies
-        // attacked without let-up and ALPHA lost a quarter of its strength killed in a month.)
-        war.Sides[op.Side].NextOp = war.Time + 3 * 86400;
+        // A day at least to plan the next; it goes in when enough battalions are rested, fed, supplied and strong again.
+        // (Before readiness was checked, a day's pause had the armies attacking without let-up, and ALPHA lost a quarter
+        // of its strength killed in a month; three days' pause was a human army's rhythm.)
+        war.Sides[op.Side].NextOp = war.Time + 86400;
         war.Events.Add((war.Time, op.Side, $"{war.Sides[op.Side].Name}'s offensive near {op.Where} ends ({end}) after {(war.Time - op.HHour) / 3600:0} h: {op.Taken.Count} places taken", op.X, op.Z));
+    }
+
+    /// <summary>The sleep its battalions' companies owe, on average.</summary>
+    static float Owed(War war, IEnumerable<Unit> bns)
+    {
+        var companies = bns.SelectMany(b => Command.TopMovers(war, b)).Where(m => m.People > 0).ToList();
+        return companies.Count > 0 ? companies.Average(m => m.SleepDebt) : 0f;
     }
 
     /// <summary>The next bound: enemy places within 6 km beyond what the offensive has taken.</summary>
@@ -221,8 +233,13 @@ public static class Offensive
     public static void Took(War war, Unit bn, Objective obj)
     {
         var op = war.Operations[bn.Op];
-        if (!op.Taken.Contains(obj.Id)) op.Taken.Add(obj.Id);
-        op.LastTake = war.Time;
+        // Only new ground is progress. (A place lost and taken back used to count, so an offensive seesawing over one
+        // bridge, taken 127 times, never stalled and ran on for three weeks.)
+        if (!op.Taken.Contains(obj.Id))
+        {
+            op.Taken.Add(obj.Id);
+            op.LastTake = war.Time;
+        }
         bn.RestUntil = war.Time + 3600;
     }
 }

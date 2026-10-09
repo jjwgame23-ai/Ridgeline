@@ -97,6 +97,8 @@ public sealed class Unit
     /// </summary>
     public float Fuel, FuelCap, PerKm, Idle, Food;
     public double HungrySince = -1;
+    /// <summary>Hours of sleep the company owes (see <see cref="Rest"/>).</summary>
+    public float SleepDebt;
     public int Depot = -1;
     public bool Hauls;
     /// <summary>

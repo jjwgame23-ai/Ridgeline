@@ -110,12 +110,13 @@ A whole war on a generated island of about 100 × 100 km. Each side fields an ar
 - Each side starts with a small area round its port. The aim is the whole island.
 
 **The soldiers**
-- A species that exists to fight, and enjoys it.
+- A species that exists to fight, and enjoys it. They'd fight every day if they could.
   - There's no morale: no panic, rout, surrender or combat stress.
-  - They want to stay alive to go on fighting, so they take cover and their leaders withdraw on purpose. Dying doesn't bother them.
-- They sleep, eat and tire.
+  - They want to stay alive to go on fighting, so they take cover and their leaders withdraw on purpose. Dying doesn't bother them, so they put their lives on the line far longer than human soldiers: a company fights on to half its men, and an offensive to half its strength.
+- They sleep, eat and tire. The brake on their wars is the body, not the mind: fighting is hard physical work, but leaves no weight on them.
   - In the line they eat rations where they are. When it's quiet, a field kitchen's cooks send hot food up. At the rear there's a mess.
   - Lost sleep costs judgement and shooting, about 25% per day awake (Belenky et al. 1994).
+  - So their wars run in surges: days of all-out fighting, then as long as it takes to sleep, eat, refill and plan the next.
 - No civilians: the towns are empty.
 - Every soldier has a record: an identity computed from the world seed and their number (so it costs nothing to keep), and what has happened to them (wounds, kills, kit, where they are).
 - Skill grows with combat (`Personality`), so veterans and new replacements fight differently.
@@ -345,10 +346,10 @@ The code is in `src/Conquest/War/`.
 - **The force.**
   - Battalions for three to one against what's there: what has been seen, but at least a strong company assumed on each enemy place. That comes to 4 to 12 battalions.
   - First those not tied down, then garrisons pulled out of quiet stretches of the front against the same enemy, nearest first. Those holding against the other enemy stay (economy of force).
-  - Each must be at 80% strength or more, and supplied.
-- **Assembly.** They gather 6 km short of the axis and go in at dawn, at least 8 hours after the plan. In the last hour the guns fire a preparation on the enemy units known to be there.
+  - Each must be at 80% strength or more, supplied, and rested (owing less than 8 hours' sleep).
+- **Assembly.** They gather 6 km short of the axis and go in at dawn, at least 12 hours after the plan. In the last hour the guns fire a preparation on the enemy units known to be there.
 - **The attack.** The battalions go in together, two on each held place. They don't stop to hold what they take: other battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper.
-- **The end.** It's called off when its battalions are worn to 70% on average (US doctrine reckons a unit below that unfit for offensive operations), after three days, or after a day without taking anything. The army then regroups for three days.
+- **The end.** It's called off when its battalions are worn to half their strength on average, when its companies are exhausted (16 hours of sleep owed on average), or after a day without taking new ground (a place lost and retaken doesn't count). There is no limit of days: it goes on as long as the troops can. US doctrine reckons a unit below 70% unfit for offensive operations; this species goes on. The army then plans the next for at least a day, and launches it once enough battalions are rested, fed, supplied and back at 80%.
 
 **Territory and intel** (`Territory`, `WarIntel`): 1 km squares, held by whoever alone has troops within 1.5 km. Commanders plan on the enemy their side has seen, for six hours after.
 
@@ -371,7 +372,7 @@ The code is in `src/Conquest/War/`.
 - Wounds: a fifth killed outright, a third down (a third of those bleed to death within the hour unless a medic or squadmate stops it), the rest lightly wounded and fighting on.
 - Companies decide every 30 s:
   - attack if advancing, at 3:1 against a dug-in enemy and 2.5:1 against a hasty one (FM 3-90's planning ratios), bounding and assaulting from 60 m;
-  - pull back by bounds, half the squads covering, when outnumbered 2:1 (6:1 dug in, what a prepared position is worth by the 3:1 an attack needs) or after losing 30%;
+  - pull back by bounds, half the squads covering, when outnumbered 2:1 (6:1 dug in, what a prepared position is worth by the 3:1 an attack needs) or after losing half its men (human soldiers were reckoned spent at three in ten);
   - otherwise hold.
 - A fight ends when it's quiet, when one side is gone, or after half an hour with nobody coming on.
 - A company held up by enemies still standing in its way halts and its battalion decides what next. One that was beaten off falls back 2 km, away from the enemy and toward its own rear.
@@ -427,12 +428,20 @@ The code is in `src/Conquest/War/`.
 - **Joining.** Soldiers back from hospital and replacements reach their unit with its nightly resupply, if it gets through to them, and are issued their basic load.
 - **Tickets.** A side's headcount: 50,000 at the start, less the dead, plus the replacements landed.
 
+**Sleep and tiredness** (`Rest`): what stops these soldiers is the body. Tiredness is physical only, with no combat stress.
+- **Sleep owed.** Awake, a company runs up half an hour of sleep owed every hour, so a normal 16-hour day is paid off by 8 hours asleep. Marching on foot runs it up at three quarters, riding at a half, and fighting at one and a half (hard physical work). Hunger adds a quarter.
+- **Sleeping.** A company halted and out of a fight sleeps by night (20:30–05:30), and by day too once it owes 8 hours. In the rear everyone sleeps and pays off an hour an hour. In the line (enemy ground within 2 km) they sleep in shifts, half at a time, and pay off half as fast.
+- **What it costs.** Lost sleep costs judgement and shooting, about 25% per day awake (Belenky et al. 1994): aim falls by a quarter for every 16 hours owed, to no worse than 30%.
+- **Readiness.** A battalion with a company owing 8 hours or more isn't sent on an operation ("tired" in the report's "why idle" line). An offensive whose companies owe 16 hours on average is called off: exhausted.
+- **Measured** (30 days, seed 2). Offensives go in owing 1–5 hours and end owing 3–9. None was called off exhausted: marches stop for the night, so even an attacking battalion sleeps in shifts most nights. Sleep shows instead in the shooting (up to an eighth worse late in an offensive) and in battalions that aren't ready for the next. Without night attacks, it's attrition and stalling that end an offensive, not tiredness.
+- A column halted for the night or at the end of its day's march beds down like any other. (Those still had a route and stayed awake all night, so offensives that had marched to their assembly areas went in owing 10 hours and were called off exhausted 8 hours in.)
+
 **The assault test** (`AssaultTest`): `-- mode=assault [seed=2] [runs=20] [attack=9] [defend=3] [arty=0|1]`.
 - BRAVO's first rifle companies dig in round the town nearest the island's middle. ALPHA's first rifle companies set off at it from 3 km out and press on, renewing the attack every half hour until the place falls. With `arty=1`, both sides' battalion mortars set up behind their lines. Everyone else stands aside.
 - The same attack is fought with fresh dice each run. `assault-N.txt` gives what it cost each side, how often it carried the town (counting only defending companies that were attacked), how long it took, rounds per hit, and the share of hits inside 100 m.
 - Measured: 9 companies (1,374 men) against 3 dug in (255 men and 30 BMPs), with mortars, 12 runs.
-  - It carried the town 8 times in 12, in a median 2½ hours.
-  - The attackers lost 23% (5% killed); the defenders lost 52% (12% killed).
+  - It carried the town 7 times in 12, in a median 2¾ hours.
+  - The attackers lost 25% (6% killed); the defenders lost 57% (13% killed). Before companies fought on to half their men, it was 23% and 52%, carried 8 times.
   - The mark for a battalion attack at three to one on a prepared company position is 5–15% for the attackers, more for the defenders, over hours, carrying it more often than not. The attackers' losses run high.
 - Before the 6:1 rule for troops dug in, a defending company left its trenches at its first sight of the attack 1.4 km off, and no attack ever had to carry a position.
 
@@ -458,7 +467,10 @@ The code is in `src/Conquest/War/`.
 | CHARLIE | 1.0% | 2.2% |
 
 Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
-- **Over 30 days on seed 2** the armies averaged 1.4%, 0.7% and 0.5% a day.
+- **Over 30 days on seed 2** the armies averaged 1.6%, 1.0% and 0.7% a day: 17,600 dead in the month, against 13,800 before the species was allowed to fight on to half strength (1.4%, 0.7% and 0.5%). Seed 1's first week ran at 2.4%, 1.0% and 2.7%.
+  - The war comes in surges: 650–1,700 dead a day in the first nine days, 300–630 in the lulls between, a burst of 1,000 on day 18, tailing off to 50–350 as the month ends.
+  - 17 offensives in the month, each army's next going in two or three days after its last ended. Each lasted 1–5 days (median about a day and a half), took 0–10 places, and ended when it stopped gaining new ground, its battalions at 53–90% strength. None was fought down to half.
+  - After a month nobody is near defeat: land shares 32%, 38% and 25% (from 24%, 27% and 22%), armies at 80–89% strength. A war on this island will run for months.
 - **Where the hits come from:** planned offensives 55%; shelling outside fights 20% (half on units seen, half counter-battery); brigades taking open ground 16%; units meeting on the march 7%; skirmishes along static fronts 1%.
 - **The offensives.** They made 14 offensives of 4–12 battalions. Some took 7–14 places and went a bound or two deeper; others stalled and were called off after a day, or were fought down to 70% within hours.
 - **The war's course.** BRAVO and CHARLIE both turned on ALPHA, which still grew from 24% of the island to 36%. ALPHA took the heaviest losses: 7,300 dead, 15% of its starting strength.
@@ -501,14 +513,15 @@ Not done yet:
   Over 30 days (seed 2), without replacements, the war went quiet after about two weeks, the armies at 60–77% strength.
   - With replacements and the wounded returning, it goes on to about day 25: 60–170 dead a day for the hardest-hit army in the third week. The armies end at 84–90% strength.
   - But the fronts still freeze after the first week. Most battalions are tied down holding ground (21 of ALPHA's 36, 44 of BRAVO's 59 at day 14), and a few wait on a hungry company. Only 0–4 per army are on an operation.
-  - Planned offensives (above) now keep the war moving: 14 in the month, about 40 places changing hands a day, and the land shares shift by up to half.
+  - Planned offensives (above) now keep the war moving: 17 in the month, about 30 places changing hands a day, and the land shares shift by up to half.
   - The other lever is the 500 soldiers a day each port lands. It sets how long an army can be fed into a losing fight: CHARLIE on seed 1 had 8,775 replacements in a week while it was crushed.
 - **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
 - **Attacks cost the attacker too much, and the war never lets up.**
   - On the assault test, attackers lose 23% where history says 5–15%. There's no smoke to cover the approach yet, and the defenders' dug-in IFVs see through everything with thermal sights.
-  - Over a month, an army attacked from two sides has 15% of its starting strength killed. Germany's eastern army lost about 2% a month in 1941–45, but that average includes long quiet spells. This island war has none: offensives every few days, all armies in contact all the time.
-  - Phase 3 fits the assault to the battle simulation. How hard the war should run is a design choice: long lulls make for a different soldier's life. Also, 5–14 battalions per army end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
+  - Over a month, an army attacked from two sides has 17% of its starting strength killed. Germany's eastern army lost about 2% a month in 1941–45, but that average includes long quiet spells. This species fights every day it can, so the war's lulls last only as long as planning and readiness take: a day or two.
+  - Phase 3 fits the assault to the battle simulation. Also, 9–12 battalions per army end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
+- **Seesaws.** Some places change hands over and over: one bridge was taken 127 times in a month. Ground is held by whoever alone has troops within 1.5 km, so it flips as units pass. Offensives count only new ground as progress, but the flipping still inflates "places changing hands".
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.

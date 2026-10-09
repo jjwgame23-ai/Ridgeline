@@ -106,7 +106,8 @@ public sealed class Fight
 ///   light wound that lets them go on.
 /// - Every 30 seconds each company decides, by the numbers it can see. It attacks at 3:1 against a position dug in,
 ///   2.5:1 against a hasty one, if it was advancing, bounding half its squads at a time and assaulting from 60 m. It pulls back when outnumbered two to
-///   one (six to one if dug in) or after losing three in ten, by bounds too, until it's out of sight. Otherwise it holds and fires. Support
+///   one (six to one if dug in) or after losing half its men (the species doesn't care about dying), by bounds too,
+///   until it's out of sight. Otherwise it holds and fires. Support
 ///   units pull back at once. A squad pinned flat by fire doesn't move until the fire lifts.
 /// - A fight ends when it has been quiet for 10 minutes, or 15 without anyone hit and nobody attacking, or when only
 ///   one side is left in it. It also ends when nobody has come on for half an hour: the two sides have gone to
@@ -653,7 +654,8 @@ public static class Combat
             fi.Ready = Tick;
             return;
         }
-        float steady = (0.5f + fi.Skill) * (1f - 0.75f * fi.Supp) * (so.State == SoldierState.Wounded ? 0.7f : 1f) * Aim(war) * Supply.Fed(war, war.Units[sq.Mover]);
+        float steady = (0.5f + fi.Skill) * (1f - 0.75f * fi.Supp) * (so.State == SoldierState.Wounded ? 0.7f : 1f) * Aim(war) * Supply.Fed(war, war.Units[sq.Mover])
+                       * Rest.Fresh(war.Units[sq.Mover]);
         // An anti-tank gunner goes for a vehicle in sight.
         int vt = so.Job == Job.AntiTank && so.Rockets > 0 && d < 500f ? VehicleTarget(war, f, t) : -1;
         if (vt >= 0)
@@ -1078,7 +1080,9 @@ public static class Combat
             // needs. (Every company pulled back at two to one, so a dug-in company left its trenches at its first sight
             // of an attacking battalion 1.4 km off, and no attack ever had to carry a position.)
             bool dugIn = mine.Count(s => s.Dug) * 2 > mine.Count;
-            bool beaten = own * (dugIn ? 6 : 2) < enemy || own * 10 < came * 7;
+            // They don't care about dying: a company fights on until it has lost half its men, where human soldiers
+            // were reckoned spent at three in ten.
+            bool beaten = own * (dugIn ? 6 : 2) < enemy || own * 2 < came;
             bool advancing = m.Path != null;
             if (!Command.Manoeuvre(m) || beaten)
             {

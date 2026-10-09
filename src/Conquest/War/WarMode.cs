@@ -97,6 +97,7 @@ public static class WarMode
             {
                 Supply.Step(war, Dt);
                 Medical.Step(war);
+                Rest.Step(war, Dt);
             });
             int t = (int)war.Time;
             Timed("contact", () => Combat.Detect(war, t % 300 == 0));
@@ -197,7 +198,7 @@ public static class WarMode
             foreach (var op in war.Operations)
                 sb.AppendLine($"      {war.Sides[op.Side].Name} against {war.Sides[op.Enemy].Name} near {op.Where}: planned day {1 + (int)((6 + op.Planned / 3600) / 24)}, "
                               + $"{op.Bns.Count} battalions at {op.StartStrength:P0}, in at day {1 + (int)((6 + op.HHour / 3600) / 24)} dawn; "
-                              + (op.Ended < 0 ? $"still going, {op.Taken.Count} places taken" : $"{op.Outcome} after {(op.Ended - op.HHour) / 3600:0} h, {op.Taken.Count} places taken, {op.Bounds} bounds deeper, battalions at {op.EndStrength:P0}"));
+                              + (op.Ended < 0 ? $"still going, {op.Taken.Count} places taken" : $"{op.Outcome} after {(op.Ended - op.HHour) / 3600:0} h, {op.Taken.Count} places taken, {op.Bounds} bounds deeper, battalions at {op.EndStrength:P0}, owing {op.StartOwed:0} h of sleep at H-hour and {op.EndOwed:0} h at the end"));
             sb.AppendLine("    Artillery:");
             foreach (var sd in war.Sides)
             {
@@ -270,6 +271,8 @@ public static class WarMode
                 int holding = bns.Count(u => u.Holds >= 0), going = bns.Count(u => u.Holds < 0 && (u.Next != null || u.Order is { Kind: OrderKind.Occupy, Done: false }));
                 int weak = bns.Count(u => u.Holds < 0 && Command.Strength(war, u) < 0.5f), resting = bns.Count(u => u.Holds < 0 && war.Time < u.RestUntil);
                 sb.AppendLine($"      {sd.Name} battalions, why idle: " + string.Join(", ", bns.Select(u => Command.Why(war, u)).GroupBy(w => w).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}")));
+                var ms = war.MoverIds.Select(id => war.Units[id]).Where(u => u.Side == sd.Index && u.People > 0 && Command.Manoeuvre(u)).ToList();
+                sb.AppendLine($"      {sd.Name} fighting companies at the end owe {ms.Select(u => u.SleepDebt).DefaultIfEmpty().Average():0.0} h of sleep on average; {ms.Count(u => u.SleepDebt >= Rest.ReadyDebt)} of {ms.Count} owe {Rest.ReadyDebt:0} h or more");
                 sb.AppendLine($"      {sd.Name} battalions at the end: {bns.Count}: {holding} holding, {going} on an operation, {resting} resting, {weak} below half strength, "
                               + $"{bns.Count - holding - going} otherwise idle; mean strength {bns.Average(u => Command.Strength(war, u)):P0}");
                 var objs = war.Objectives;
