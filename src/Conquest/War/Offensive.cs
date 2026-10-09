@@ -23,12 +23,12 @@ public sealed class Operation
 /// - The force. Enough battalions for three to one against that strength (at least a strong company assumed on each
 ///   enemy place), 4 to 12: first those not tied down, then
 ///   garrisons pulled out of quiet stretches of the front against the same enemy, nearest first. Those holding against
-///   the other enemy stay (economy of force). Each has to be at 60% strength or more and supplied.
+///   the other enemy stay (economy of force). Each has to be at 80% strength or more and supplied.
 /// - Assembly. They move to an assembly area 6 km short of the axis and attack at dawn (05:30), at least 8 hours after
 ///   the plan. In the last hour the guns fire a preparation on the enemy units known to be on the axis.
 /// - The attack. The battalions go in together, two on each held place. They don't stop to hold what they take: other
 ///   battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper.
-/// - The end. The offensive stops when its battalions are worn to 60% of their strength on average, after three days,
+/// - The end. The offensive stops when its battalions are worn to 70% of their strength on average, after three days,
 ///   when it has taken nothing for a day, or when it has nothing left to take; the army regroups for three days before
 ///   the next. (Battalions used to go each for
 ///   whatever was nearest and then hold it, so within a week most of every army was holding ground and the fronts froze.)
@@ -95,7 +95,7 @@ public static class Offensive
         var army = war.Units[side.Army];
         var pool = war.Below(army)
             .Where(b => b.Echelon == Echelon.Battalion && Command.Manoeuvre(b) && b.Op < 0 && b.Next == null && b.Order is not { Done: false }
-                        && Command.Strength(war, b) >= 0.6f && Command.Supplied(war, b))
+                        && Command.Strength(war, b) >= 0.8f && Command.Supplied(war, b))
             .Where(b => b.Holds < 0 || !Enumerable.Range(0, 3).Any(e => e != side.Index && e != enemy && Command.Faces(war, war.Objectives[b.Holds], e)))
             .Where(b => b.Holds < 0 || Sq(war.Objectives[b.Holds].X - seed.X, war.Objectives[b.Holds].Z - seed.Z) > 10_000f * 10_000f)
             .Select(b => (B: b, P: Command.Pos(war, b)))
@@ -170,9 +170,10 @@ public static class Offensive
     {
         var bns = op.Bns.Select(id => war.Units[id]).ToList();
         float strength = bns.Average(b => Command.Strength(war, b));
-        // Called off when its battalions are worn down, after three days, or when it has taken nothing for a day.
-        // (Offensives that took nothing used to grind on for the full three days.)
-        string end = strength < 0.6f ? "worn down" : war.Time - op.HHour > 3 * 86400 ? "ran its course" : war.Time - op.LastTake > 86400 ? "stalled" : "";
+        // Called off when its battalions are worn to 70% (US doctrine reckons a unit below that unfit for offensive
+        // operations), after three days, or when it has taken nothing for a day. (Offensives that took nothing used to
+        // grind on for the full three days, and those that did were fought down to 60%.)
+        string end = strength < 0.7f ? "worn down" : war.Time - op.HHour > 3 * 86400 ? "ran its course" : war.Time - op.LastTake > 86400 ? "stalled" : "";
         bool waiting = false, any = false;
         if (end == "")
             foreach (var b in bns)

@@ -14,6 +14,8 @@ public sealed class Mission
     /// <summary>When the rounds land.</summary>
     public double At;
     public bool CounterBattery;
+    /// <summary>What it was for: 0 close support, 1 on units seen, 2 counter-battery, 3 an offensive's preparation.</summary>
+    public byte Purpose;
 }
 
 /// <summary>
@@ -30,7 +32,8 @@ public sealed class Mission
 ///   flat on the ground or dug in, far less. Everyone within four radii is pinned. It falls on whoever is there, ours
 ///   included.
 /// - On what's been seen. Every 10 minutes, idle guns and rockets with half their ammunition left fire on enemy units
-///   their side saw in the last 10 minutes, outside any fight, far enough from their own troops.
+///   their side saw in the last 10 minutes, outside any fight, far enough from their own troops, with up to a quarter of
+///   their day's allowance.
 /// - Counter-battery. A battery that fires is found by the enemy's radars seven times in ten if any of his guns are
 ///   within 30 km, and his nearest free guns fire back on where it fired from. So guns shoot and move: self-propelled
 ///   ones go 1.2 km within 2 minutes of finishing, towed ones within 10, and counter-battery fire mostly finds towed
@@ -201,7 +204,7 @@ public static class Artillery
         var ms = new Mission
         {
             Side = u.Side, Unit = u.Id, Fight = fight, Target = target, Kind = u.Fires, X = x, Z = z, Reach = g.Reach, Rounds = rounds - left,
-            Sigma = MathF.Sqrt(tle * tle + spread * spread), At = war.Time + g.Delay, CounterBattery = cb,
+            Sigma = MathF.Sqrt(tle * tle + spread * spread), At = war.Time + g.Delay, CounterBattery = cb, Purpose = (byte)(fight >= 0 ? 0 : cb ? 2 : 1),
         };
         war.Missions.Add(ms);
         int k = u.Fires == VClass.Mortar ? 0 : u.Fires == VClass.Howitzer ? 1 : 2;
@@ -332,7 +335,12 @@ public static class Artillery
                     if (u.Side == side && u.People > 0) own = MathF.Min(own, Dist(u.X, u.Z, e.X, e.Z));
                 }
                 var fu = Pick(war, side, e.X, e.Z, own, e.Strength >= 30, true);
-                if (fu == null || Tubes(war, fu, out int have) == 0) continue;
+                if (fu == null) continue;
+                int tubes = Tubes(war, fu, out int have);
+                // Fire on what's merely been seen gets a quarter of the day's allowance at most: priority of fires goes
+                // to troops in contact and to the main effort. (Using the whole allowance on it, guns shelled whatever
+                // was seen along the whole front every day, and a fifth of all casualties came from that.)
+                if (tubes == 0 || fu.RoundsToday * 4 >= tubes * Allowance(side, fu.Fires)) continue;
                 // Half the ammunition is kept for close support.
                 int full = 0;
                 foreach (int ci in fu.Carries)
@@ -368,7 +376,10 @@ public static class Artillery
             {
                 var fu = Pick(war, side, e.X, e.Z, own, true, false);
                 if (fu == null) break;
-                if (Fire(war, fu, e.X + 75f * Gauss(war.Rng), e.Z + 75f * Gauss(war.Rng), 75f, -1, id, false) != null) war.ArtyMissions[side, 1]++;
+                var ms = Fire(war, fu, e.X + 75f * Gauss(war.Rng), e.Z + 75f * Gauss(war.Rng), 75f, -1, id, false);
+                if (ms == null) continue;
+                ms.Purpose = 3;
+                war.ArtyMissions[side, 1]++;
             }
         }
     }
@@ -448,6 +459,7 @@ public static class Artillery
                         war.StruckArm[t.Side][t.Arm] = war.StruckArm[t.Side].GetValueOrDefault(t.Arm) + 1;
                         war.StruckUnit[t.Id] = war.StruckUnit.GetValueOrDefault(t.Id) + 1;
                         if (ms.CounterBattery) war.StruckByCb[t.Side]++;
+                        war.StruckFor[t.Side, ms.Purpose]++;
                         Wound(war, s, cause, rng, ref cut, t);
                         if (so.State is not (SoldierState.Fit or SoldierState.Wounded)) break;
                     }

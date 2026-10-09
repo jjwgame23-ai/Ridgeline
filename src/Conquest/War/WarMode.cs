@@ -173,6 +173,25 @@ public static class WarMode
             }
             int takes = war.Events.Count(e => e.Text.Contains(" takes "));
             sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day");
+            string[] kinds = { "planned offensives", "brigades' own attacks", "meetings on the march", "skirmishes along fronts" };
+            var hitIn = new long[4];
+            var count = new int[4];
+            foreach (var f in fights)
+            {
+                hitIn[f.Kind] += f.Killed.Sum() + f.Down.Sum() + f.Hurt.Sum();
+                count[f.Kind]++;
+            }
+            long struck = 0;
+            var sfor = new long[4];
+            for (int i = 0; i < 3; i++)
+                for (int p = 0; p < 4; p++)
+                {
+                    sfor[p] += war.StruckFor[i, p];
+                    struck += war.StruckFor[i, p];
+                }
+            long all = hitIn.Sum() + struck;
+            sb.AppendLine("    Where the hits come from: " + string.Join(", ", Enumerable.Range(0, 4).Select(k => $"{kinds[k]} {100.0 * hitIn[k] / Math.Max(1, all):0}% ({count[k]} fights)"))
+                          + $"; shellfire outside fights {100.0 * struck / Math.Max(1, all):0}% (on units seen {100.0 * sfor[1] / Math.Max(1, all):0}%, counter-battery {100.0 * sfor[2] / Math.Max(1, all):0}%, preparations {100.0 * sfor[3] / Math.Max(1, all):0}%)");
             sb.AppendLine("    Offensives:");
             foreach (var op in war.Operations)
                 sb.AppendLine($"      {war.Sides[op.Side].Name} against {war.Sides[op.Enemy].Name} near {op.Where}: planned day {1 + (int)((6 + op.Planned / 3600) / 24)}, "

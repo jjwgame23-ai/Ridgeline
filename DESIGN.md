@@ -333,7 +333,7 @@ The code is in `src/Conquest/War/`.
 
 **Command** (`Command`): the army plans every 3 h, divisions every hour, brigades every half hour. Orders take an hour to reach battalions and half an hour to reach companies.
 - The army shares out objectives (towns, ports, nodes, main-road bridges, big hills), nearest and most valuable first. Each goes to the nearest division with battalions free for it, two tasks a free battalion, so idle divisions are committed rather than left waiting behind a busy one.
-- Once the open ground is mostly taken, or from day 3, it goes over to the offensive. It picks the enemy whose nearby ground is worth most against the least known strength, and keeps to that choice unless the other enemy becomes twice as good a target.
+- Once the open ground is mostly taken, or from day 3, it goes over to the offensive. It picks the enemy whose nearby ground is worth most against the least known strength, and keeps to that choice unless the other enemy becomes twice as good a target. Its planned offensives (below) take that enemy's places; the rest of the army holds. (Brigades used to attack enemy places on their own all along the front as well, and over a month that caused more casualties than anything else.)
 - Brigades send one battalion to an empty objective and two to a held one. A battalion rings the objective with its line companies.
 - A brigade with nothing to take holds its own objectives facing the enemy the army isn't attacking (economy of force). Objectives are 4–5 km apart, so these make the front a line of strongpoints.
 - A battalion that takes ground in the front line (enemy ground within 5 km) stays on it as its garrison while it's in the front line.
@@ -345,10 +345,10 @@ The code is in `src/Conquest/War/`.
 - **The force.**
   - Battalions for three to one against what's there: what has been seen, but at least a strong company assumed on each enemy place. That comes to 4 to 12 battalions.
   - First those not tied down, then garrisons pulled out of quiet stretches of the front against the same enemy, nearest first. Those holding against the other enemy stay (economy of force).
-  - Each must be at 60% strength or more, and supplied.
+  - Each must be at 80% strength or more, and supplied.
 - **Assembly.** They gather 6 km short of the axis and go in at dawn, at least 8 hours after the plan. In the last hour the guns fire a preparation on the enemy units known to be there.
 - **The attack.** The battalions go in together, two on each held place. They don't stop to hold what they take: other battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper.
-- **The end.** It's called off when its battalions are worn to 60% on average, after three days, or after a day without taking anything. The army then regroups for three days.
+- **The end.** It's called off when its battalions are worn to 70% on average (US doctrine reckons a unit below that unfit for offensive operations), after three days, or after a day without taking anything. The army then regroups for three days.
 
 **Territory and intel** (`Territory`, `WarIntel`): 1 km squares, held by whoever alone has troops within 1.5 km. Commanders plan on the enemy their side has seen, for six hours after.
 
@@ -407,7 +407,7 @@ The code is in `src/Conquest/War/`.
   - Everyone within four radii is pinned, and it falls on whoever is there, own troops included.
   - Outside a fight, troops are in their carriers on the move (armour stops nearly all fragments, a truck's canvas few). Halted, they have shell scrapes within half an hour and trenches within two.
   - A group's ground grows with its size at the same 10 m spacing, so a 150-strong headquarters isn't one 60 m square.
-- **On what's been seen.** Every 10 minutes, idle guns and rockets with half their ammunition left fire on enemy units their side saw in the last 10 minutes, biggest first, outside fights and clear of their own troops. They wait an hour before firing on the same unit again. A headquarters or support unit shelled moves 1.5 km back.
+- **On what's been seen.** Every 10 minutes, idle guns and rockets with half their ammunition left fire on enemy units their side saw in the last 10 minutes, biggest first, outside fights and clear of their own troops. This takes at most a quarter of a gun's daily allowance; priority of fires goes to troops in contact and to the main effort. They wait an hour before firing on the same unit again. A headquarters or support unit shelled moves 1.5 km back.
 - **Counter-battery.**
   - The enemy's radars find a battery that fires seven times in ten if his guns are within 30 km. His nearest free guns fire back on where its tubes fired from, 4 minutes after its rounds land (8 for BRAVO).
   - Batteries shoot and move: self-propelled ones 2 minutes after their last round, towed ones 10, so counter-battery fire mostly catches towed guns.
@@ -444,14 +444,15 @@ The code is in `src/Conquest/War/`.
 
 | | Seed 2 | Seed 1 |
 |---|---|---|
-| ALPHA | 4.0% | 2.8% |
-| BRAVO | 2.2% | 1.9% |
-| CHARLIE | 1.9% | 5.2% |
+| ALPHA | 2.4% | 1.7% |
+| BRAVO | 1.1% | 0.6% |
+| CHARLIE | 0.8% | 1.8% |
 
-Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%. The first week now runs above that: the land grab, replacements keeping units at strength, and the first offensives from day 3.
-- **Over 30 days on seed 2** the armies averaged 1.7%, 1.2% and 0.8% a day.
-- **The offensives.** They made 15 offensives of 4–12 battalions. Some took 8–11 places and went a bound or two deeper; others stalled and were called off after a day.
-- **The war's course.** ALPHA ground BRAVO down in alternating offensives, growing from 24% of the island to 44%, while BRAVO fell from 33% to 29% and CHARLIE from 28% to 25%.
+Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
+- **Over 30 days on seed 2** the armies averaged 1.3%, 0.7% and 0.5% a day.
+- **Where the hits come from:** planned offensives 55%; shelling outside fights 20% (half on units seen, half counter-battery); brigades taking open ground 16%; units meeting on the march 7%; skirmishes along static fronts 1%.
+- **The offensives.** They made 14 offensives of 4–12 battalions. Some took 7–14 places and went a bound or two deeper; others stalled and were called off after a day, or were fought down to 70% within hours.
+- **The war's course.** BRAVO and CHARLIE both turned on ALPHA, which still grew from 24% of the island to 36%. ALPHA took the heaviest losses: 7,300 dead, 15% of its starting strength.
 - Fighting peaks on days 1–3, at 560–830 dead a day for the hardest-hit army. It goes on all week, at 40–380 a day on days 5–7.
 - About a third of fights are brushes where nobody is hurt.
 - Shell and mortar fire causes 47–71% of the hits, against about 60–75% in the World Wars. Guns fire 17–37 shells a day each. Each army fires 2,400–5,900 t of shells, bombs and rockets in the week, and loses 27–76 guns to counter-battery.
@@ -491,11 +492,11 @@ Not done yet:
   Over 30 days (seed 2), without replacements, the war went quiet after about two weeks, the armies at 60–77% strength.
   - With replacements and the wounded returning, it goes on to about day 25: 60–170 dead a day for the hardest-hit army in the third week. The armies end at 84–90% strength.
   - But the fronts still freeze after the first week. Most battalions are tied down holding ground (21 of ALPHA's 36, 44 of BRAVO's 59 at day 14), and a few wait on a hungry company. Only 0–4 per army are on an operation.
-  - Planned offensives (above) now keep the war moving: 15 in the month, about 80 places changing hands a day, and the land shares shift by a fifth.
+  - Planned offensives (above) now keep the war moving: 14 in the month, about 40 places changing hands a day, and the land shares shift by up to half.
   - The other lever is the 500 soldiers a day each port lands. It sets how long an army can be fed into a losing fight: CHARLIE on seed 1 had 8,775 replacements in a week while it was crushed.
 - **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
-- **Too bloody over a month.** ALPHA had about a quarter of its starting strength killed in 30 days, and fighting goes on everywhere at once, not only where the offensives are. Whole armies historically lost well under 1% a day. Fights along static fronts, and shelling of units seen there, are the places to look next. 7–18 battalions per army also end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
+- **Offensives are bloody.** Some burn through 30% of 12 battalions in a few hours against a prepared defence, and in a month an army attacked from two sides has 15% of its starting strength killed (Germany's eastern army lost about 2% a month in 1941–45). The next place to look is the assault itself, how much attackers can suppress before closing. That is what phase 3's fit to the battle simulation is for. Also, 5–14 battalions per army end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.

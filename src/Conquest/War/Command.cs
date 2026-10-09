@@ -9,9 +9,8 @@ namespace Ridgeline;
 ///   resource nodes, the bridges on the main roads, the big hills. It goes no further than 15 km past its ground, and
 ///   not within 3 km of an enemy.
 /// - Once the open ground is mostly taken (or from day 3), it goes over to the offensive against one enemy. It picks
-///   the one whose ground near its own is worth most for the least known strength against its own there. It adds
-///   that enemy's objectives within 8 km of its own ground to its divisions' tasks, and holds against the other
-///   enemy where it stands.
+///   the one whose ground near its own is worth most for the least known strength against its own there. Its planned
+///   offensives (Offensive) take that enemy's places; the rest of the army holds.
 /// - A division (every hour) gives each brigade as many objectives as it has fighting battalions. Its headquarters
 ///   and troops follow a few km behind its brigades.
 /// - A brigade (every half hour) sends an idle battalion to the nearest objective it has. Its headquarters and its
@@ -126,8 +125,9 @@ public static class Command
                     var (ax, az) = Pos(war, army);
                     war.Events.Add((war.Time, side, $"{war.Sides[side].Name} goes over to the offensive against {war.Sides[enemy].Name}", ax, az));
                 }
-                foreach (var o in war.Objectives)
-                    if (o.Owner == enemy && !o.Unreachable[side] && war.Time >= o.Retry[side] && reach[war.Ctl.CellOf(o.X, o.Z)] <= 8000f) targets.Add(o);
+                // The enemy's places are taken by the army's planned offensives (Offensive); the rest of the front
+                // holds. (Brigades used to attack the enemy's nearby places on their own all along the front as well,
+                // and over a month those attacks caused more casualties than anything else, 36% of them.)
             }
         }
         // Each target, nearest and most valuable first, to the nearest force with battalions free to take it on: two

@@ -66,6 +66,8 @@ public sealed class Fight
     public readonly Dictionary<int, int> Strength = new();
     public float[,] Sight = new float[0, 0];
     public readonly int[] Shots = new int[3], Killed = new int[3], Down = new int[3], Hurt = new int[3], Lost = new int[3];
+    /// <summary>How it started: 0 a planned offensive, 1 a brigade's own attack, 2 units meeting on the march, 3 units holding still along a front.</summary>
+    public byte Kind;
     /// <summary>Soldiers hit in it by cause, vehicles destroyed in it by cause, and the range it opened at.</summary>
     public readonly int[] HitBy = new int[12], WreckedBy = new int[12];
     public float Opened;
@@ -233,6 +235,7 @@ public static class Combat
         if (f == null)
         {
             f = new Fight { Opened = MathF.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Z - b.Z) * (a.Z - b.Z)), Id = war.Fights.Count, X = mx, Z = mz, Started = war.Time, Stirred = war.Time, LastShot = war.Time, LastHit = war.Time, NextSight = war.Time, NextThink = war.Time };
+            f.Kind = Kindof(war, a, b);
             f.Where = war.Isl.Towns.OrderBy(t => (t.X - mx) * (t.X - mx) + (t.Z - mz) * (t.Z - mz)).Select(t => t.Name).FirstOrDefault("");
             war.Fights.Add(f);
         }
@@ -269,6 +272,23 @@ public static class Combat
             b.X = bx0 + (b.X - bx0) * t;
             b.Z = bz0 + (b.Z - bz0) * t;
         }
+    }
+
+    static Unit? BattalionOf(War war, Unit u)
+    {
+        for (var a = u; a != null; a = a.Parent >= 0 ? war.Units[a.Parent] : null)
+            if (a.Echelon == Echelon.Battalion) return a;
+        return null;
+    }
+
+    /// <summary>How a fight started, for the report.</summary>
+    static byte Kindof(War war, Unit a, Unit b)
+    {
+        var ba = BattalionOf(war, a);
+        var bb = BattalionOf(war, b);
+        if (ba is { Op: >= 0 } || bb is { Op: >= 0 }) return 0;
+        if (ba is { Order: { Kind: OrderKind.Occupy, Done: false } } || bb is { Order: { Kind: OrderKind.Occupy, Done: false } }) return 1;
+        return a.Path != null || b.Path != null ? (byte)2 : (byte)3;
     }
 
     static bool IsCrew(Job j) => j is Job.Crewman or Job.Gunner or Job.Driver or Job.Pilot;

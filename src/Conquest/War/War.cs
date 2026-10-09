@@ -51,6 +51,8 @@ public sealed class War
     public readonly Dictionary<Arm, int>[] StruckArm = { new(), new(), new() };
     public readonly Dictionary<int, int> StruckUnit = new();
     public readonly int[] StruckByCb = new int[3];
+    /// <summary>Soldiers hit by shellfire outside fights, by what the fire was for (see <see cref="Mission.Purpose"/>).</summary>
+    public readonly int[,] StruckFor = new int[3, 4];
     /// <summary>The supply points and the logistics companies hauling between them.</summary>
     public readonly List<Depot> Depots = new();
     public readonly List<Haul> Hauls = new();
