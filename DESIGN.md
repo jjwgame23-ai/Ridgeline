@@ -462,6 +462,8 @@ Not done yet:
   - what's here sits between the two.
 
   Real offensives pause for supply and replacements, which aren't modelled yet. Until they are, how hard the war runs comes from these command rules rather than from logistics.
+
+  Over 30 days (seed 2) the war goes quiet after about two weeks. From day 13 each army loses 10–50 dead a day, and the land shares freeze. At the end the armies stand at 60–77% of their strength on average, with 4–16 battalions each below half strength and no operations under way. With nothing to make losses good, the attacks run out. Replacements by sea and the wounded coming back should restart them; if not, command needs offensives planned ahead with massed reserves.
 - **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
