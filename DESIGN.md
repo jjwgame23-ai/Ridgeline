@@ -349,9 +349,12 @@ The code is in `src/Conquest/War/`.
   - Each must be at 80% strength or more, supplied, and rested (owing less than 8 hours' sleep).
 - **Assembly.** They gather 6 km short of the axis and go in at dawn, at least 12 hours after the plan. In the last hour the guns fire a preparation on the enemy units known to be there.
 - **The attack.** The battalions go in together, two on each held place. They don't stop to hold what they take: other battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper.
+  - They attack by night as well as by day, at night pace. Everyone else marches by day.
+  - A battalion pauses after a place falls, and for the night's resupply when it's out of food or fuel or below half its ammunition. (Battalions with nothing left used to be sent on regardless.)
 - **The end.** It's called off when its battalions are worn to half their strength on average, when its companies are exhausted (16 hours of sleep owed on average), or after a day without taking new ground (a place lost and retaken doesn't count). There is no limit of days: it goes on as long as the troops can. US doctrine reckons a unit below 70% unfit for offensive operations; this species goes on. The army then plans the next for at least a day, and launches it once enough battalions are rested, fed, supplied and back at 80%.
 
 **Territory and intel** (`Territory`, `WarIntel`): 1 km squares, held by whoever alone has troops within 1.5 km. Commanders plan on the enemy their side has seen, for six hours after.
+- A place a battalion takes brings its square with it. With the enemy still close by, the square is contested, and contested ground keeps its holder. (The square used to stay the old holder's, so the next ground update gave the place straight back and the battalion took it again: one oilfield changed hands 47 times in a month, every 20 minutes for a day at a time, and one bridge 127 times.)
 
 **Contact** (`Combat.Detect`): enemy units within 3 km, by sight line, range, light and how much they show.
 - A fight starts only within 1.5 km (2.5 with gun vehicles), and only if:
@@ -391,6 +394,10 @@ The code is in `src/Conquest/War/`.
   - A brigade's companies fetch from their division's support area, a division's from the port, and the army's take from the port to whichever division is shortest.
   - Convoys are units on the map. They halt for an enemy close ahead, can be ambushed, and lose the load of every truck destroyed. Their crews eat and fuel at the depots.
 - **The nightly resupply (LOGPAC).** At 22:00 every unit within 30 km of its depot by land, round ground the enemy holds alone, is topped up: food to three days, fuel to full, ammunition to its basic load. The forward support companies' trucks that carry it aren't moved on the map yet. A depot short of something shares out what it has.
+  - **Area support.** A unit its own depot can't reach, or whose depot stands empty, is served by the nearest of its side's depots that can reach it, as US sustainment doctrine supports whoever is in a support unit's area.
+  - **Convoys.** A convoy halted on the road is served like any other unit, and a convoy carrying rations eats from its load rather than go hungry.
+- **Falling back.** A support area doesn't stand on ground the enemy has taken or is fighting over: it falls back toward the port, stock and all. (Support areas used to follow their brigades' middle 8 km back, so one whose brigade had pushed into enemy country, or had no fighting battalions left, stood on the enemy's ground and fed nobody.)
+- **Breaking out.** A unit no depot can reach, hungry for half a day, breaks out toward the nearest ground a depot can reach, by night as well as by day. A fighting battalion goes as a whole and gives up the ground it held (FM 3-90, breakout from encirclement). These soldiers don't surrender. (Units cut off used to sit and wait: at the end of a month, 50–120 per army had gone a median of one to two and a half weeks without food.)
 - **Going without.**
   - Out of fuel, vehicles don't move. Out of ammunition, soldiers don't fire.
   - Hungry, they shoot 15% worse for each day without food.
@@ -433,7 +440,8 @@ The code is in `src/Conquest/War/`.
 - **Sleeping.** A company halted and out of a fight sleeps by night (20:30–05:30), and by day too once it owes 8 hours. In the rear everyone sleeps and pays off an hour an hour. In the line (enemy ground within 2 km) they sleep in shifts, half at a time, and pay off half as fast.
 - **What it costs.** Lost sleep costs judgement and shooting, about 25% per day awake (Belenky et al. 1994): aim falls by a quarter for every 16 hours owed, to no worse than 30%.
 - **Readiness.** A battalion with a company owing 8 hours or more isn't sent on an operation ("tired" in the report's "why idle" line). An offensive whose companies owe 16 hours on average is called off: exhausted.
-- **Measured** (30 days, seed 2). Offensives go in owing 1–5 hours and end owing 3–9. None was called off exhausted: marches stop for the night, so even an attacking battalion sleeps in shifts most nights. Sleep shows instead in the shooting (up to an eighth worse late in an offensive) and in battalions that aren't ready for the next. Without night attacks, it's attrition and stalling that end an offensive, not tiredness.
+- **Measured** (30 days, seed 2). Offensives go in owing 1–5 hours and end owing 5–9. None was called off exhausted, even attacking by night. An offensive's companies spend the night 91% asleep, 7% moving and 2% fighting, and the day 49% halted, 23% moving, 23% asleep and 5% fighting. Between bounds they wait: for a place to be consolidated, orders to come down, the night's resupply, or six hours to regroup after being beaten off. A halted company sleeps. So sleep shows in the shooting (up to an eighth worse late in an offensive) and in battalions not ready for the next, and it's attrition and stalling that end an offensive.
+- Night attacks put a quarter of the offensives' fights and a sixth of their casualties in the dark. Before, it was a seventh of the fights and a twentieth of the casualties, and their companies slept 99% of the night.
 - A column halted for the night or at the end of its day's march beds down like any other. (Those still had a route and stayed awake all night, so offensives that had marched to their assembly areas went in owing 10 hours and were called off exhausted 8 hours in.)
 
 **The assault test** (`AssaultTest`): `-- mode=assault [seed=2] [runs=20] [attack=9] [defend=3] [arty=0|1]`.
@@ -454,7 +462,9 @@ The code is in `src/Conquest/War/`.
 - the share of those who fought who were hit;
 - artillery: rounds and tonnes fired, shells a gun a day, missions by kind, guns lost to counter-battery, soldiers hit by shellfire, and how those outside fights were caught;
 - the wounded and replacements: carried into the medical chain, died of wounds, invalided, back to duty, replacements landed and joined, tickets;
-- supply: tonnes landed, hauled and issued, convoy runs, cargo lost, unit-nights cut off, and units out of fuel, hungry or low on ammunition at the end. It also lists the depots' fill and any depot standing empty with its convoys' state.
+- supply: tonnes landed, hauled and issued, convoy runs, cargo lost, unit-nights cut off and fed by another depot, break-outs, and units out of fuel, hungry or low on ammunition at the end. It also lists the depots' fill, any depot standing empty with its convoys' state, and why the hungry are cut off;
+- places changing hands, the places that changed hands most, and what the new holder had there when ground changed hands without a battalion taking it;
+- fights by night, and how an offensive's companies spend the day and the night.
 
 `trace=N` adds fight N's state every 30 s to the report: fit, hit, suppressed, flat, in cover, what each side can see and how far. If the war sits in one place for 15 s of real time, the progress file says where, and an exception ends the run with an error instead of leaving Godot idling.
 
@@ -467,10 +477,12 @@ The code is in `src/Conquest/War/`.
 | CHARLIE | 1.0% | 2.2% |
 
 Dupuy's figures: divisions in battle 1–3% a day, whole armies well under 1%.
-- **Over 30 days on seed 2** the armies averaged 1.6%, 1.0% and 0.7% a day: 17,600 dead in the month, against 13,800 before the species was allowed to fight on to half strength (1.4%, 0.7% and 0.5%). Seed 1's first week ran at 2.4%, 1.0% and 2.7%.
-  - The war comes in surges: 650–1,700 dead a day in the first nine days, 300–630 in the lulls between, a burst of 1,000 on day 18, tailing off to 50–350 as the month ends.
-  - 17 offensives in the month, each army's next going in two or three days after its last ended. Each lasted 1–5 days (median about a day and a half), took 0–10 places, and ended when it stopped gaining new ground, its battalions at 53–90% strength. None was fought down to half.
-  - After a month nobody is near defeat: land shares 32%, 38% and 25% (from 24%, 27% and 22%), armies at 80–89% strength. A war on this island will run for months.
+- **Over 30 days on seed 2** the armies averaged 1.8%, 0.9% and 1.0% a day: 19,600 dead in the month. Before the species was allowed to fight on to half strength it was 1.4%, 0.7% and 0.5% (13,800 dead); feeding the units that used to sit hungry added about 2,000 more. Seed 1's first week ran at 2.6%, 0.9% and 2.8%.
+  - The war comes in surges: 600–1,700 dead a day in the first ten days, then 190–790.
+  - 22 offensives in the month, each army's next going in two or three days after its last ended. Each lasted half a day to 3½ days (median under two), took 0–14 places, and ended when it stopped gaining new ground, its battalions at 50–93% strength.
+  - After a month nobody is near defeat: land shares 27%, 39% and 30% (from 24%, 27% and 22%), armies at 81–92% strength. A war on this island will run for months.
+  - Hungry at the end of the month: 11, 8 and 7 units, all of them surrounded, against 69, 137 and 116 before area support, falling back and break-outs. Each army had 650–2,200 unit-nights fed by a depot not its own, and 200–310 break-outs.
+  - Places change hands 25 times a day; the most fought over changed hands 30 times in the month.
 - **Where the hits come from:** planned offensives 55%; shelling outside fights 20% (half on units seen, half counter-battery); brigades taking open ground 16%; units meeting on the march 7%; skirmishes along static fronts 1%.
 - **The offensives.** They made 14 offensives of 4–12 battalions. Some took 7–14 places and went a bound or two deeper; others stalled and were called off after a day, or were fought down to 70% within hours.
 - **The war's course.** BRAVO and CHARLIE both turned on ALPHA, which still grew from 24% of the island to 36%. ALPHA took the heaviest losses: 7,300 dead, 15% of its starting strength.
@@ -513,15 +525,16 @@ Not done yet:
   Over 30 days (seed 2), without replacements, the war went quiet after about two weeks, the armies at 60–77% strength.
   - With replacements and the wounded returning, it goes on to about day 25: 60–170 dead a day for the hardest-hit army in the third week. The armies end at 84–90% strength.
   - But the fronts still freeze after the first week. Most battalions are tied down holding ground (21 of ALPHA's 36, 44 of BRAVO's 59 at day 14), and a few wait on a hungry company. Only 0–4 per army are on an operation.
-  - Planned offensives (above) now keep the war moving: 17 in the month, about 30 places changing hands a day, and the land shares shift by up to half.
+  - Planned offensives (above) now keep the war moving: 22 in the month, about 25 places changing hands a day, and the land shares shift by up to half.
   - The other lever is the 500 soldiers a day each port lands. It sets how long an army can be fed into a losing fight: CHARLIE on seed 1 had 8,775 replacements in a week while it was crushed.
 - **Supply binds through shells, not yet through want.** The convoys keep up: no unit ran out of fuel and few of ammunition, since the guns fire within their daily allowance. Ports being taken, and cargo that can blow up (the hazard divisions under "Economy and supply"), would make it bite.
 - **The last leg isn't driven.** The nightly resupply from a brigade's depot to its companies is reckoned, not driven, so it can't be ambushed yet. Support areas move with their brigades at once, stock and all.
 - **Attacks cost the attacker too much, and the war never lets up.**
   - On the assault test, attackers lose 23% where history says 5–15%. There's no smoke to cover the approach yet, and the defenders' dug-in IFVs see through everything with thermal sights.
   - Over a month, an army attacked from two sides has 17% of its starting strength killed. Germany's eastern army lost about 2% a month in 1941–45, but that average includes long quiet spells. This species fights every day it can, so the war's lulls last only as long as planning and readiness take: a day or two.
-  - Phase 3 fits the assault to the battle simulation. Also, 9–12 battalions per army end the month held back by a hungry company: in a front this fluid, units are often cut off from their depots.
-- **Seesaws.** Some places change hands over and over: one bridge was taken 127 times in a month. Ground is held by whoever alone has troops within 1.5 km, so it flips as units pass. Offensives count only new ground as progress, but the flipping still inflates "places changing hands".
+  - Phase 3 fits the assault to the battle simulation.
+- **Ground changes hands as units pass.** Ground is held by whoever alone has troops within 1.5 km, as of a look every half hour. About a third of the changes without a battalion taking anything are troops passing by, half of them support troops (convoys, headquarters). A unit driving fast through empty ground holds only where it was at each look.
+- **Some units stay surrounded.** A few (7–11 per army at a month's end) go weeks without food: their break-out finds no way, or they're cut off again. ALPHA, attacked from two sides, also has brigade depots standing empty while their convoys are held up by the enemy near their routes; area support feeds most of their units from the division's.
 - **Strongpoints, not sectors.** Ground is held where troops are, and the front is a line of garrisoned objectives with no unit boundaries between them.
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.

@@ -174,7 +174,9 @@ public static class WarMode
                         + "; to " + string.Join(", ", Enum.GetValues<Cause>().Where(c => war.Wrecked[i, (int)c] > 0).Select(c => $"{c.ToString().ToLowerInvariant()} {war.Wrecked[i, (int)c]}")));
             }
             int takes = war.Events.Count(e => e.Text.Contains(" takes "));
-            sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day");
+            sb.AppendLine($"    Places changing hands: {takes / Math.Max(1.0, war.Time / 86400.0):0} a day; most often "
+                          + string.Join(", ", war.Objectives.OrderByDescending(o => o.Flips).Take(4).Select(o => $"{o.Name} {o.Flips}"))
+                          + "; by ground alone, the new holder having there " + string.Join(", ", war.FlippedBy.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")));
             string[] kinds = { "planned offensives", "brigades' own attacks", "meetings on the march", "skirmishes along fronts" };
             var hitIn = new long[4];
             var count = new int[4];
@@ -194,6 +196,17 @@ public static class WarMode
             long all = hitIn.Sum() + struck;
             sb.AppendLine("    Where the hits come from: " + string.Join(", ", Enumerable.Range(0, 4).Select(k => $"{kinds[k]} {100.0 * hitIn[k] / Math.Max(1, all):0}% ({count[k]} fights)"))
                           + $"; shellfire outside fights {100.0 * struck / Math.Max(1, all):0}% (on units seen {100.0 * sfor[1] / Math.Max(1, all):0}%, counter-battery {100.0 * sfor[2] / Math.Max(1, all):0}%, preparations {100.0 * sfor[3] / Math.Max(1, all):0}%)");
+            static bool Dark(double t) => (6.0 + t / 3600.0) % 24.0 is < 5.5 or >= 20.5;
+            var opf = fights.Where(f => f.Kind == 0).ToList();
+            sb.AppendLine($"    By night (20:30-05:30): {100.0 * fights.Count(f => Dark(f.Started)) / Math.Max(1, fights.Count):0}% of fights; in the offensives {100.0 * opf.Count(f => Dark(f.Started)) / Math.Max(1, opf.Count):0}% of fights "
+                          + $"and {100.0 * opf.Where(f => Dark(f.Started)).Sum(f => f.Killed.Sum() + f.Down.Sum() + f.Hurt.Sum()) / Math.Max(1, opf.Sum(f => f.Killed.Sum() + f.Down.Sum() + f.Hurt.Sum())):0}% of their casualties");
+            string Split(int n)
+            {
+                long tot = Math.Max(1, Enumerable.Range(0, 4).Sum(k => war.OpTime[n, k]));
+                string[] what = { "moving", "fighting", "asleep", "awake and halted" };
+                return string.Join(", ", Enumerable.Range(0, 4).Select(k => $"{what[k]} {100.0 * war.OpTime[n, k] / tot:0}%"));
+            }
+            sb.AppendLine($"    An offensive's companies by day: {Split(0)}; by night: {Split(1)}");
             sb.AppendLine("    Offensives:");
             foreach (var op in war.Operations)
                 sb.AppendLine($"      {war.Sides[op.Side].Name} against {war.Sides[op.Enemy].Name} near {op.Where}: planned day {1 + (int)((6 + op.Planned / 3600) / 24)}, "
@@ -237,6 +250,7 @@ public static class WarMode
                               + $"tickets {Medical.Tickets - war.Dead[i] + war.Replacements[i]:N0}");
             }
             sb.AppendLine("    Supply, in tonnes of food/fuel/ammunition:");
+            var routes = new Dictionary<int, float[]>();
             foreach (var sd in war.Sides)
             {
                 int i = sd.Index;
@@ -245,7 +259,7 @@ public static class WarMode
                 int dry = movers.Count(u => u.Mob != Mobility.Foot && u.FuelCap > 0f && u.Fuel <= 0f), hungry = movers.Count(u => u.HungrySince >= 0);
                 int low = movers.Count(u => Supply.AmmoShare(war, u) < 0.5f);
                 sb.AppendLine($"      {sd.Name}: landed {T(war.Landed)}; hauled to depots {T(war.Hauled)} in {war.Convoys[i]} convoy runs; issued to units {T(war.Issued)}; "
-                              + $"lost on the road {T(war.CargoLost)}; {war.CutOff[i]} unit-nights cut off from their depot and {war.TooFar[i]} too far from it; at the end {dry} units out of fuel, {hungry} hungry, "
+                              + $"lost on the road {T(war.CargoLost)}; {war.CutOff[i]} unit-nights cut off from every depot and {war.TooFar[i]} too far, {war.Area[i]} fed by a depot not their own; {war.BrokeOut[i]} break-outs; at the end {dry} units out of fuel, {hungry} hungry, "
                               + $"{low} below half their ammunition");
                 var deps = war.Depots.Where(d => d.Side == i && d.Unit >= 0).ToList();
                 string Fill(int c) => string.Join(" ", deps.Select(d => d.Target[c] > 0f ? (int)(100 * d.Stock[c] / d.Target[c]) : 100).OrderBy(x => x).Select(x => x.ToString()));
@@ -262,7 +276,10 @@ public static class WarMode
                 if (hung.Count > 0)
                     sb.AppendLine($"        hungry: {hung.Count(u => u.Hauls)} hauling, {hung.Count(u => u.InFight >= 0)} in a fight, median {hung.Select(u => MathF.Sqrt((u.X - war.Depots[u.Depot].X) * (u.X - war.Depots[u.Depot].X) + (u.Z - war.Depots[u.Depot].Z) * (u.Z - war.Depots[u.Depot].Z)) / 1000f).OrderBy(x => x).ElementAt(hung.Count / 2):0} km from their depot, "
                                   + $"median {hung.Select(u => (war.Time - u.HungrySince) / 3600).OrderBy(x => x).ElementAt(hung.Count / 2):0} h without food, "
-                                  + $"{hung.Count(u => !Supply.ClearToDepot(war, u))} cut off; by arm: "
+                                  + $"{hung.Count(u => !Supply.ClearToDepot(war, u))} cut off ("
+                                  + string.Join(", ", hung.Where(u => !Supply.ClearToDepot(war, u)).Select(u => Supply.CutWhy(war, u, routes)).GroupBy(w => w).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}"))
+                                  + "); hungry battalions: " + string.Join(", ", hung.Select(u => Command.Battalion(war, u)).Where(b => b != null).Distinct().Select(b => Command.Why(war, b!)).GroupBy(w => w).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}"))
+                                  + "; by arm: "
                                   + string.Join(", ", hung.GroupBy(u => u.Arm).OrderByDescending(g => g.Count()).Take(5).Select(g => $"{g.Key.ToString().ToLowerInvariant()} {g.Count()}")));
             }
             foreach (var sd in war.Sides)

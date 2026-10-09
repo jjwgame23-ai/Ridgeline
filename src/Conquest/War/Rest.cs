@@ -37,6 +37,8 @@ public static class Rest
             else if (night || u.SleepDebt >= ReadyDebt) rate = InLine(war, u) ? -0.5f : -1f;
             else rate = 0.5f;
             if (u.HungrySince >= 0) rate += 0.25f;
+            if (u.Parent >= 0 && Command.Manoeuvre(u) && Command.Battalion(war, u) is { Op: >= 0 })
+                war.OpTime[night ? 1 : 0, u.InFight >= 0 ? 1 : marching ? 0 : rate < 0f ? 2 : 3]++;
             u.SleepDebt = Math.Clamp(u.SleepDebt + rate * hours, 0f, 48f);
         }
     }

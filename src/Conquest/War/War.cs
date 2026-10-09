@@ -60,6 +60,14 @@ public sealed class War
     public readonly float[,] Landed = new float[3, 3], Hauled = new float[3, 3], Issued = new float[3, 3], CargoLost = new float[3, 3];
     /// <summary>Each side's convoy runs made, and unit-nights a unit missed its resupply: cut off from its depot by the enemy, or too far from it.</summary>
     public readonly int[] Convoys = new int[3], CutOff = new int[3], TooFar = new int[3];
+    /// <summary>Unit-nights a unit was fed by a depot not its own (area support), and units that broke out to be fed.</summary>
+    public readonly int[] Area = new int[3], BrokeOut = new int[3];
+    /// <summary>Company-minutes of an offensive's companies, by night and by day: moving, fighting, asleep, awake and halted.</summary>
+    public readonly long[,] OpTime = new long[2, 4];
+    /// <summary>For each side, the squares one of its depots can reach (see <see cref="Supply.Reach"/>).</summary>
+    public readonly bool[][] Reached = new bool[3][];
+    /// <summary>Places that changed hands by ground alone (not taken by a battalion), by what the new holder had there.</summary>
+    public readonly Dictionary<string, int> FlippedBy = new();
     /// <summary>What the war is doing just now, for the watchdog that reports a run stuck in one place.</summary>
     public volatile string Doing = "";
     /// <summary>A fight to trace (trace=N): its state every 30 s, for reading how fights go.</summary>
@@ -316,14 +324,26 @@ public sealed class War
     {
         Ctl.Update(this);
         Move.UpdateDanger(Ctl);
+        Supply.Reach(this);
         foreach (var o in Objectives)
         {
             int owner = Ctl.Owner[Ctl.CellOf(o.X, o.Z)];
             if (owner == o.Owner) continue;
             o.Owner = owner;
+            o.Flips++;
+            if (owner >= 0) NoteFlip(o, owner);
             if (owner >= 0 && (o.Kind != ObjKind.Town || o.Value >= 1.6f))
                 Events.Add((Time, owner, $"{Sides[owner].Name} takes {o.Name}", o.X, o.Z));
         }
+    }
+
+    /// <summary>What the side that has just come to hold a place by ground alone had near it: arm, and whether moving.</summary>
+    void NoteFlip(Objective o, int side)
+    {
+        var near = Units.Where(u => u.IsMover && u.Side == side && u.People >= 4 && (u.X - o.X) * (u.X - o.X) + (u.Z - o.Z) * (u.Z - o.Z) < 2200f * 2200f).ToList();
+        string k = near.Count == 0 ? "nobody near" : near.Any(u => Command.Manoeuvre(u) && u.Path == null) ? "fighting troops halted"
+                 : near.Any(u => Command.Manoeuvre(u)) ? "fighting troops moving" : near.Any(u => u.Path == null) ? "support troops halted" : "support troops moving";
+        FlippedBy[k] = FlippedBy.GetValueOrDefault(k) + 1;
     }
 
     /// <summary>A battalion has an objective in hand.</summary>
@@ -331,6 +351,12 @@ public sealed class War
     {
         o.Owner = by.Side;
         o.TakenAt = Time;
+        o.Flips++;
+        // The ground goes with it: a place taken with the enemy still close by is contested, and contested ground keeps
+        // its holder. (The ground used to stay the old holder's, so the next ground update gave the place straight back
+        // and the battalion took it again: Staurge Oilfield changed hands 47 times in a month, every 20 minutes for a
+        // day at a time.)
+        Ctl.Owner[Ctl.CellOf(o.X, o.Z)] = (sbyte)by.Side;
         Events.Add((Time, by.Side, $"{Sides[by.Side].Name} takes {o.Name} ({by.Short})", o.X, o.Z));
     }
 }

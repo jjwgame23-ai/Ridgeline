@@ -48,8 +48,13 @@ public sealed class Haul
 ///   (9,500 L). The convoys are units on the map like any other: they halt when they see the enemy ahead, can be
 ///   ambushed, and lose what burnt with the trucks.
 /// - The last leg. Each night at 22:00 every unit within 30 km of its depot, by a way clear of enemy ground, is topped
-///   up: food to three days, fuel to full, ammunition to its basic load (the US calls this nightly run a LOGPAC). The
-///   forward support companies' trucks that carry it aren't moved on the map yet.
+///   up: food to three days, fuel to full, ammunition to its basic load (the US calls this nightly run a LOGPAC). A
+///   unit its own depot can't reach, or whose depot stands empty, is served by the nearest of its side's depots that
+///   can (area support, as US sustainment doctrine has it). The forward support companies' trucks that carry it
+///   aren't moved on the map yet.
+/// - Falling back. A support area doesn't stand on ground the enemy has taken or is fighting over: it falls back toward
+///   the port, stock and all, to its own side's quiet ground. A unit nobody can reach, hungry for half a day, breaks
+///   out toward the nearest ground a depot can reach (Command.BreakOut).
 /// - Going without. Out of fuel, vehicles don't move. Out of ammunition, soldiers don't fire. Hungry, they shoot worse
 ///   each day. A battalion low on fuel or ammunition isn't sent on an operation until it has been resupplied, so
 ///   offensives pause when they outrun their supply.
@@ -163,6 +168,7 @@ public static class Supply
                 d.Stock[c] = d.Target[c];
             }
         }
+        Reach(war);
     }
 
     static Depot AddDepot(War war, int side, int unit, int parent, float x, float z, string name)
@@ -279,8 +285,33 @@ public static class Supply
         // It moves only for a real shift: support areas aren't packed up for a few hundred metres. (The stock moves
         // with it at once; the trucks that would carry it aren't counted.)
         if ((d.X - x) * (d.X - x) + (d.Z - z) * (d.Z - z) < 3000f * 3000f) return;
-        (d.X, d.Z) = OnRoads(war, d.Side, x, z);
+        (d.X, d.Z) = OwnGround(war, d.Side, x, z);
     }
+
+    /// <summary>
+    /// The nearest spot on the side's own ground toward its port from (x, z), where trucks can reach it. (Support areas
+    /// used to be put wherever their brigades' middle was 8 km back from, and one whose brigade had pushed into enemy
+    /// country, or had no fighting battalions left to follow, stood on the enemy's ground: none of its 58 units could be
+    /// fed, and its convoys found no way to it.)
+    /// </summary>
+    static (float X, float Z) OwnGround(War war, int side, float x, float z)
+    {
+        var port = war.Isl.Towns[war.Sides[side].Port];
+        float dx = port.X - x, dz = port.Z - z, d = MathF.Sqrt(dx * dx + dz * dz);
+        for (float m = 0f; m < d; m += Territory.CellM)
+        {
+            float px = x + dx / d * m, pz = z + dz / d * m;
+            int c = war.Ctl.CellOf(px, pz);
+            if (!EnemyGround(war, c, side) && !war.Ctl.Contested[c]) return OnRoads(war, side, px, pz);
+        }
+        return (port.X, port.Z);
+    }
+
+    /// <summary>A depot with less than a twentieth of the food it aims to hold: its convoys aren't getting through.</summary>
+    static bool Empty(Depot d) => d.Target[0] > 0f && d.Stock[0] < 0.05f * d.Target[0];
+
+    /// <summary>Ground the enemy holds and the side has nobody on.</summary>
+    static bool EnemyGround(War war, int c, int side) => war.Ctl.Owner[c] >= 0 && war.Ctl.Owner[c] != side && !war.Ctl.Present(c, side);
 
     /// <summary>
     /// A support area stands where trucks can get to it from the port: the nearest such spot to where it's wanted.
@@ -301,6 +332,16 @@ public static class Supply
         {
             if (!u.IsMover || u.People <= 0) continue;
             u.Food -= (float)(u.People * RationKg * dt / 86400.0);
+            // A convoy carrying rations eats from its load rather than go hungry. (Convoy crews ate only at depots, so
+            // one held up on the road went hungry for days beside trucks full of food.)
+            if (u.Food <= 0f && u.Hauls && war.Hauls.FirstOrDefault(h => h.Unit == u.Id) is { } hl && hl.Load[(int)Cargo.Food] > 0f)
+            {
+                float eat = MathF.Min(hl.Load[(int)Cargo.Food] * 1000f, u.People * RationKg * 3f);
+                hl.Load[(int)Cargo.Food] -= eat / 1000f;
+                if (hl.To >= 0) war.Depots[hl.To].Coming[(int)Cargo.Food] = MathF.Max(0f, war.Depots[hl.To].Coming[(int)Cargo.Food] - eat / 1000f);
+                war.Issued[u.Side, 0] += eat / 1000f;
+                u.Food += eat;
+            }
             if (u.Food <= 0f)
             {
                 u.Food = 0f;
@@ -559,32 +600,51 @@ public static class Supply
     }
 
     /// <summary>
-    /// The night's resupply from each depot to the units it serves: within 30 km, by a way that crosses no enemy or
-    /// contested ground. A depot short of something shares out what it has.
+    /// The night's resupply from each depot to the units it serves: within 30 km, by a way round ground the enemy holds
+    /// alone. A unit its own depot can't reach, or whose depot is empty, is served by the nearest of its side's depots
+    /// that can reach it and has food (area support).
+    /// A depot short of something shares out what it has.
     /// </summary>
     static void Logpac(War war)
     {
         var ctl = war.Ctl;
         foreach (var d in war.Depots)
+            if (d.Unit >= 0 && (EnemyGround(war, ctl.CellOf(d.X, d.Z), d.Side) || ctl.Contested[ctl.CellOf(d.X, d.Z)])) (d.X, d.Z) = OwnGround(war, d.Side, d.X, d.Z);
+        var routes = war.Depots.Select(d => Routes(war, d)).ToArray();
+        var by = new List<Unit>?[war.Depots.Count];
+        foreach (var u in war.Units)
         {
+            // A convoy on the road isn't there to be served; one halted, held up or waiting, is. (Convoys were left out
+            // altogether, so one held up away from a depot went hungry until it got through.)
+            if (!u.IsMover || u.Depot < 0 || (u.Hauls && u.Path != null) || u.People <= 0 || u.InFight >= 0) continue;
+            int cell = ctl.CellOf(u.X, u.Z);
+            int from = u.Depot;
+            if (routes[from][cell] > LogpacReach || Empty(war.Depots[from]))
+            {
+                float best = float.MaxValue;
+                foreach (var d in war.Depots)
+                    if (d.Side == u.Side && d.Id != u.Depot && !Empty(d) && routes[d.Id][cell] <= LogpacReach && routes[d.Id][cell] < best)
+                    {
+                        best = routes[d.Id][cell];
+                        from = d.Id;
+                    }
+                if (from != u.Depot) war.Area[u.Side]++;
+                else if (routes[from][cell] > LogpacReach)
+                {
+                    if (routes[from][cell] == float.MaxValue) war.CutOff[u.Side]++;
+                    else war.TooFar[u.Side]++;
+                    continue;
+                }
+            }
+            (by[from] ??= new List<Unit>()).Add(u);
+        }
+        foreach (var d in war.Depots)
+        {
+            if (by[d.Id] == null) continue;
             var served = new List<(Unit U, float[] Need)>();
             var total = new float[3];
-            var route = Routes(war, d);
-            foreach (var u in war.Units)
+            foreach (var u in by[d.Id]!)
             {
-                if (!u.IsMover || u.Depot != d.Id || u.Hauls || u.People <= 0 || u.InFight >= 0) continue;
-                int cell = ctl.CellOf(u.X, u.Z);
-                float km = cell >= 0 ? route[cell] : float.MaxValue;
-                if (km == float.MaxValue)
-                {
-                    war.CutOff[u.Side]++;
-                    continue;
-                }
-                if (km > LogpacReach)
-                {
-                    war.TooFar[u.Side]++;
-                    continue;
-                }
                 // Soldiers back from hospital, and replacements, come up with the resupply.
                 Medical.Rejoin(war, u);
                 Measure(war, u);
@@ -649,12 +709,46 @@ public static class Supply
         return d;
     }
 
-    /// <summary>Whether a unit can be reached from its depot round the ground the enemy holds.</summary>
+    /// <summary>Why a unit can't be reached from its depot, for the report.</summary>
+    public static string CutWhy(War war, Unit u, Dictionary<int, float[]> cache)
+    {
+        float[] R(Depot d) => cache.TryGetValue(d.Id, out var r) ? r : cache[d.Id] = Routes(war, d);
+        int c = war.Ctl.CellOf(u.X, u.Z);
+        var own = war.Depots[u.Depot];
+        int dc = war.Ctl.CellOf(own.X, own.Z);
+        if (war.Ctl.Owner[dc] >= 0 && war.Ctl.Owner[dc] != u.Side && !war.Ctl.Present(dc, u.Side)) return "its depot on enemy ground";
+        if (war.Depots.Any(d => d.Side == u.Side && d.Id != own.Id && R(d)[c] < float.MaxValue)) return "another depot could reach it";
+        if (war.Ctl.Owner[c] != u.Side) return "on enemy ground";
+        bool enemy = war.Units.Any(e => e.IsMover && e.Side != u.Side && e.People >= 4 && (e.X - u.X) * (e.X - u.X) + (e.Z - u.Z) * (e.Z - u.Z) < 5000f * 5000f);
+        return enemy ? "enemy ground all round, the enemy within 5 km" : "enemy ground all round, no enemy within 5 km";
+    }
+
+    /// <summary>
+    /// The squares some depot of each side reaches within 30 km round the ground the enemy holds, refreshed with the
+    /// ground every half hour (War.UpdateControl).
+    /// </summary>
+    public static void Reach(War war)
+    {
+        int n = war.Ctl.N;
+        for (int s = 0; s < 3; s++) Array.Clear(war.Reached[s] ??= new bool[n * n]);
+        foreach (var d in war.Depots)
+        {
+            var r = Routes(war, d);
+            var to = war.Reached[d.Side];
+            for (int c = 0; c < r.Length; c++)
+                if (r[c] <= LogpacReach) to[c] = true;
+        }
+    }
+
+    /// <summary>
+    /// Whether a unit can be reached from one of its side's depots round the ground the enemy holds, as of the last
+    /// ground update. (It used to ask of its own depot alone, worked out afresh each time.)
+    /// </summary>
     public static bool ClearToDepot(War war, Unit u)
     {
-        if (u.Depot < 0) return true;
+        if (u.Depot < 0 || war.Reached[u.Side] == null) return true;
         int c = war.Ctl.CellOf(u.X, u.Z);
-        return c >= 0 && Routes(war, war.Depots[u.Depot])[c] < float.MaxValue;
+        return c >= 0 && war.Reached[u.Side][c];
     }
 
     static float AmmoNeedKg(War war, Unit m)

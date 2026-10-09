@@ -84,6 +84,8 @@ public static class Command
                 war.Doing = $"execute {u.Short}";
                 Execute(war, u);
             }
+        war.Doing = "break out";
+        BreakOut(war);
         war.Doing = "offensives";
         Offensive.Step(war);
         foreach (var bn in war.Units)
@@ -311,7 +313,7 @@ public static class Command
         {
             if (m.Hauls) continue;
             m.Next = null;
-            m.Order = new Order { Kind = OrderKind.Move, X = o.X + m.X - cx, Z = o.Z + m.Z - cz, At = war.Time };
+            m.Order = new Order { Kind = OrderKind.Move, X = o.X + m.X - cx, Z = o.Z + m.Z - cz, At = war.Time, Night = o.Night };
             if (!war.StartMove(m, m.Order.X, m.Order.Z)) m.Order.Done = true;
         }
         o.Done = true;
@@ -325,17 +327,21 @@ public static class Command
         var rest = parts.Where(c => !line.Contains(c)).ToList();
         var (hx, hz) = Home(war, bn.Side);
         float home = MathF.Atan2(hz - obj.Z, hx - obj.X), r = obj.Radius + 300f;
+        // An offensive's battalions attack by night as well as by day: a species that lives to fight doesn't stop for
+        // the dark, and doctrine has attacks go on through the night (the Soviet "continuous offensive", US night
+        // attacks). They move at night pace, and lose the sleep they'd have had. Everyone else marches by day.
+        bool night = bn.Op >= 0;
         for (int k = 0; k < line.Count; k++)
         {
             float a = home + MathF.PI + (k - (line.Count - 1) / 2f) * (MathF.Tau / MathF.Max(3, line.Count));
-            Send(war, line[k], obj.X + MathF.Cos(a) * r, obj.Z + MathF.Sin(a) * r);
+            Send(war, line[k], obj.X + MathF.Cos(a) * r, obj.Z + MathF.Sin(a) * r, night);
         }
-        foreach (var c in rest) Send(war, c, obj.X + MathF.Cos(home) * (r + 1000f), obj.Z + MathF.Sin(home) * (r + 1000f));
+        foreach (var c in rest) Send(war, c, obj.X + MathF.Cos(home) * (r + 1000f), obj.Z + MathF.Sin(home) * (r + 1000f), night);
     }
 
-    static void Send(War war, Unit c, float x, float z)
+    static void Send(War war, Unit c, float x, float z, bool night)
     {
-        c.Next = new Order { Kind = OrderKind.Move, X = x, Z = z, At = war.Time + Delay(Echelon.Company) };
+        c.Next = new Order { Kind = OrderKind.Move, X = x, Z = z, At = war.Time + Delay(Echelon.Company), Night = night };
     }
 
     /// <summary>
@@ -381,6 +387,59 @@ public static class Command
         }
     }
 
+    /// <summary>
+    /// Units cut off and going hungry break out. A unit none of its side's depots can reach, hungry for half a day (a
+    /// night's resupply missed), heads for the nearest ground a depot can reach, by night as well as by day. A fighting
+    /// battalion goes as a whole and gives up the ground it held. Encircled forces that can't be resupplied break out
+    /// (FM 3-90, "breakout from encirclement"), and these soldiers don't surrender. (Units cut off used to sit where
+    /// they were, waiting for a resupply that couldn't reach them: at the end of a month 50-120 per army, a median of one
+    /// to two and a half weeks without food.)
+    /// </summary>
+    static void BreakOut(War war)
+    {
+        var done = new HashSet<int>();
+        foreach (int id in war.MoverIds)
+        {
+            var m = war.Units[id];
+            if (m.People <= 0 || m.Hauls || m.InFight >= 0 || m.HungrySince < 0 || war.Time - m.HungrySince < 12 * 3600 || Supply.ClearToDepot(war, m)) continue;
+            var bn = Battalion(war, m);
+            var who = bn != null && !bn.IsMover && Manoeuvre(bn) ? bn : m;
+            if (!done.Add(who.Id) || war.Time - who.BrokeOutAt < 6 * 3600 || Busy(war, who)) continue;
+            var (x, z) = Pos(war, who);
+            int to = NearestReached(war, who.Side, x, z);
+            if (to < 0) continue;
+            who.BrokeOutAt = war.Time;
+            who.Holds = -1;
+            Give(war, who, new Order { Kind = OrderKind.Move, X = war.Ctl.CX(to), Z = war.Ctl.CZ(to), Night = true });
+            war.BrokeOut[who.Side]++;
+            war.Events.Add((war.Time, who.Side, $"{war.Sides[who.Side].Name}'s {who.Short}, cut off and hungry, breaks out", x, z));
+        }
+    }
+
+    /// <summary>The nearest land square within 40 km that one of the side's depots can reach; -1 if none.</summary>
+    static int NearestReached(War war, int side, float x, float z)
+    {
+        var ctl = war.Ctl;
+        var reached = war.Reached[side];
+        if (reached == null) return -1;
+        int c0 = ctl.CellOf(x, z), cx = c0 % ctl.N, cz = c0 / ctl.N, best = -1;
+        float bd = float.MaxValue;
+        for (int y = Math.Max(0, cz - 40); y <= Math.Min(ctl.N - 1, cz + 40); y++)
+        for (int xx = Math.Max(0, cx - 40); xx <= Math.Min(ctl.N - 1, cx + 40); xx++)
+        {
+            int c = y * ctl.N + xx;
+            if (!reached[c] || !ctl.Land[c]) continue;
+            float d = Sq(xx - cx, y - cz);
+            if (d >= bd) continue;
+            bd = d;
+            best = c;
+        }
+        return best;
+    }
+
+    /// <summary>Every part of a battalion with fuel, food and half its ammunition (see <see cref="Supply.Ready"/>).</summary>
+    internal static bool Stocked(War war, Unit bn) => Movers(war, bn).All(m => Supply.Ready(war, m));
+
     /// <summary>A fighting battalion free for an operation, now or once it has rested: not holding ground, and at half strength or more.</summary>
     static bool Free(War war, Unit bn) => bn.Echelon == Echelon.Battalion && Manoeuvre(bn) && bn.Holds < 0 && bn.Op < 0 && Strength(war, bn) >= 0.5f;
 
@@ -410,6 +469,14 @@ public static class Command
             return o.Owner != bn.Side && !o.Unreachable[bn.Side] && war.Time >= o.Retry[bn.Side] && o.Claims[bn.Side] < (o.Owner >= 0 ? 2 : 1);
         });
         return open ? "kept back in reserve" : "brigade's tasks all taken or barred";
+    }
+
+    /// <summary>The battalion a unit belongs to, or null.</summary>
+    public static Unit? Battalion(War war, Unit u)
+    {
+        for (var a = u; a != null; a = a.Parent >= 0 ? war.Units[a.Parent] : null)
+            if (a.Echelon == Echelon.Battalion) return a;
+        return null;
     }
 
     /// <summary>A unit's movers: itself if it moves on its own, and those its parts make up.</summary>

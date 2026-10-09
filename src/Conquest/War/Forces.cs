@@ -99,6 +99,8 @@ public sealed class Unit
     public double HungrySince = -1;
     /// <summary>Hours of sleep the company owes (see <see cref="Rest"/>).</summary>
     public float SleepDebt;
+    /// <summary>When it last set off to break out of encirclement (see Command.BreakOut).</summary>
+    public double BrokeOutAt = double.MinValue;
     public int Depot = -1;
     public bool Hauls;
     /// <summary>
@@ -151,7 +153,7 @@ public sealed class Order
     public bool Done;
     /// <summary>A move to get out of contact, not a march: made by night too, and past the day's march limit.</summary>
     public bool Tactical;
-    /// <summary>A move made by night as well as by day, within the day's limit (supply convoys).</summary>
+    /// <summary>A move made by night as well as by day, within the day's limit (supply convoys, offensives, break-outs).</summary>
     public bool Night;
 }
 
@@ -174,6 +176,8 @@ public sealed class Objective
     public readonly double[] Retry = new double[3];
     /// <summary>When it last changed hands by being taken.</summary>
     public double TakenAt = double.MinValue;
+    /// <summary>How many times it has changed hands, for the report.</summary>
+    public int Flips;
 }
 
 /// <summary>One of the three armies at war.</summary>

@@ -27,7 +27,9 @@ public sealed class Operation
 /// - Assembly. They move to an assembly area 6 km short of the axis and attack at dawn (05:30), at least 12 hours after
 ///   the plan. In the last hour the guns fire a preparation on the enemy units known to be on the axis.
 /// - The attack. The battalions go in together, two on each held place. They don't stop to hold what they take: other
-///   battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper.
+///   battalions take newly won ground over, and the attackers go on to the next place, up to three bounds deeper. They
+///   attack by night as well as by day, and pause only to take stock after a place falls or for the night's resupply,
+///   so an offensive runs until its troops are spent.
 /// - The end. The offensive stops when its battalions are worn to half their strength on average (the species will
 ///   spend itself where human armies stopped at 70%), when its companies are exhausted, when it has taken no new ground
 ///   for a day, or when it has nothing left to take. The army plans the next for at least a day, and launches it once
@@ -184,7 +186,9 @@ public static class Offensive
             {
                 if (b.Next != null || b.Order is { Done: false })
                     any = true;
-                else if (war.Time < b.RestUntil)
+                // Resting after taking a place, or waiting for the night's resupply: an offensive pauses for supply.
+                // (Battalions out of food or ammunition used to be sent on to the next place regardless.)
+                else if (war.Time < b.RestUntil || !Command.Stocked(war, b))
                     waiting = true;
                 else if (Next(war, op, b))
                     any = true;
