@@ -52,6 +52,8 @@ public sealed class BotBrain
     public BotState State { get; private set; } = BotState.Advance;
     public Threat? Target { get; private set; }
     public CoverSpot? Cover { get; private set; }
+    /// <summary>Up from his cover to look or shoot (diagnostics).</summary>
+    public bool Peeking => _peeking;
     public bool WantsAds { get; private set; }
     public string Note { get; private set; } = "";
     public float AimErrorDeg { get; private set; }
@@ -1760,6 +1762,7 @@ public sealed class BotBrain
         if (_b.Prone && vis && _holdFire && _reacted) _proneBlockedUntil = Now + 6.0;
 
         _b.SetStance(WantStance(t, vis));
+        _b.Hunched = State == BotState.InCover && !_peeking;
         WantsAds = State switch
         {
             BotState.Advance or BotState.TakeCover or BotState.Evade or BotState.Flank or BotState.Aid => false,
@@ -2052,11 +2055,16 @@ public sealed class BotBrain
         {
             if (c.Side && c.LeanDir == 0f && (!_b.Arrived || _b.FeetPos.DistanceTo(c.PeekPos) > 0.6f)) _b.MoveTo(c.PeekPos, MoveMode.Walk);
             _b.LeanTarget = c.LeanDir;
-            bool bail = Now > _peekUntil || _b.Ammo == 0 || _b.Reloading || _b.Suppression > 0.8f + _b.P.Courage * 0.15f;
+            bool driven = _b.Suppression > 0.8f + _b.P.Courage * 0.15f;
+            bool bail = Now > _peekUntil || _b.Ammo == 0 || _b.Reloading || driven;
             if (bail)
             {
                 _peeking = false;
                 _hideUntil = Now + (_popPeek ? _rng.RandfRange(0.4f, 1.1f) : _rng.RandfRange(0.5f, 1.8f)) * (1.3f - _b.P.Aggression * 0.6f);
+                // Driven down by fire, he stays down a good while before he looks again: whatever drove him down is
+                // still laid on that spot. (He was back up in a second or two, and a gun that had him in its sights
+                // had him again.)
+                if (driven) _hideUntil = Math.Max(_hideUntil, Now + _rng.RandfRange(3f, 8f));
             }
         }
     }

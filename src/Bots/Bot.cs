@@ -131,7 +131,14 @@ public partial class Bot : CharacterBody3D, ICombatant
     bool _hasGoal, _reloadEmpty, _partial;
     float _routeCheckT, _doorT;
     float _detourT;
-    float _lean, _cool, _reloadT, _reloadDur, _senseT, _thinkT, _stuckT, _repathT, _walkPhase, _crouchT, _proneT, _stanceT, _rangeErr;
+    float _lean, _cool, _reloadT, _reloadDur, _senseT, _thinkT, _stuckT, _repathT, _walkPhase, _crouchT, _proneT, _stanceT, _rangeErr, _hunchT;
+    /// <summary>
+    /// On a knee behind cover and not looking out: hunched over, head down below a waist-high wall (about a metre up
+    /// instead of 1.25). Up to look or shoot, he straightens. (Kneeling upright, a man's head and shoulders stood above a
+    /// sandbag wall or a low wall: of 57 men hit while down in cover in a Conquest fight, 39 had the cover between them
+    /// and the gun at chest height, and were hit above it.)
+    /// </summary>
+    public bool Hunched;
     int _reloadStage, _stuckCount;
     double _stepAt, _unstickUntil, _lastRepath = -99;
     Vector3 _unstickDir;
@@ -234,7 +241,11 @@ public partial class Bot : CharacterBody3D, ICombatant
             using (Prof.Time("crew")) Crew.Tick(dt);
             return;
         }
-        Suppression = Mathf.MoveToward(Suppression, 0f, dt * 0.25f);
+        // A man under fire can't tell the last burst from a pause in it: he stays down a while after it stops. Ten
+        // seconds from fully suppressed to clear. (It was four: men in fighting positions were up looking again a
+        // second after a burst, into a machine gun still laid on them, and that's where a Conquest fight's dead came
+        // from: about 13 rounds a hit, where the war's own fight took 205.)
+        Suppression = Mathf.MoveToward(Suppression, 0f, dt * 0.1f);
         _lean = Mathf.MoveToward(_lean, Prone ? 0f : LeanTarget, dt * 4f);
         _stanceT = MathF.Max(0f, _stanceT - dt);
         // Leaning moves the body, so it moves what can be hit too.
@@ -501,9 +512,9 @@ public partial class Bot : CharacterBody3D, ICombatant
         float tilt = MathF.Cos(_proneT * Mathf.Pi * 0.5f), lift = 0.12f * _proneT;
         float Up(float stand, float kneel, float crouchWalk, float flat) =>
             MathF.Max(flat, Mathf.Lerp(stand, Mathf.Lerp(kneel, crouchWalk, _crouchWalkT), _crouchT) * tilt + lift);
-        float h = Up(1.8f, 1.25f, 1.4f, 0.62f);
-        _eyeH = Up(1.62f, 1.17f, 1.32f, 0.38f);
-        _chestH = Up(1.25f, 0.85f, 0.97f, 0.3f);
+        float h = Up(1.8f, Mathf.Lerp(1.25f, 1.0f, _hunchT), 1.4f, 0.62f);
+        _eyeH = Up(1.62f, Mathf.Lerp(1.17f, 0.95f, _hunchT), 1.32f, 0.38f);
+        _chestH = Up(1.25f, Mathf.Lerp(0.85f, 0.68f, _hunchT), 0.97f, 0.3f);
         if (MathF.Abs(_capsule.Height - h) > 0.005f) _capsule.Height = h;
         _col.Position = new Vector3(_lean * 0.22f, _capsule.Height / 2f, 0f);
     }
@@ -1250,6 +1261,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         bool kneeling = Crouched || (_proneT > 0.05f && (!Prone || _proneT < 0.95f));
         _crouchT = Mathf.MoveToward(_crouchT, kneeling ? 1f : 0f, dt * 5f);
         _crouchWalkT = Mathf.MoveToward(_crouchWalkT, Crouched && spd > 0.5f && _proneT <= 0f ? 1f : 0f, dt * 4f);
+        _hunchT = Mathf.MoveToward(_hunchT, Hunched && Crouched && spd < 0.5f && _proneT <= 0f ? 1f : 0f, dt * 4f);
         // Prone: the whole body lies along the ground, head forward, rifle out in front of him. (Left
         // alone when upright, so the tweens of going down and being helped up play out.)
         if (Prone || _proneT > 0f)
@@ -1290,13 +1302,13 @@ public partial class Bot : CharacterBody3D, ICombatant
         float swing = MathF.Sin(_walkPhase) * Mathf.Clamp(spd / 3.4f, 0f, 1f) * 0.55f * fore;
         float spread = MathF.Abs(across) * Mathf.Clamp(spd / 1.8f, 0f, 1f) * 0.22f * (0.5f + 0.5f * MathF.Sin(_walkPhase));
         // Crouched and walking he's up off the knee, bent at the hips, both legs working.
-        float hipY = Mathf.Lerp(0.9f, Mathf.Lerp(0.45f, 0.7f, _crouchWalkT), _crouchT);
+        float hipY = Mathf.Lerp(0.9f, Mathf.Lerp(0.45f, 0.7f, _crouchWalkT), _crouchT) - 0.06f * _hunchT;
         float kneel = _crouchT * 1.2f;
         float bendL = Mathf.Lerp(kneel * 0.5f, _crouchT * 0.6f, _crouchWalkT), bendR = Mathf.Lerp(kneel, _crouchT * 0.6f, _crouchWalkT);
 
         Rotation = new Vector3(0f, Mathf.DegToRad(Aim.Yaw), 0f);
         _torso.Position = new Vector3(_lean * 0.1f, hipY, 0f);
-        _torso.Rotation = new Vector3(-_crouchT * (0.2f + 0.25f * _crouchWalkT) + (Reloading ? 0.12f : 0f), 0f, -_lean * 0.35f);
+        _torso.Rotation = new Vector3(-_crouchT * (0.2f + 0.25f * _crouchWalkT) - 0.6f * _hunchT + (Reloading ? 0.12f : 0f), 0f, -_lean * 0.35f);
         _hipL.Position = new Vector3(-0.11f, hipY, 0f);
         _hipR.Position = new Vector3(0.11f, hipY, 0f);
         _hipL.Rotation = new Vector3(bendL + swing, 0f, -spread);

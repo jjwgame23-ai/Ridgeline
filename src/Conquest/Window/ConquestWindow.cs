@@ -329,8 +329,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     static void Give(Squad sq, (IObjective Obj, Site? Site, bool Defend, string Verb, string What) o) => sq.Order(o.Site, o.Obj, o.Defend, o.Verb, o.What);
 
     /// <summary>
-    /// A dug-in squad's fighting positions: a sandbagged position for every two men, 4 m apart across its front, facing the
-    /// enemy; and a place behind each for each of the two. The sandbags stand for the trenches the war has them in.
+    /// A dug-in squad's fighting positions: a two-man position for every two men, 4 m apart across its front, facing the
+    /// enemy, with a parapet a metre thick (Fortifications.Parapet); and a place behind each for each of the two. They
+    /// stand for the trenches the war has them in.
     /// </summary>
     List<Vector3> DigIn(Vector3 c, Vector3 enemy, int men)
     {
@@ -343,9 +344,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         for (int w = 0; w < walls; w++)
         {
             var at = c + right * ((w - (walls - 1) / 2f) * 4f);
-            Fortifications.Sandbags(GetParent(), Map, at, facing);
-            foreach (float s in new[] { -0.55f, 0.55f })
-                spots.Add(Map.Ground(at - facing * 0.8f + right * s));
+            Fortifications.Parapet(GetParent(), Map, at, facing);
+            foreach (float s in new[] { -0.6f, 0.6f })
+                spots.Add(Map.Ground(at - facing * 1.05f + right * s));
             Dug++;
         }
         return spots;

@@ -16,6 +16,7 @@ public sealed class Projectile
     public bool Explosive;    // HE: bursts on impact once armed
     public float ArmM;
     public float Pen;         // armour penetration, mm RHA-equivalent
+    public string? Through;   // what it last went through on its way, if anything (diagnostics)
     public float VehDamage;   // hull points taken if it gets through
     public float Crater = 0.65f;
     public float FragR = 7f, Power = 1f; // an explosive round's fragment reach and charge (see WeaponDef)
@@ -525,6 +526,16 @@ public partial class Ballistics : Node3D
                 }
             }
             if (!p.Silent) Prof.Count($"hit:{zone}");
+            if (!p.Silent && p.Through != null) Prof.Count($"hit through {p.Through}");
+            // Diagnostics: a man hit in cover: up or down, on his spot or off it, and whether the round came from the side
+            // his cover faces (where it was meant to keep off fire from).
+            if (!p.Silent && victim is Bot hb && hb.Brain.State == BotState.InCover && hb.Brain.Cover is CoverSpot cs)
+            {
+                bool on = (hb.FeetPos - cs.Pos with { Y = hb.FeetPos.Y }).Length() < 0.8f;
+                var los = (p.Origin - cs.Pos) with { Y = 0f };
+                bool blocked = hb.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(cs.Pos + Vector3.Up * 0.9f, p.Origin, Layers.World | Layers.Trees)).Count > 0;
+                Prof.Count($"hit in cover: {(hb.Brain.Peeking ? "up" : "down")}, {hb.Stance}, {(on ? "on his spot" : "off it")}, {(blocked ? "cover between" : "nothing between")} the gun and his spot at 0.9 m");
+            }
             Telemetry.Hit(victim, p.Shooter, pos, zone.ToString(), p.Weapon, pos.DistanceTo(p.Origin), p.Silent);
             float dmg = p.Damage * MathF.Pow(speed / p.MuzzleSpeed, 1.5f) * Combatants.ZoneMultiplier(zone);
             victim.TakeHit(new HitInfo
@@ -547,6 +558,7 @@ public partial class Ballistics : Node3D
                 if (!p.Silent)
                 {
                     Prof.Count($"pen:{what}");
+                    p.Through = what.ToString();
                     foreach (var (c, chest) in _standing)
                     {
                         if (c == p.Shooter || !c.Alive) continue;

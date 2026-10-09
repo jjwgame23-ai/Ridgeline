@@ -19,8 +19,18 @@ public static class Fortifications
 
     public static void Clear() => _all.Clear();
 
+    /// <summary>
+    /// A two-man fighting position's parapet, as doctrine builds one (FM 3-21.8: at least a metre thick): bags a metre
+    /// deep and about waist high, 3.4 m across its front, the ends bent back. A metre of it stops a heavy machine gun,
+    /// which gets through about half a metre of sand here (Penetration). The hasty sandbag wall (Sandbags) is half
+    /// that, and a 12.7 mm round got through it at the joins and corners.
+    /// </summary>
+    public static Node3D? Parapet(Node parent, IGround? ground, Vector3 at, Vector3 facing) => Sandbags(parent, ground, at, facing, 1.0f, 1.15f);
+
     /// <param name="facing">The direction the wall should protect against (towards the enemy).</param>
-    public static Node3D? Sandbags(Node parent, IGround? ground, Vector3 at, Vector3 facing)
+    /// <param name="thick">How thick the wall is (m): half a metre of bags, or a metre for a parapet.</param>
+    /// <param name="span">Each of its three segments' width (m).</param>
+    public static Node3D? Sandbags(Node parent, IGround? ground, Vector3 at, Vector3 facing, float thick = 0.5f, float span = 0.95f)
     {
         facing.Y = 0f;
         if (facing.LengthSquared() < 0.01f) return null;
@@ -38,20 +48,24 @@ public static class Fortifications
         // Three segments bent back at the ends, like a real fighting position.
         for (int seg = -1; seg <= 1; seg++)
         {
-            var mid = right * (seg * 0.9f) - facing * (MathF.Abs(seg) * 0.25f);
+            var mid = right * (seg * (span - 0.05f)) - facing * (MathF.Abs(seg) * 0.25f);
             var along = (right - facing * (seg * 0.28f)).Normalized();
             var basis = Basis.LookingAt(along.Cross(Vector3.Up), Vector3.Up);
             float yLocal = (ground?.HeightAt(at.X + mid.X, at.Z + mid.Z) ?? y0) - y0;
             root.AddChild(new CollisionShape3D
             {
-                Shape = new BoxShape3D { Size = new Vector3(0.95f, 1.05f, 0.5f) },
+                Shape = new BoxShape3D { Size = new Vector3(span, 1.05f, thick) },
                 Transform = new Transform3D(basis, mid + Vector3.Up * (yLocal + 0.5f)),
             });
+            // Bags across the segment's width, and as many layers deep as the wall is thick.
+            int layers = Math.Max(1, (int)MathF.Round(thick / 0.45f)), across = Math.Max(2, (int)MathF.Round(span / 0.46f));
+            for (int layer = 0; layer < layers; layer++)
             for (int row = 0; row < 4; row++)
-            for (int k = 0; k < 2; k++)
+            for (int k = 0; k < across; k++)
             {
-                float off = (k - 0.5f) * 0.46f + (row % 2 == 1 ? 0.12f : 0f);
-                if (MathF.Abs(off) > 0.5f) continue;
+                float off = (k - (across - 1) / 2f) * 0.46f + (row % 2 == 1 ? 0.12f : 0f);
+                if (MathF.Abs(off) > MathF.Max(0.5f, span / 2f)) continue;
+                float deep = (layer - (layers - 1) / 2f) * 0.42f;
                 var bag = new MeshInstance3D
                 {
                     Mesh = new BoxMesh { Size = new Vector3(0.46f, 0.25f, 0.34f) },
@@ -59,7 +73,7 @@ public static class Fortifications
                 };
                 root.AddChild(bag);
                 bag.Transform = new Transform3D(basis.Rotated(Vector3.Up, rng.RandfRange(-0.06f, 0.06f)),
-                    mid + along * off + Vector3.Up * (yLocal + 0.13f + row * 0.25f) + facing * rng.RandfRange(-0.03f, 0.03f));
+                    mid + along * off + Vector3.Up * (yLocal + 0.13f + row * 0.25f) + facing * (deep + rng.RandfRange(-0.03f, 0.03f)));
             }
         }
         _all.Enqueue(root);

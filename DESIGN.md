@@ -597,11 +597,23 @@ what turns abstract units into embodied squads and back, which is what calibrati
 - **Fixed so far:**
   - **Pinned.** Under heavy fire in the open, a bot goes flat whatever he's doing, and stays flat a few seconds after it eases (`BotBrain.WantStance`). BRAVO's dead in 5 minutes fell from 30 to 13. On a 33-a-side Valley battle, rounds per bullet hit went from 20 to 44, with kills about the same; single runs vary a lot.
   - **Dug in.** Squads the war has dug in come in with sandbagged fighting positions, a man behind each half. CHARLIE's dead fell from 83 to 67 of 86.
-- **Still to do.** The men in the fighting positions are now the ones being killed: hit in the torso and head while up to look and shoot over the bags. A bot in cover ducks for only half a second to two seconds between looks, and suppression wears off in 4 s, so he keeps reappearing in front of a gun still laid on him. Next:
-  - how long suppression lasts and keeps a man down;
-  - looking and firing from prone at range;
-  - how quickly gunners find men in cover;
-  - a fair test of an attack (the assault bench embodied at platoon scale) against history.
+- **Round 2** (`count hit in cover` and `hit through` in the log say what the men hit in cover were doing and what rounds came through):
+  - **Suppression lasts.** It wears off over 10 s instead of 4: a man can't tell the last burst from a pause. Driven down by fire, a man in cover stays down 3–8 s before he looks again, instead of popping straight back up into a gun still laid on the spot.
+  - **Parapets.** A dug-in squad's positions have a parapet a metre thick (FM 3-21.8), not a hasty half-metre sandbag wall. A 12.7 mm round gets through about half a metre of sand here, and got through the hasty wall at its joins and corners: 108 rounds went through sand in one run.
+  - **Hunched.** On a knee behind cover and not looking out, a man hunches with his head down, about a metre up instead of 1.25 (`Bot.Hunched`; the figure is drawn the same way). Kneeling upright, his head and shoulders stood above a waist-high wall: of 57 men hit while down in cover, 39 had the cover between them and the gun at chest height and were hit above it.
+- **Where it stands** (the same fight, 5 minutes):
+
+| | CHARLIE dead | BRAVO dead | Rounds a hit |
+|---|---|---|---|
+| As first built | 72 of 86 | 30 of 78 | 13 |
+| Round 1 (pinned, dug in) | 67 | 25 | 20 |
+| Round 2 | 59 (15 in the first minute, from 39–48) | 25 | 30 |
+| The war's fight | 3 down | 0 | 205 |
+
+  On 33-a-side Valley battles nothing changed beyond run-to-run noise (56–63 kills in 6 minutes, 16–44 rounds a hit).
+- **Still to do.**
+  - **Cover from one side only.** Of the men hit in cover, the biggest group (34) now had nothing between them and the gun that hit them: their cover faced one enemy while another, off to the flank, shot them. BRAVO's 11 vehicles stand in a line, and a straight wall shields one direction.
+  - **A fair test.** The war's fight was a standoff 30 minutes old in which nobody had been hit for 2 minutes; the embodied one starts at full intensity. A fairer yardstick is the assault bench embodied (an attack on a dug-in position) against history.
 
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
