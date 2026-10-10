@@ -79,7 +79,8 @@ public sealed class CrewBrain
             _illumShots = 0;
             _illumUntil = 0.0;
             _illumNext = false;
-            Comms.Say(_b, $"Fire mission, {Comms.Bearing(v.GlobalPosition, tg)}, {v.GlobalPosition.DistanceTo(tg):0} meters. Rounds out!");
+            _fireAt = now + MortarResponse;
+            Comms.Say(_b, $"Fire mission, {Comms.Bearing(v.GlobalPosition, tg)}, {v.GlobalPosition.DistanceTo(tg):0} meters.");
         }
         if (now < _nextRound) return;
         // At night, light it first: an illumination round over the target (and another if the mission outlasts the
@@ -120,6 +121,7 @@ public sealed class CrewBrain
         Note = illum ? "fire mission: illumination" : $"fire mission: {_roundsLeft} to go{(loader ? "" : ", loading himself")}";
         // Laid on this bomb's point, not still on the last one's.
         if (!t.Laid || t.LaidAt != lay || t.Reloading || t.Cool > 0f) return;
+        if (now < _fireAt) { Note = $"fire mission: laid, rounds out in {_fireAt - now:0} s"; return; }
         float fuze = 0f;
         if (illum)
         {
@@ -154,6 +156,16 @@ public sealed class CrewBrain
             if (_roundsLeft <= 0) _nextMission = now + _rng.RandfRange(12f, 20f);
         }
     }
+
+    /// <summary>
+    /// From a target being reported to the first bombs leaving the tube: the call for fire coming down from the observer,
+    /// the fire direction centre working out the data, the tubes laid and the fire adjusted. Four minutes, as the war
+    /// has it for mortars (Artillery). The bombs then go where the target was called. (They used to go four seconds after
+    /// a sighting, wherever the side had seen anyone: in a Conquest assault test BRAVO's mortars had 22 of the attackers
+    /// dead before ALPHA's own guns could fire.)
+    /// </summary>
+    public const double MortarResponse = 240.0;
+    double _fireAt;
 
     /// <summary>Where in the target area the next bomb is laid: within ~20 m of the centre of the sightings.</summary>
     Vector3 Sheaf() => new Vector3(_rng.RandfRange(-1f, 1f), 0f, _rng.RandfRange(-1f, 1f)) * 22f;

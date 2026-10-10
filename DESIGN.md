@@ -672,6 +672,37 @@ Each change is judged on three runs of the embodied assault test.
   - **The fight is minutes long.** The deliberate attack's timings were set for battle-map matches: 8–30 s at the ORP; then the assault goes when support is set (at most 75–90 s), or once support has been firing for 20 s in contact.
   - **No mortars or artillery** on either side in the embodied test yet.
 
+**Fire support in the window** (`WindowFires`, mortars as embodied tubes).
+- **The war's guns and rockets fire into the window from where they stand**, kilometres back and off the map, by the war's own rules (Artillery):
+  - **Range and timing.** A battery answers if it reaches the target and has rounds left in its day's allowance. The rounds land 6 minutes after the call (10 for BRAVO's guns, 15 for its rockets).
+  - **Accuracy.** The observer's error is 10 m plus 3% of his range, halved by adjusting; dispersion is 0.3% of range for guns. The tubes fire in volleys about 8 s apart.
+  - **Rounds** come out of the war's tubes and allowance (`Artillery.Take`, the same code the war uses: a 3-day war is identical to the last soldier).
+  - **The shells are real:** flown in for their last 3 s so men hear them and get down, bursting with real fragments. A 155/152 mm shell has an even chance of a fragment hit on a standing man at about 50 m (the war's casualty radius scaled from the 81 mm bomb's), and about 38 hand grenades' charge.
+- **Calls for fire.** A squad leader who sees the enemy beyond the guns' safe distance from his own people (300 m for guns) calls fire on him; a squad in contact calls it on the enemy its side knows of near it. Only squads in contact used to call, and contact came inside the safe distance, so the guns never fired.
+- **Planned fire.**
+  - A preparation lands at a set time, without a call.
+  - A defence has targets planned on its approaches, and fire called onto one comes in 90 s.
+  - Lift and shift: any mission stops when the side's own people come within the gun's safe distance of its target.
+- **Mortars** come into the window as tubes with their crews, and lay on the clusters of enemy their side has seen. From a target being reported to the first bombs leaving the tube is now 4 minutes, as the war has it (`CrewBrain.MortarResponse`; this applies on the battle maps too). They used to fire four seconds after a sighting: in the assault test BRAVO's mortars had killed 22 attackers before ALPHA's guns could fire.
+- **Fighting positions walled all round** (`Fortifications.Position`), as a dug position is earth all round: the metre-thick parapet in front, half-metre walls down the flanks and across a lower rear, with a gap to get in and out. With a front only, a shell landing behind the line sprayed men standing at ground level, and 18 rounds of a preparation killed 12–14 men in their positions.
+- **The embodied assault test with fire support.** Each side's battalion mortars are embodied (ALPHA's 500 m behind its start line, BRAVO's 700 m behind its line), and a battery of each side's guns stands 8 km back off the map. ALPHA's guns fire a preparation on the line at 1.5 and 3.5 minutes, while the attack is still 450–650 m out. BRAVO has its approaches planned at 350 and 550 m. The result judges the attack on the line's own defenders, with the fire support's losses given apart.
+
+| | Attackers lost | Defenders lost | Took |
+|---|---|---|---|
+| Mortars firing on sight | 50% | 12% | 4 min (fought down to half) |
+| Mortars at 4 minutes; preparation too late, always lifted | 45%, 7%, 21% | 92–100% | 7–9 min |
+| Preparation in time, observers calling fire | 18%, 18%, 1% | 96–100% | 5–8 min |
+| Positions walled all round | 5%, 46%, 8% | 85–100% | 7–9 min |
+| The abstract test (with mortars) | 25% | 57% | 2¾ h |
+| History | 5–15% | more | hours |
+
+- With all-round positions, ALPHA's preparation killed 2 and 6 men in its runs against 12–14 before; ALPHA's mortars killed 11 in one run (bombs fall steeply into an open position). One BRAVO call on a planned target brought 30 rounds of 152 mm down 90 s later and killed 9 attackers.
+- Run to run, the fight swings on the duel between BRAVO's BMPs and ALPHA's Bradleys. When the BMPs live, their 30 mm HE kills 19–24 attackers.
+- **Still to do.**
+  - Mortar crews snag on their own tube walking to it, and in two runs in three the mortars fired nothing.
+  - The embodied mortar is the 81 mm whatever the army's (the war's US and Russian battalion mortars are 120 mm).
+  - Nothing in the window yet goes back to the war but the rounds fired (slice 3).
+
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
 - The town builder doesn't know about rivers, so a stream through a town can run under its blocks. There are no quays at ports.

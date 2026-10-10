@@ -44,7 +44,7 @@ public sealed class Mission
 public static class Artillery
 {
     /// <summary>Range (m), casualty radius (m), rounds per tube in a mission, seconds from the call to the rounds landing, dispersion (share of range), guided.</summary>
-    static (float Range, float Reach, int PerTube, float Delay, float Spread, bool Guided) Gun(int side, VClass v) => v switch
+    internal static (float Range, float Reach, int PerTube, float Delay, float Spread, bool Guided) Gun(int side, VClass v) => v switch
     {
         // A British battalion's mortars are 81 mm; the US and Russian 120 mm (M121, 2S12).
         VClass.Mortar => side == 2 ? (5600f, 12f, 4, 240f, 0.004f, false) : (7200f, 18f, 4, 240f, 0.004f, false),
@@ -60,9 +60,9 @@ public static class Artillery
     /// 152 mm) by Russian norms, for the others' two thirds of that; 60 bombs a mortar; a launcher's load. A hard fight,
     /// not an all-out one. (Without it guns fired 57 rounds a day each, every day.)
     /// </summary>
-    static int Allowance(int side, VClass v) => v switch { VClass.Howitzer => side == 1 ? 60 : 40, VClass.Mortar => 60, _ => 12 };
+    internal static int Allowance(int side, VClass v) => v switch { VClass.Howitzer => side == 1 ? 60 : 40, VClass.Mortar => 60, _ => 12 };
 
-    static float MinSafe(VClass v, bool guided) => v switch { VClass.Mortar => 200f, VClass.Howitzer => 300f, _ => guided ? 150f : 600f };
+    internal static float MinSafe(VClass v, bool guided) => v switch { VClass.Mortar => 200f, VClass.Howitzer => 300f, _ => guided ? 150f : 600f };
 
     static Cause CauseOf(VClass v) => v == VClass.Mortar ? Cause.Mortar : Cause.Shell;
 
@@ -86,7 +86,7 @@ public static class Artillery
         }
     }
 
-    static int Tubes(War war, Unit u, out int rounds)
+    internal static int Tubes(War war, Unit u, out int rounds)
     {
         int tubes = 0;
         rounds = 0;
@@ -182,25 +182,8 @@ public static class Artillery
         int tubes = Tubes(war, u, out int have);
         if (tubes == 0) return null;
         int rounds = Math.Min(Math.Min(have, g.Guided ? 2 : tubes * g.PerTube), Math.Max(1, tubes * Allowance(u.Side, u.Fires) - u.RoundsToday));
-        // Take the rounds from the tubes in turn.
-        var vs = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(war.Vehicles);
-        int left = rounds;
-        while (left > 0)
-        {
-            bool any = false;
-            foreach (int ci in u.Carries)
-                foreach (int vi in war.Units[ci].Vehicles)
-                {
-                    ref var v = ref vs[vi];
-                    if (left == 0 || v.Lost || v.Class != u.Fires || v.Ammo <= 0) continue;
-                    v.Ammo--;
-                    left--;
-                    any = true;
-                }
-            if (!any) break;
-        }
+        int left = rounds - Take(war, u, rounds);
         float range = Dist(u.X, u.Z, x, z), spread = g.Guided ? 5f : g.Spread * range;
-        u.RoundsToday += rounds - left;
         var ms = new Mission
         {
             Side = u.Side, Unit = u.Id, Fight = fight, Target = target, Kind = u.Fires, X = x, Z = z, Reach = g.Reach, Rounds = rounds - left,
@@ -218,12 +201,35 @@ public static class Artillery
         return ms;
     }
 
+    /// <summary>Take up to <paramref name="rounds"/> from a fire unit's tubes in turn, and count them against its day's allowance; how many it had.</summary>
+    internal static int Take(War war, Unit u, int rounds)
+    {
+        var vs = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(war.Vehicles);
+        int left = rounds;
+        while (left > 0)
+        {
+            bool any = false;
+            foreach (int ci in u.Carries)
+                foreach (int vi in war.Units[ci].Vehicles)
+                {
+                    ref var v = ref vs[vi];
+                    if (left == 0 || v.Lost || v.Class != u.Fires || v.Ammo <= 0) continue;
+                    v.Ammo--;
+                    left--;
+                    any = true;
+                }
+            if (!any) break;
+        }
+        u.RoundsToday += rounds - left;
+        return rounds - left;
+    }
+
     /// <summary>
     /// Where a fire unit's tubes stand: the middle of the parts that have them. A battalion's mortars are a platoon of
     /// its headquarters company, hundreds of metres from the command post. (Counter-battery fire used to be aimed at
     /// the company's middle, the staff's tents, and battalion headquarters lost nine in ten of their people.)
     /// </summary>
-    static (float X, float Z) TubePos(War war, Unit u)
+    internal static (float X, float Z) TubePos(War war, Unit u)
     {
         float x = 0f, z = 0f;
         int n = 0;

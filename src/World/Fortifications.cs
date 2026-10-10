@@ -27,6 +27,55 @@ public static class Fortifications
     /// </summary>
     public static Node3D? Parapet(Node parent, IGround? ground, Vector3 at, Vector3 facing) => Sandbags(parent, ground, at, facing, 1.0f, 1.15f);
 
+    /// <summary>
+    /// A two-man fighting position walled all round, as a dug position is earth all round: the metre-thick parapet in
+    /// front (Parapet), half-metre walls down both flanks and across the rear, the rear a little lower and with a gap at
+    /// one end to get in and out by. The two men are inside, a little over a metre behind the front. A burst outside throws
+    /// its fragments into the walls (they're real fragments: Grenade.Spray); only one inside the position, or close enough
+    /// to throw them in over the top, reaches the men. (With a front only, a shell landing behind the line sprayed men
+    /// standing at ground level: 18 rounds of a preparation killed 14 men in their positions.)
+    /// </summary>
+    public static Node3D? Position(Node parent, IGround? ground, Vector3 at, Vector3 facing)
+    {
+        if (Parapet(parent, ground, at, facing) is not StaticBody3D root) return null;
+        facing.Y = 0f;
+        facing = facing.Normalized();
+        var right = facing.Cross(Vector3.Up);
+        float y0 = root.GlobalPosition.Y;
+        var rng = new RandomNumberGenerator();
+        rng.Randomize();
+        // Flanks: from just behind the parapet to the rear, 1.75 m either side of the middle.
+        foreach (float s in new[] { -1f, 1f })
+            Wall(root, ground, at, y0, right * (s * 1.75f) - facing * 1.35f, facing, 1.9f, 0.5f, 1.05f, rng);
+        // The rear, lower, short of the right-hand flank by a man's width: the way in and out.
+        Wall(root, ground, at, y0, -facing * 2.3f - right * 0.55f, right, 2.4f, 0.5f, 0.9f, rng);
+        return root;
+    }
+
+    /// <summary>A straight run of bags: its middle (relative to the position), its direction, length, thickness and height.</summary>
+    static void Wall(StaticBody3D root, IGround? ground, Vector3 at, float y0, Vector3 mid, Vector3 along, float length, float thick, float height, RandomNumberGenerator rng)
+    {
+        var basis = Basis.LookingAt(along.Cross(Vector3.Up), Vector3.Up);
+        float yLocal = (ground?.HeightAt(at.X + mid.X, at.Z + mid.Z) ?? y0) - y0;
+        root.AddChild(new CollisionShape3D
+        {
+            Shape = new BoxShape3D { Size = new Vector3(length, height, thick) },
+            Transform = new Transform3D(basis, mid + Vector3.Up * (yLocal + height / 2f - 0.02f)),
+        });
+        int across = Math.Max(1, (int)MathF.Round(length / 0.46f)), rows = Math.Max(1, (int)MathF.Round(height / 0.25f));
+        var normal = along.Cross(Vector3.Up);
+        for (int row = 0; row < rows; row++)
+        for (int k = 0; k < across; k++)
+        {
+            float off = (k - (across - 1) / 2f) * 0.46f + (row % 2 == 1 ? 0.12f : 0f);
+            if (MathF.Abs(off) > length / 2f) continue;
+            var bag = new MeshInstance3D { Mesh = new BoxMesh { Size = new Vector3(0.46f, 0.25f, 0.34f) }, MaterialOverride = _bag };
+            root.AddChild(bag);
+            bag.Transform = new Transform3D(basis.Rotated(Vector3.Up, rng.RandfRange(-0.06f, 0.06f)),
+                mid + along * off + Vector3.Up * (yLocal + 0.13f + row * 0.25f) + normal * rng.RandfRange(-0.03f, 0.03f));
+        }
+    }
+
     /// <param name="facing">The direction the wall should protect against (towards the enemy).</param>
     /// <param name="thick">How thick the wall is (m): half a metre of bags, or a metre for a parapet.</param>
     /// <param name="span">Each of its three segments' width (m).</param>

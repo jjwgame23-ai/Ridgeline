@@ -90,6 +90,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     public readonly List<Squad>[] Squads = { new(), new(), new() };
     public readonly bool[] Out = { true, true, true }; // what's lost here stays lost: the war decides replacements
     public MotorPool Motor = null!;
+    /// <summary>The war's guns and rockets firing into the window (see WindowFires).</summary>
+    public WindowFires? Fires;
     public Player? PlayerBody { get; private set; }
     /// <summary>Each embodied squad's war unit, and each bot's war soldier.</summary>
     public readonly Dictionary<Squad, Unit> UnitOf = new();
@@ -158,6 +160,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             return;
         }
         Motor.Tick();
+        Fires?.Tick();
         Telemetry.Tick(this);
         if (Calibrate) Abstract();
         if (Assault) Judge();
@@ -242,6 +245,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         }
         if (PlayerJoins) JoinPlayer();
         else Spec.Activate(Bots.FirstOrDefault());
+        Fires = new WindowFires(War, this);
         _points = Map.Sites.Select(s => new SiteObjective { Site = s, Map = Map, R = s.Radius }).ToArray();
         _owner = Enumerable.Repeat(-1, _points.Length).ToArray();
         if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
@@ -251,7 +255,13 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
 
     // ---------------------------------------------------------------- the embodied assault test
 
-    readonly List<ICombatant>[] _sides = { new(), new(), new() };
+    readonly List<ICombatant>[] _sides = { new(), new(), new() }, _support = { new(), new(), new() };
+    Vector3 _lineAt;
+    float _lineRad;
+    /// <summary>The assault test's fire support: each side's mortar units embodied, and its battery of guns off the map.</summary>
+    public readonly int[] Mortars = new int[3];
+    public readonly string[] Batteries = { "", "", "" };
+    readonly Dictionary<string, int>[] _killedBy = { new(), new(), new() };
     double _judgeAt, _firstShot = -1;
     Vector3 _townAt;
     float _lineR;
@@ -262,7 +272,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     /// fits the bots the battle maps run. BRAVO's platoons dig in round the near (west) edge of the town, squads 50 m
     /// apart across the line, their vehicles 60 m behind. ALPHA's platoons start 800 m out, 250 m apart, and attack:
     /// each squad the stretch of the line opposite it, while its platoon's vehicles support by fire from 450 m.
-    /// Three to one is what FM 3-90 plans an attack on a prepared position at.
+    /// Three to one is what FM 3-90 plans an attack on a prepared position at. Both sides have their battalion mortars and a
+    /// battery of guns behind them; the attacker's guns fire a preparation on the line.
     /// </summary>
     void EmbodyAssault()
     {
@@ -329,7 +340,54 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             Bring(p, War.Units[p.Mover], new Vector2(hq.X, hq.Z), Fit(p), (new SiteObjective { Site = line, Map = Map, R = line.Radius }, line, false, "Attack", line.Name),
                   digIn: false, crewOrder: (sbf, null, true, "Support", obj.Name), parkAt: new Vector2(hq.X, hq.Z));
         }
+        // Who's fighting for the line, judged apart from the fire support behind each side (a mortar battery sitting in
+        // the town kept the line from ever counting as carried, and the attack stood about on it for half an hour).
         foreach (var b in Bots) _sides[b.Team].Add(b);
+        _lineAt = line.Center;
+        _lineRad = line.Radius;
+        // Fire support, as the abstract test's arty=1 has it and more: each side's battalion mortars, embodied (ALPHA's 500 m
+        // behind its start line, BRAVO's 700 m behind its line), and a battery of each side's guns 8 km back, off the map,
+        // firing on call (WindowFires). ALPHA's guns fire a preparation on the line as the attack comes up: two missions,
+        // the first landing as the squads reach their ORPs, the second three minutes on.
+        var bns = new HashSet<int>(att.Concat(def).Select(p => War.Units[p.Parent].Parent));
+        foreach (int id in War.FireUnits)
+        {
+            var fu = War.Units[id];
+            if (fu.Fires != VClass.Mortar || fu.People <= 0) continue;
+            int bn = fu.Keeps >= 0 ? War.Units[fu.Keeps].Parent : fu.Parent;
+            if (!bns.Contains(bn)) continue;
+            var at3 = Map.Ground(fu.Side == 0 ? lineMid + west * 1300f : lineMid - west * 700f);
+            var at = new Vector2(at3.X, at3.Z);
+            var hold = new AreaObjective { Center = at3, Radius = 30f, Threat = fu.Side == 0 ? lineMid : attackFrom, Map = Map };
+            foreach (int ci in fu.Carries)
+            {
+                var cu = War.Units[ci];
+                var fit = Fit(cu);
+                if (fit.Count == 0) continue;
+                Bring(cu, fu, at, fit, (hold, null, true, "Support", obj.Name), digIn: false, crewOrder: (hold, null, true, "Support", obj.Name), parkAt: at);
+            }
+            Mortars[fu.Side]++;
+        }
+        Fires = new WindowFires(War, this);
+        for (int side = 0; side < 2; side++)
+        {
+            var gun = War.FireUnits.Select(id => War.Units[id]).Where(u => u.Side == side && u.Fires == VClass.Howitzer && u.People > 0)
+                .OrderBy(u => (u.X - obj.X) * (u.X - obj.X) + (u.Z - obj.Z) * (u.Z - obj.Z)).FirstOrDefault();
+            if (gun == null) continue;
+            gun.X = obj.X + (side == 0 ? -8000f : 8000f);
+            gun.Z = obj.Z;
+            Batteries[side] = gun.Short;
+        }
+        // The preparation lands while the attack is still 450-650 m out, and lifts before it comes within 300 m (FM 3-90:
+        // fires are lifted or shifted as the assault closes). (Timed at 4.5 and 7.5 minutes, it was lifted every time: the
+        // squads were forming up inside the guns' safe distance by then.)
+        Fires.Plan(0, lineMid, Clock.Now + 1.5 * 60);
+        Fires.Plan(0, lineMid, Clock.Now + 3.5 * 60);
+        // The defence has planned fire on its approaches, at 350 and 550 m out.
+        foreach (float r in new[] { 350f, 550f })
+            for (int k = -1; k <= 1; k++)
+                Fires.Registered.Add((1, Map.Ground(lineMid + west * r + new Vector3(0f, 0f, k * 200f))));
+        foreach (var b in Bots) if (!_sides[b.Team].Contains(b)) _support[b.Team].Add(b);
         int Vehicles(int t) => Motor.Slots.Count(s => s.Team == t);
         _setup = $"{att.Count} ALPHA platoons ({_sides[0].Count} soldiers, {Vehicles(0)} vehicles) against {def.Count} BRAVO platoon{(def.Count > 1 ? "s" : "")} "
                  + $"dug in ({_sides[1].Count} soldiers, {Vehicles(1)} vehicles, {Dug} fighting positions)";
@@ -341,7 +399,12 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         _owner = Enumerable.Repeat(-1, _points.Length).ToArray();
         if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
         _startedAt = Clock.Now;
-        Combatants.Killed += (_, _) => { if (_firstShot < 0) _firstShot = Clock.Now; };
+        Combatants.Killed += (v, h) =>
+        {
+            if (_firstShot < 0) _firstShot = Clock.Now;
+            var k = _killedBy[v.Team];
+            k[h.Weapon] = k.GetValueOrDefault(h.Weapon) + 1;
+        };
     }
 
     /// <summary>
@@ -352,7 +415,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     {
         if (Clock.Now < _judgeAt) return;
         _judgeAt = Clock.Now + 10.0;
-        bool OnLine(ICombatant c) => (c.FeetPos - _townAt with { Y = c.FeetPos.Y }).Length() < _lineR + 60f;
+        bool OnLine(ICombatant c) => (c.FeetPos - _lineAt with { Y = c.FeetPos.Y }).Length() < _lineRad + 40f;
         int Up(int t) => _sides[t].Count(c => c.Alive);
         int attUp = Up(0), defUp = Up(1);
         bool carried = defUp == 0 || !_sides[1].Any(c => c.Alive && OnLine(c)) && _sides[0].Any(c => c.Alive && OnLine(c));
@@ -366,6 +429,13 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         GD.Print($"  {(carried ? "carried" : held ? "held: the attack fought down to half" : "still going")} after {minutes:0} min (first casualty {(_firstShot < 0 ? "none" : $"{(_firstShot - _startedAt) / 60:0} min in")})");
         GD.Print($"  attackers lost {Pc(Lost(0), _sides[0].Count)} ({Pc(Killed(0), _sides[0].Count)} killed); defenders lost {Pc(Lost(1), _sides[1].Count)} ({Pc(Killed(1), _sides[1].Count)} killed); "
                  + $"vehicles lost {Motor.Slots.Count(s => s.Team == 0 && s.Live is not { Destroyed: false })}/{Motor.Slots.Count(s => s.Team == 1 && s.Live is not { Destroyed: false })}");
+        string Weapons(int t) => string.Join(", ", _killedBy[t].OrderByDescending(kv => kv.Value).Take(5).Select(kv => $"{kv.Key} {kv.Value}"));
+        GD.Print($"  killed attackers: {Weapons(0)}; killed defenders: {Weapons(1)}");
+        GD.Print($"  the fire support behind them (mortar crews and their headquarters): ALPHA lost {Pc(_support[0].Count(c => !c.Alive), _support[0].Count)} of {_support[0].Count}, "
+                 + $"BRAVO {Pc(_support[1].Count(c => !c.Alive), _support[1].Count)} of {_support[1].Count}");
+        if (Fires != null)
+            GD.Print($"  fire support: ALPHA {Mortars[0]} mortar unit{(Mortars[0] == 1 ? "" : "s")} embodied and {(Batteries[0] != "" ? Batteries[0] : "no battery")} off the map ({Fires.Planned[0]} planned missions, {Fires.Calls[0]} called, {Fires.Rounds[0]} shells, {Fires.Lifted[0]} lifted); "
+                     + $"BRAVO {Mortars[1]} mortar unit{(Mortars[1] == 1 ? "" : "s")} and {(Batteries[1] != "" ? Batteries[1] : "no battery")} ({Fires.Calls[1]} called, {Fires.Rounds[1]} shells); mortar bombs {CrewBrain.MortarRounds}");
         GD.Print("  (the abstract assault test, 9 companies on 3 dug in with mortars: attackers lost 25%, defenders 57%, carried 7 times in 12 in a median 2¾ h;");
         GD.Print("   marks: a battalion attack at three to one on a prepared company position cost attackers about 5-15% and defenders more, over hours)");
         GetTree().Quit();
@@ -470,8 +540,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
 
     /// <summary>
     /// A dug-in squad's fighting positions: a two-man position for every two men, 4 m apart across its front, facing the
-    /// enemy, with a parapet a metre thick (Fortifications.Parapet); and a place behind each for each of the two. They
-    /// stand for the trenches the war has them in.
+    /// enemy, walled all round (Fortifications.Position); and a place inside each for each of the two. They stand for the
+    /// trenches the war has them in.
     /// </summary>
     List<Vector3> DigIn(Vector3 c, Vector3 enemy, int men)
     {
@@ -519,9 +589,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         for (int w = 0; w < walls; w++)
         {
             var at = c + right * ((w - (walls - 1) / 2f) * 4f);
-            Fortifications.Parapet(GetParent(), Map, at, facing);
+            Fortifications.Position(GetParent(), Map, at, facing);
             foreach (float s in new[] { -0.6f, 0.6f })
-                spots.Add(Map.Ground(at - facing * 1.05f + right * s));
+                spots.Add(Map.Ground(at - facing * 1.2f + right * s));
             Dug++;
         }
         return spots;
