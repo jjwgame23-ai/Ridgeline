@@ -17,7 +17,25 @@ public static class Fortifications
 
     public static int Count => _all.Count;
 
-    public static void Clear() => _all.Clear();
+    public static void Clear()
+    {
+        _all.Clear();
+        _roofs.Clear();
+    }
+
+    /// <summary>Each roofed position's footprint: its middle at ground level, which way it faces, and across it.</summary>
+    static readonly List<(Vector3 C, Vector3 F, Vector3 R)> _roofs = new();
+
+    /// <summary>Is this point (a man's feet) inside a position under its overhead cover?</summary>
+    public static bool UnderRoof(Vector3 p)
+    {
+        foreach (var (c, f, r) in _roofs)
+        {
+            var d = p - c;
+            if (MathF.Abs(d.Dot(r)) < 1.9f && MathF.Abs(d.Dot(f)) < 1.0f && MathF.Abs(d.Y) < 1.2f) return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// A two-man fighting position's parapet, as doctrine builds one (FM 3-21.8: at least a metre thick): bags a metre
@@ -35,7 +53,8 @@ public static class Fortifications
     /// to throw them in over the top, reaches the men. (With a front only, a shell landing behind the line sprayed men
     /// standing at ground level: 18 rounds of a preparation killed 14 men in their positions.)
     /// </summary>
-    public static Node3D? Position(Node parent, IGround? ground, Vector3 at, Vector3 facing)
+    /// <param name="roof">With overhead cover (Roof): a position the men have had hours to build.</param>
+    public static Node3D? Position(Node parent, IGround? ground, Vector3 at, Vector3 facing, bool roof = false)
     {
         if (Parapet(parent, ground, at, facing) is not StaticBody3D root) return null;
         facing.Y = 0f;
@@ -49,7 +68,47 @@ public static class Fortifications
             Wall(root, ground, at, y0, right * (s * 1.75f) - facing * 1.35f, facing, 1.9f, 0.5f, 1.05f, rng);
         // The rear, lower, short of the right-hand flank by a man's width: the way in and out.
         Wall(root, ground, at, y0, -facing * 2.3f - right * 0.55f, right, 2.4f, 0.5f, 0.9f, rng);
+        if (roof) Roof(root, at with { Y = y0 }, facing, right);
         return root;
+    }
+
+    static StandardMaterial3D? _earth, _log;
+
+    /// <summary>
+    /// Overhead cover over the position (FM 3-21.8: at least 45 cm, 18 inches, of earth on a frame of logs over the hole),
+    /// raised on its posts about 1.4 m, so the two men fire out under it from a knee through the slot between it and the
+    /// parapet. It stops what comes down on the position: bombs, shells and cannon rounds bursting on it, and the fragments
+    /// of those bursting behind or beside it. It's on a layer of its own (Layers.Overhead): rounds and fragments hit it,
+    /// men walk and kneel under it, and nobody stands up under it (BotBrain). A direct hit by a heavy shell would bring a
+    /// real one in; here it holds. (Open-topped positions lost their men to what burst in them: in the embodied assault
+    /// test the attackers' 30 mm HE and 81 mm bombs killed 13 of 26 dug-in defenders in a few minutes.)
+    /// </summary>
+    static void Roof(StaticBody3D root, Vector3 at, Vector3 facing, Vector3 right)
+    {
+        _earth ??= new StandardMaterial3D { AlbedoColor = new Color(0.42f, 0.36f, 0.27f), Roughness = 1f };
+        _log ??= new StandardMaterial3D { AlbedoColor = new Color(0.33f, 0.25f, 0.17f), Roughness = 1f };
+        var body = new StaticBody3D { CollisionLayer = Layers.Overhead, CollisionMask = 0 };
+        body.AddToGroup("fortification");
+        root.AddChild(body);
+        var basis = Basis.LookingAt(-facing, Vector3.Up);
+        var mid = -facing * 1.35f + Vector3.Up * 1.625f; // from 1.4 m up, 45 cm thick
+        var size = new Vector3(3.9f, 0.45f, 1.95f);
+        body.AddChild(new CollisionShape3D { Shape = new BoxShape3D { Size = size }, Transform = new Transform3D(basis, mid) });
+        // Earth on top, the logs under it, and a post at each corner.
+        var earth = new MeshInstance3D { Mesh = new BoxMesh { Size = size with { Y = 0.33f } }, MaterialOverride = _earth };
+        body.AddChild(earth);
+        earth.Transform = new Transform3D(basis, mid + Vector3.Up * 0.06f);
+        var logs = new MeshInstance3D { Mesh = new BoxMesh { Size = size with { Y = 0.12f } }, MaterialOverride = _log };
+        body.AddChild(logs);
+        logs.Transform = new Transform3D(basis, mid - Vector3.Up * 0.165f);
+        foreach (float s in new[] { -1f, 1f })
+        foreach (float d in new[] { 0.5f, 2.2f })
+        {
+            var post = new MeshInstance3D { Mesh = new CylinderMesh { TopRadius = 0.08f, BottomRadius = 0.08f, Height = 1.4f }, MaterialOverride = _log };
+            body.AddChild(post);
+            post.Position = right * (s * 1.85f) - facing * d + Vector3.Up * 0.7f;
+        }
+        _roofs.Add((at - facing * 1.35f, facing, right));
     }
 
     /// <summary>A straight run of bags: its middle (relative to the position), its direction, length, thickness and height.</summary>

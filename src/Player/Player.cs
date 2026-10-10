@@ -365,7 +365,7 @@ public partial class Player : CharacterBody3D, ICombatant
     public bool Goggles => _nvg.Down;
 
     /// <summary>Does your side issue goggles to your role (see NightGear)?</summary>
-    public bool HasGoggles => (NightGear.Issue(TeamId, Kit ?? Role.Rifleman, TerritoryMode.I?.PlayerSquad?.Kind) & NightOptic.Goggles) != 0;
+    public bool HasGoggles => (NightGear.Issue(TeamId, Kit ?? Role.Rifleman, HudOverlay.MySquad?.Kind) & NightOptic.Goggles) != 0;
 
     /// <summary>The goggles key; a word about them the first time it gets dark; off when you're dead, or flying a drone.</summary>
     void GogglesInput()

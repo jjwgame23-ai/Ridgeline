@@ -220,6 +220,9 @@ public sealed class CrewBrain
     }
 
     public static int InfantryTargets, InfantryShots, ArmorShots, AreaRounds, HeldForFriendlies;
+    /// <summary>The vehicle a missile we fired is flying at, and when it will have got there.</summary>
+    Vehicle? _guiding;
+    double _guidingUntil;
     double _areaPickAt, _ffAt, _calloutAt, _maskAt;
     bool _masked;
     Vector3 _areaPoint;
@@ -232,10 +235,11 @@ public sealed class CrewBrain
     /// </summary>
     static float Reach(TurretDef td, bool armor)
     {
-        bool gun = td.Ammo.Any(a => a.Mag == 1 && a.AntiArmor);
-        bool cannon = td.Ammo.Any(a => a.Mag > 1 && a.AntiArmor);
+        bool gun = td.Ammo.Any(a => a.Mag == 1 && a.AntiArmor && !a.Guided);
+        bool cannon = td.Ammo.Any(a => a.Mag > 1 && a.AntiArmor && !a.Guided);
         bool he = td.Ammo.Any(a => a.Explosive);
-        if (armor) return gun ? 2500f : cannon ? 1600f : 800f;
+        float missile = td.Ammo.Where(a => a.Guided && a.LineOfSight).Select(a => a.Range).DefaultIfEmpty(0f).Max();
+        if (armor) return MathF.Max(missile, gun ? 2500f : cannon ? 1600f : 800f);
         return (gun || cannon) && he ? 1500f : cannon ? 1400f : 900f;
     }
 
@@ -449,12 +453,35 @@ public sealed class CrewBrain
         }
         float dist = p.DistanceTo(t.Muzzle.GlobalPosition);
         bool armor = Target is Vehicle;
+        // A missile of ours in the air: the sight stays on its target until it strikes, and nothing else is fired.
+        if (now < _guidingUntil && Target == _guiding && _guiding is { Destroyed: false } gv && GodotObject.IsInstanceValid(gv))
+        {
+            t.AimAt = p;
+            v.HaltUntil = Math.Max(v.HaltUntil, now + 0.5);
+            Note = $"guiding the missile onto the {gv.Def.ClassName}";
+            return;
+        }
         // The round for the job.
         int want = -1;
         bool vsAir = Target is Vehicle { Def.Air: true, Landed: false } or Drone;
         for (int i = 0; i < t.Def.Ammo.Length; i++)
-            if (vsAir ? t.Def.Ammo[i].Prox : armor ? t.Def.Ammo[i].AntiArmor : t.Def.Ammo[i].Explosive) { want = i; break; }
+            if (vsAir ? t.Def.Ammo[i].Prox : armor ? t.Def.Ammo[i].AntiArmor && !t.Def.Ammo[i].Guided : t.Def.Ammo[i].Explosive && !t.Def.Ammo[i].Guided) { want = i; break; }
         if (want < 0 && vsAir) want = 0;
+        // Armour the cannon can't get through, or beyond its reach: the missile, if there's one left, from a halt, and
+        // not inside the distance it can be gathered onto the sight. (TOW and Konkurs crews take on tanks and distant
+        // vehicles with the missile and keep the cannon for the rest.)
+        if (armor && !vsAir && Target is Vehicle tv && Array.FindIndex(t.Def.Ammo, a => a.Guided && a.LineOfSight) is int mi and >= 0)
+        {
+            var mw = t.Def.Ammo[mi];
+            bool cannonDoes = want >= 0 && t.Def.Ammo[want].Pen >= tv.ArmorToward(v.Center) * 0.85f && dist < 1500f;
+            bool left = t.Loaded[mi] > 0 || t.Stock[mi] > 0;
+            if (!cannonDoes && left && dist >= mw.MinRange && dist <= mw.Range)
+            {
+                if (MathF.Abs(v.Speed) > 0.5f) { Note = $"halting to fire the {mw.Name}"; v.HaltUntil = now + 3.0; t.AimAt = p; return; }
+                want = mi;
+            }
+            else if (!cannonDoes) { t.AimAt = p; Note = "nothing that gets through its armour"; return; }
+        }
         bool useCoax = !armor && t.Def.Coax != null && (want < 0 || dist < 150f);
         if (!useCoax && want >= 0 && want != t.AmmoIdx) v.SelectAmmo(ti, want);
         var w = useCoax ? t.Def.Coax! : t.Weapon;
@@ -506,8 +533,9 @@ public sealed class CrewBrain
         // Only fire at what we can actually see right now.
         if (armor && _b.Senses.Vehicles.Find(x => x.Who == Target) is { Visible: false }) return;
         if (v.AimError(ti) > tol || now < _nextShot) return;
-        // The range handed to the gun for its superelevation: none when the fire-control solution already has the drop in it.
-        float rangeHint = mover != null ? 0f : dist;
+        // The range handed to the gun for its superelevation: none when the fire-control solution already has the drop in it,
+        // or for a missile, which flies down the sight.
+        float rangeHint = mover != null || w.Guided ? 0f : dist;
         if (now > _ffAt)
         {
             _ffAt = now + 0.25;
@@ -517,7 +545,19 @@ public sealed class CrewBrain
             // target point were checked: a Gepard shot down its own supply truck 118 m out in the line of fire, and a
             // T-72's HE burst on a rise short of its infantry target, beside its own anti-tank gunner.)
             _shortBy = 0f;
-            if (!_ffBlocked && FirstImpact(v, muzzle, p, w, t.Def.Fixed ? 0f : rangeHint, dist) is var (at, along, friendHull))
+            // A guided missile flies down the sight, not along a shell's arc: what's in its way is what's on the line.
+            // (Flown as a 190 m/s shell, a TOW "came down" hundreds of metres short: the gunner never fired it, and marked
+            // the gun masked, so the vehicle kept moving off its firing position while the enemy's cannon worked on it.)
+            if (!_ffBlocked && !useCoax && w.Guided)
+            {
+                var hit = v.GetWorld3D().DirectSpaceState.IntersectRay(PhysicsRayQueryParameters3D.Create(muzzle, p, Layers.World | Layers.Vehicles, new Godot.Collections.Array<Rid> { v.GetRid() }));
+                if (hit.Count > 0 && hit["position"].AsVector3().DistanceTo(p) > 4f)
+                {
+                    if (hit["collider"].AsGodotObject() is Vehicle hv && hv.CrewTeam == v.CrewTeam) _ffBlocked = true;
+                    else _shortBy = dist - muzzle.DistanceTo(hit["position"].AsVector3());
+                }
+            }
+            else if (!_ffBlocked && FirstImpact(v, muzzle, p, w, t.Def.Fixed ? 0f : rangeHint, dist) is var (at, along, friendHull))
             {
                 if (friendHull) _ffBlocked = true;
                 else
@@ -551,8 +591,15 @@ public sealed class CrewBrain
             if (now > _burstUntil) return;
         }
         else _nextShot = now + _rng.RandfRange(0.4f, 1.5f); // a moment to confirm the lay
-        if (v.Fire(ti, useCoax, rangeHint))
+        if (v.Fire(ti, useCoax, rangeHint, homing: !useCoax && w.Guided ? Target as Vehicle : null))
         {
+            if (!useCoax && w.Guided && Target is Vehicle mt)
+            {
+                _guiding = mt;
+                _guidingUntil = now + dist / w.Speed + 0.5;
+                v.HaltUntil = _guidingUntil; // the launcher stays still while the missile flies
+                Comms.Say(_b, $"Missile away, {mt.Def.ClassName}, {dist:0} meters!");
+            }
             if (armor) ArmorShots++; else InfantryShots++;
             if (t.Def.Ammo.Any(a => a.Prox))
                 Prof.Count(Target is Drone sd ? $"spaa:rounds at a {sd.Kind} drone" : Target is Vehicle { Def.Air: true } ? "spaa:rounds at an aircraft" : "spaa:rounds at something else");

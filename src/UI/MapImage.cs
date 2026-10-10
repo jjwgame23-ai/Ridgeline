@@ -15,7 +15,8 @@ public static class MapImage
     public static Texture2D For(Valley v)
     {
         if (_for == v && _tex != null) return _tex;
-        const int N = 384;
+        // A Conquest window is 4 km across: twice the pixels, so a pixel is still about 5 m (a battle map is 1-2 km).
+        int N = v.Size > 3000f ? 768 : 384;
         var img = Image.CreateEmpty(N, N, false, Image.Format.Rgb8);
         float size = v.Size, cell = size / N;
         var light = new Vector3(-1f, 1.4f, -1f).Normalized();

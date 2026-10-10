@@ -40,6 +40,13 @@ public sealed class Magazines
         get { int b = 0; foreach (var r in _m) if (r > b) b = r; return b; }
     }
 
+    /// <summary>Someone else's magazines, as they are.</summary>
+    public void CopyFrom(Magazines o)
+    {
+        _m.Clear();
+        _m.AddRange(o._m);
+    }
+
     /// <summary>A fresh load, all full (a resupply: part-used ones are swapped for full ones).</summary>
     public void Refill(int count)
     {

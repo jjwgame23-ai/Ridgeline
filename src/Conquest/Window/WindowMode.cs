@@ -83,7 +83,7 @@ public static partial class WindowMode
         if (war != null)
         {
             // The armies come in once the navmesh is up (ConquestWindow); the player with them, unless join=0.
-            var hud = new Hud { HelpText = "A window onto the war.", ShowHelp = false };
+            var hud = new Hud { HelpText = Hud.WindowHelp };
             main.AddChild(hud);
             ConquestWindow.Verbose = a.ContainsKey("verbose");
             main.AddChild(new ConquestWindow
@@ -95,7 +95,7 @@ public static partial class WindowMode
                 Assault = assault, Target = target,
                 AttackPlatoons = a.TryGetValue("attack", out var atv) && int.TryParse(atv, out int an) ? an : 2,
                 DefendPlatoons = a.TryGetValue("defend", out var dfv) && int.TryParse(dfv, out int dn) ? dn : 1,
-                AssaultMinutes = a.TryGetValue("minutes", out var mv) && double.TryParse(mv, out double mn) ? mn : 45,
+                AssaultMinutes = a.TryGetValue("minutes", out var mv) && double.TryParse(mv, out double mn) ? mn : 120,
             });
             return;
         }

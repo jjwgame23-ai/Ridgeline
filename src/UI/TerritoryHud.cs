@@ -190,28 +190,6 @@ public partial class TerritoryHud : CanvasLayer
         return string.Join("   ", parts);
     }
 
-    /// <summary>Your squad at a glance: who's who, and who's hurt or out of ammo.</summary>
-    string RosterText()
-    {
-        var sq = Mode.PlayerSquad;
-        if (sq == null) return "";
-        var lines = new List<string> { $"[b]{sq.Name}[/b] · {sq.KindName}" };
-        foreach (var c in sq.Members)
-        {
-            if (!GodotObject.IsInstanceValid((GodotObject)c)) continue;
-            string role = Roles.Short(c.Role);
-            string name = c is Player ? "You" : c.Callsign;
-            if (c.Dead) { lines.Add($"[color=#777777]{role,-4} {name} — KIA[/color]"); continue; }
-            if (c.Downed) { lines.Add($"[color=#ff7060]{role,-4} {name} — DOWN, needs a medic[/color]"); continue; }
-            int bars = (int)MathF.Ceiling(c.Hp / 20f);
-            string col = c.Hp > 66f ? "#9be38f" : c.Hp > 33f ? "#e8d06a" : "#ff7060";
-            string ammo = c.AmmoLevel < 0.34f ? " [color=#ffb060]low ammo[/color]" : "";
-            string lead = c == sq.Leader ? " ★" : "";
-            lines.Add($"{role,-4} {name}{lead}  [color={col}]{new string('█', bars)}{new string('░', 5 - bars)}[/color]{ammo}");
-        }
-        return string.Join("\n", lines);
-    }
-
     // The weather is the match's, set before the HUD is made.
     readonly string _weatherName = Conditions.Weather.ToString().ToLowerInvariant();
 
@@ -219,7 +197,7 @@ public partial class TerritoryHud : CanvasLayer
     {
         double now = Clock.Now;
         var m = Mode;
-        _roster.Text = RosterText();
+        _roster.Text = SquadPanel.Roster(m.PlayerSquad);
         _score.Text = string.Join("     ", Enumerable.Range(0, 3).Select(t =>
             $"{TeamTag(t)} {m.Tickets[t]}{(m.Out[t] ? " [color=#888888](out)[/color]" : m.Spent(t) ? " [color=#ff5040](last stand)[/color]" : "")} [color=#aaaaaa]· {m.Owned(t)} pts[/color]"
             + (!m.Out[t] && m.HQHold[t] < 0.999f ? $" [color=#ff5040]HQ {m.HQHold[t] * 100:0}%[/color]" : "")))
@@ -228,44 +206,8 @@ public partial class TerritoryHud : CanvasLayer
 
         var sq = m.PlayerSquad;
         var me = m.PlayerBody is { Alive: true } p ? p.FeetPos : m.Spec.Target?.FeetPos;
-        if (sq?.Objective != null)
-        {
-            var goal = sq.Objective.Center;
-            string where = me is Vector3 pos ? $" · {(goal - pos with { Y = goal.Y }).Length():0} m {Comms.Bearing(pos, goal)}" : "";
-            _nav.Text = $"{sq.Name} · {sq.OrderText}{where}{(sq.FollowPlayer && m.PlayerLeads ? " · squad on you" : "")}{(sq.PlayerOrderUntil > now ? " · your order" : "")}";
-            HudOverlay.Marker = goal;
-            // A ride for the squad: point the player at it until they're aboard.
-            var ride = sq.Transport;
-            if (ride is { Destroyed: false } && m.PlayerBody is { Alive: true } pb && pb.Ride != ride && me is Vector3 at)
-            {
-                float d = ride.GlobalPosition.DistanceTo(at);
-                _nav.Text += ride.Boarding
-                    ? $"\n▶ MOUNT UP: your squad's {ride.Def.Name} is waiting, {d:0} m {Comms.Bearing(at, ride.GlobalPosition)} — [{Controls.Keys("use")}] to get in"
-                    : $"\n▶ A {ride.Def.Name} is coming to pick your squad up ({d:0} m {Comms.Bearing(at, ride.GlobalPosition)})";
-                HudOverlay.Marker = ride.GlobalPosition;
-            }
-        }
-        else
-        {
-            _nav.Text = "";
-            HudOverlay.Marker = null;
-        }
-
-        // The squad briefing: what the squad is doing, and your part in it.
-        HudOverlay.Spot = HudOverlay.Sector = null;
-        _brief.Text = "";
-        if (sq != null && m.PlayerBody is { Alive: true } pp && sq.Members.Contains(pp))
-        {
-            var br = sq.Brief(pp);
-            var lines = new List<string> { $"[color=#cfe8ff]{br.Doing}[/color]" + (br.Team != "" ? $"  [color=#9aa]· {br.Team}[/color]" : "") };
-            lines.Add($"[color=#b8ffb0]▶ {br.Task}[/color]");
-            foreach (var sv in sq.Support)
-                lines.Add($"[color=#d8c890]{sv.Def.Name}: {(sv.Task != "" ? sv.Task : "with you")}{(sv.FireAt != null && Clock.Now < sv.FireAtUntil ? $" — {sv.FireAtWhy}" : "")}[/color]");
-            if (m.PlayerLeads) lines.Add($"[color=#888]march: {(sq.PlayerMarch?.ToString() ?? "auto")} · {Controls.Keys("squad_menu")}: squad commands · {Controls.Keys("squad_follow")}: on me · {Controls.Keys("map")}: map[/color]");
-            _brief.Text = string.Join("\n", lines);
-            HudOverlay.Spot = br.Spot;
-            HudOverlay.Sector = br.Sector;
-        }
+        _nav.Text = SquadPanel.Nav(sq, m.PlayerBody, me, m.PlayerLeads);
+        _brief.Text = SquadPanel.Brief(sq, m.PlayerBody, m.PlayerLeads);
         if (!(m.PlayerBody is { Alive: true } && m.PlayerLeads)) MenuOpen = false;
         _menu.Visible = MenuOpen;
         if (MenuOpen) _menu.Text = "[b]SQUAD COMMANDS[/b]\n" + string.Join("\n", Commands.Select((c, i) => $"{i + 1}  {c}")) + $"\n[color=#888]{Controls.Keys("squad_menu")} or Esc: close[/color]";

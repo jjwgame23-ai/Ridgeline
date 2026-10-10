@@ -75,7 +75,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     public bool Assault;
     public int AttackPlatoons = 2, DefendPlatoons = 1;
     public Objective? Target;
-    public double AssaultMinutes = 45;
+    public double AssaultMinutes = 120;
     /// <summary>
     /// calib=1: the war runs on beside the fight, abstractly, minute by minute from the same moment, so the same soldiers'
     /// fates can be set side by side: how many of the bubble's soldiers the abstract fight has killed, downed or wounded
@@ -84,6 +84,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     public bool Calibrate;
     public bool PlayerJoins = true;
     public static bool Verbose;
+    /// <summary>The window being played, while it is.</summary>
+    public static ConquestWindow? Current { get; private set; }
 
     public List<Bot> Bots { get; } = new();
     public Spectator Spec { get; private set; } = null!;
@@ -93,6 +95,21 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     /// <summary>The war's guns and rockets firing into the window (see WindowFires).</summary>
     public WindowFires? Fires;
     public Player? PlayerBody { get; private set; }
+    /// <summary>The player's squad (still theirs while they're dead), and who they are: rank and name.</summary>
+    public Squad? PlayerSquad { get; private set; }
+    public string Me = "";
+    /// <summary>
+    /// Killed, the player carries on as a squadmate (Conquest's design: one grunt, no respawn): CarryOnAs at CarryOnAt,
+    /// picked from Candidates; Replacement when it's another squad's man because theirs is gone.
+    /// </summary>
+    public double CarryOnAt { get; private set; } = -1;
+    public Bot? CarryOnAs { get; private set; }
+    public bool Replacement { get; private set; }
+    public List<Bot> Candidates { get; private set; } = new();
+    const double CarryOnDelay = 10.0;
+    double _diedAt = -1;
+    Vector3 _fellAt;
+    WindowHud _hud = null!;
     /// <summary>Each embodied squad's war unit, and each bot's war soldier.</summary>
     public readonly Dictionary<Squad, Unit> UnitOf = new();
     public readonly Dictionary<ICombatant, int> SoldierOf = new();
@@ -104,7 +121,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     SiteObjective[] ITelemetryMatch.Points => _points;
     int[] ITelemetryMatch.Owner => _owner;
     List<Squad>[] ITelemetryMatch.Squads => Squads;
-    Squad? ITelemetryMatch.PlayerSquad => PlayerBody != null ? Squads.SelectMany(l => l).FirstOrDefault(s => s.Members.Contains(PlayerBody)) : null;
+    Squad? ITelemetryMatch.PlayerSquad => PlayerSquad;
     int[] ITelemetryMatch.Tickets => _tickets;
     bool[] ITelemetryMatch.Out => Out;
     float[] ITelemetryMatch.HQHold => _hold;
@@ -131,6 +148,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         BotBrain.ResetStatics();
         BotBrain.DefaultObjective = null;
         Squad.ResetAll();
+        // A fight in the war is fought at doctrine's pace, not the battle maps' (see Squad.Deliberate).
+        Squad.Deliberate = true;
         Drone.Clear();
         SmokeScreen.Clear();
         PerchClaims.Clear();
@@ -144,9 +163,20 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         // A town district is hostile with an enemy in it.
         Squad.Hostile = (site, team) => Combatants.All.Any(c => c.Alive && c.Team != team && (c.FeetPos - site.Center with { Y = c.FeetPos.Y }).Length() < site.Radius + 30f);
         Combatants.Killed += OnKilled;
+        Combatants.Down += OnDowned;
+        Comms.Said += OnSaid;
+        _hud = new WindowHud { W = this };
+        AddChild(_hud);
+        Current = this;
     }
 
-    public override void _ExitTree() => Combatants.Killed -= OnKilled;
+    public override void _ExitTree()
+    {
+        if (Current == this) Current = null;
+        Combatants.Killed -= OnKilled;
+        Combatants.Down -= OnDowned;
+        Comms.Said -= OnSaid;
+    }
 
     public override void _Process(double delta)
     {
@@ -161,6 +191,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         }
         Motor.Tick();
         Fires?.Tick();
+        if (_diedAt > 0) WhileDead();
         Telemetry.Tick(this);
         if (Calibrate) Abstract();
         if (Assault) Judge();
@@ -246,6 +277,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         if (PlayerJoins) JoinPlayer();
         else Spec.Activate(Bots.FirstOrDefault());
         Fires = new WindowFires(War, this);
+        Squad.OwnFiresUntil = Fires.Until;
         _points = Map.Sites.Select(s => new SiteObjective { Site = s, Map = Map, R = s.Radius }).ToArray();
         _owner = Enumerable.Repeat(-1, _points.Length).ToArray();
         if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
@@ -347,8 +379,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         _lineRad = line.Radius;
         // Fire support, as the abstract test's arty=1 has it and more: each side's battalion mortars, embodied (ALPHA's 500 m
         // behind its start line, BRAVO's 700 m behind its line), and a battery of each side's guns 8 km back, off the map,
-        // firing on call (WindowFires). ALPHA's guns fire a preparation on the line as the attack comes up: two missions,
-        // the first landing as the squads reach their ORPs, the second three minutes on.
+        // firing on call (WindowFires). ALPHA's guns have a preparation of two missions planned on the line, fired on order
+        // when the first squad is back from its leader's recon and ready to go in.
         var bns = new HashSet<int>(att.Concat(def).Select(p => War.Units[p.Parent].Parent));
         foreach (int id in War.FireUnits)
         {
@@ -369,6 +401,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             Mortars[fu.Side]++;
         }
         Fires = new WindowFires(War, this);
+        Squad.OwnFiresUntil = Fires.Until;
         for (int side = 0; side < 2; side++)
         {
             var gun = War.FireUnits.Select(id => War.Units[id]).Where(u => u.Side == side && u.Fires == VClass.Howitzer && u.People > 0)
@@ -378,11 +411,12 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             gun.Z = obj.Z;
             Batteries[side] = gun.Short;
         }
-        // The preparation lands while the attack is still 450-650 m out, and lifts before it comes within 300 m (FM 3-90:
-        // fires are lifted or shifted as the assault closes). (Timed at 4.5 and 7.5 minutes, it was lifted every time: the
-        // squads were forming up inside the guns' safe distance by then.)
-        Fires.Plan(0, lineMid, Clock.Now + 1.5 * 60);
-        Fires.Plan(0, lineMid, Clock.Now + 3.5 * 60);
+        // The preparation comes down as the attack is about to go in, and the squads wait at their ORPs, outside the guns'
+        // safe distance, till it's over (FM 3-90: fires are lifted or shifted as the assault closes). (It was fired on the
+        // clock, at 1.5 and 3.5 minutes; at doctrine's pace the attack was then still 600 m out, and the defenders had
+        // twenty minutes to recover before anyone reached them. Timed at 4.5 and 7.5 minutes before that, it was lifted
+        // every time: the squads were forming up inside the guns' safe distance by then.)
+        Fires.OnOrder(0, lineMid, 2);
         // The defence has planned fire on its approaches, at 350 and 550 m out.
         foreach (float r in new[] { 350f, 550f })
             for (int k = -1; k <= 1; k++)
@@ -478,7 +512,10 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         var squad = NewSquad(side, KindOf(u), u);
         var c = new Vector3(at.X, 0f, at.Y);
         bool dug = digIn ?? (_dug.Contains(u.Id) || m.Path == null && m.InFight < 0 && War.Time - m.HaltedAt >= 2 * 3600);
-        var spots = dug && order.Obj is AreaObjective { Threat: { } enemy } area ? DigIn(c, enemy, rest.Count) : null;
+        // Overhead cover takes hours more than the hole: a squad halted six hours or more has it (an estimate; FM 3-21.8
+        // builds it last, once the position is dug), as has a defence prepared on purpose (the assault test's).
+        bool roofed = dug && (digIn == true || War.Time - m.HaltedAt >= 6 * 3600);
+        var spots = dug && order.Obj is AreaObjective { Threat: { } enemy } area ? DigIn(c, enemy, rest.Count, roofed) : null;
         if (spots != null) ((AreaObjective)order.Obj).Spots.AddRange(spots);
         Give(squad, order);
         int i = 0;
@@ -540,10 +577,10 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
 
     /// <summary>
     /// A dug-in squad's fighting positions: a two-man position for every two men, 4 m apart across its front, facing the
-    /// enemy, walled all round (Fortifications.Position); and a place inside each for each of the two. They stand for the
-    /// trenches the war has them in.
+    /// enemy, walled all round (Fortifications.Position), roofed when they've had the hours; and a place inside each for
+    /// each of the two. They stand for the trenches the war has them in.
     /// </summary>
-    List<Vector3> DigIn(Vector3 c, Vector3 enemy, int men)
+    List<Vector3> DigIn(Vector3 c, Vector3 enemy, int men, bool roofed)
     {
         var facing = (enemy - c) with { Y = 0f };
         if (facing.LengthSquared() < 1f) return new List<Vector3>();
@@ -589,7 +626,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         for (int w = 0; w < walls; w++)
         {
             var at = c + right * ((w - (walls - 1) / 2f) * 4f);
-            Fortifications.Position(GetParent(), Map, at, facing);
+            Fortifications.Position(GetParent(), Map, at, facing, roofed);
             foreach (float s in new[] { -0.6f, 0.6f })
                 spots.Add(Map.Ground(at - facing * 1.2f + right * s));
             Dug++;
@@ -671,17 +708,106 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             return;
         }
         var stand = sq.Members.OfType<Bot>().LastOrDefault(b => b.Role == Role.Rifleman) ?? sq.Members.OfType<Bot>().Last();
-        var p = new Player { TeamId = sq.Team, Kit = Role.Rifleman };
+        Become(stand);
+        Log($"the player is {Me}, {sq.Name} ({UnitOf[sq].Name})");
+        _hud.Center($"You are {Me}, {Roles.Name(PlayerBody!.Kit ?? Role.Rifleman).ToLowerInvariant()}, {sq.Name}", 5f);
+    }
+
+    /// <summary>
+    /// The player takes this soldier's place: where he is, facing his way, with his job and kit, the rounds in his
+    /// weapon and pouches, and his wounds. A squad leader's place is taken as a rifleman's (one grunt, no promotions:
+    /// the squad is led by whoever is next).
+    /// </summary>
+    void Become(Bot b)
+    {
+        var sq = b.Squad!;
+        var p = new Player { TeamId = b.Team, Kit = b.Role == Role.Leader ? Role.Rifleman : b.Role };
         GetParent().AddChild(p);
-        p.GlobalPosition = stand.GlobalPosition;
-        sq.Members.Remove(stand);
-        Bots.Remove(stand);
-        if (SoldierOf.Remove(stand, out int soldier)) SoldierOf[p] = soldier;
-        stand.QueueFree();
+        p.GlobalPosition = b.GlobalPosition;
+        p.SetYaw(b.Aim.Yaw);
+        p.Body.TakeOver(b.Body);
+        p.Weapon.Carry(b.Def, b.Ammo, b.Mags);
+        sq.Members.Remove(b);
+        Bots.Remove(b);
+        if (SoldierOf.Remove(b, out int soldier))
+        {
+            SoldierOf[p] = soldier;
+            Me = War.Who(soldier);
+        }
+        // He leaves the world. Others may know of him (in their threat lists, their sights), so he's marked gone first:
+        // every brain drops a man who isn't alive. Hidden, still and out of the physics, he's freed a few seconds later.
+        // (He was freed at once, and bots that had him among their threats went on reading a freed object.)
+        b.Body.Dead = true;
+        b.Visible = false;
+        b.ProcessMode = ProcessModeEnum.Disabled;
+        b.CollisionLayer = b.CollisionMask = 0;
+        GetTree().CreateTimer(5.0).Timeout += () => { if (IsInstanceValid(b)) b.QueueFree(); };
         sq.Join(p);
         PlayerBody = p;
+        PlayerSquad = sq;
         PlayerHud.P = p;
-        Log($"the player is {War.Who(soldier)}, {sq.Name} ({UnitOf[sq].Name})");
+    }
+
+    /// <summary>
+    /// Who the player can carry on as: their squad's men on their feet (not riding, not the leader while anyone else is
+    /// left), nearest where they fell first. With nobody left in it, the men of the nearest squad of their side that has
+    /// any, rifle squads first (a replacement; the war's replacements by sea need it running live, slice 3).
+    /// </summary>
+    List<Bot> FindCandidates(out bool replacement)
+    {
+        static List<Bot> Fit(Squad s) => s.Members.OfType<Bot>().Where(b => b.Alive && b.Ride == null && IsInstanceValid(b)).ToList();
+        List<Bot> Order(List<Bot> l)
+        {
+            var men = l.Where(b => b.Role != Role.Leader).ToList();
+            return (men.Count > 0 ? men : l).OrderBy(b => b.FeetPos.DistanceTo(_fellAt)).ToList();
+        }
+        replacement = false;
+        if (PlayerSquad != null && Fit(PlayerSquad) is { Count: > 0 } own) return Order(own);
+        replacement = true;
+        int side = PlayerBody?.Team ?? 0;
+        var other = Squads[side].Where(s => s != PlayerSquad && Fit(s).Count > 0)
+            .OrderBy(s => s.Kind == SquadKind.Rifle ? 0 : 1).ThenBy(s => s.Position is Vector3 at ? at.DistanceTo(_fellAt) : float.MaxValue).FirstOrDefault();
+        return other != null ? Order(Fit(other)) : new List<Bot>();
+    }
+
+    /// <summary>Dead: the camera on who you'll be after a few seconds; then you're him.</summary>
+    void WhileDead()
+    {
+        double now = Clock.Now;
+        Candidates = FindCandidates(out bool repl);
+        Replacement = repl;
+        if (CarryOnAs == null || !Candidates.Contains(CarryOnAs)) CarryOnAs = Candidates.FirstOrDefault();
+        if (now - _diedAt > 2.0 && (!Spec.Active || Spec.Target != CarryOnAs) && CarryOnAs != null)
+        {
+            PlayerHud.P = null;
+            Spec.Activate(CarryOnAs);
+        }
+        if (now < CarryOnAt || CarryOnAs == null) return;
+        var next = CarryOnAs;
+        bool replacement = Replacement;
+        PlayerBody?.QueueFree();
+        Become(next);
+        SoundWorld.I.ResetHearing();
+        Spec.Deactivate();
+        _diedAt = CarryOnAt = -1;
+        CarryOnAs = null;
+        Candidates = new List<Bot>();
+        _hud.Center(replacement ? $"Your squad is gone. You carry on with {PlayerSquad!.Name} as {Me}" : $"You carry on as {Me}", 4f);
+        Log($"[{now:0}s] the player carries on as {Me}, {PlayerSquad!.Name}{(replacement ? " (their squad was gone)" : "")}");
+    }
+
+    /// <summary>
+    /// Who the camera is on, if he's still in the world. (The spectator keeps its last man after you carry on as him, and
+    /// he's freed: the radio read where he was every time you were dead after that, thousands of times a run.)
+    /// </summary>
+    public Bot? Watched => Spec.Target is { } t && IsInstanceValid(t) ? t : null;
+
+    /// <summary>The player, dead, picks who to carry on as (1-9 in the list).</summary>
+    public void Pick(int i)
+    {
+        if (i < 0 || i >= Candidates.Count) return;
+        CarryOnAs = Candidates[i];
+        Spec.Activate(CarryOnAs);
     }
 
     /// <summary>The war, a minute at a time in step with the fight, and every minute the two counts for the bubble's soldiers.</summary>
@@ -708,9 +834,34 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
                  + $"embodied killed {string.Join("/", _killed)} down {string.Join("/", embodiedDown)}; of {string.Join("/", Enumerable.Range(0, 3).Select(t => _bubble.Count(s => War.Soldiers[s].Side == t)))}");
     }
 
+    void OnDowned(ICombatant victim, HitInfo hit)
+    {
+        _hud.AddKill(hit.Shooter, victim, $"downed · {hit.Zone.ToString().ToLowerInvariant()}, {hit.Distance:0} m");
+        if (victim == PlayerBody) _hud.Center("You're down", 2f);
+    }
+
+    /// <summary>The radio: your squad wherever they are, anyone of your side within earshot.</summary>
+    void OnSaid(ICombatant who, string text)
+    {
+        int watch = PlayerBody is { Alive: true } ? PlayerBody.Team : Watched?.Team ?? 0;
+        if (who.Team != watch) return;
+        var me = PlayerBody is { Alive: true } ? PlayerBody.FeetPos : Watched?.FeetPos ?? who.FeetPos;
+        bool squad = who is Bot { Squad: { } s } && s == PlayerSquad;
+        if (squad || who.FeetPos.DistanceTo(me) < 250f) _hud.AddComm($"{who.Callsign}: {text}", squad);
+    }
+
     void OnKilled(ICombatant victim, HitInfo hit)
     {
         _killed[victim.Team]++;
+        _hud.AddKill(hit.Shooter, victim, $"{hit.Zone.ToString().ToLowerInvariant()}, {hit.Distance:0} m");
+        if (victim == PlayerBody)
+        {
+            _diedAt = Clock.Now;
+            _fellAt = victim.FeetPos;
+            CarryOnAt = _diedAt + CarryOnDelay;
+            CarryOnAs = null;
+            _hud.Center($"Killed by {hit.Shooter?.Callsign ?? "?"} — {hit.Zone.ToString().ToLowerInvariant()}, {hit.Distance:0} m", 3f);
+        }
         Log($"[{Clock.Now:0}s] {hit.Shooter?.Callsign ?? "?"} ({(hit.Shooter != null ? War.Sides[hit.Shooter.Team].Name : "?")}) killed {victim.Callsign} ({War.Sides[victim.Team].Name}), {hit.Distance:0} m");
     }
 

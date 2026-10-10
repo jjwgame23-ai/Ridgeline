@@ -68,6 +68,18 @@ public partial class Hud : CanvasLayer
         Short +
         "{help} this help · {debug_overlay} debug · {bot_debug} bot debug · {volume_down}/{volume_up} volume · {main_menu} main menu · {fullscreen} fullscreen";
 
+    public const string WindowHelp =
+        "RIDGELINE — conquest\n\n" +
+        "You're one soldier in the war: a grunt in a squad, with the name the war gave you.\n" +
+        "The war is stopped while you play (for now); the armies near you are here as they were.\n\n" +
+        "Green triangles: your squad. The lines under the order tell you what the squad is doing and your part in it;\n" +
+        "the green diamond is your spot. Your squad leader decides where the squad goes.\n" +
+        "{map} map ({map} again to close; Tab in it: the whole island and the war's front).\n" +
+        "Killed, you carry on as one of your squad after 10 s (1-9 pick who); with your squad gone, in the nearest other.\n" +
+        "{gadget}: your job's tool (medic: patch up · engineer: sandbags).\n\n" +
+        Short +
+        "{help} this help · {debug_overlay} debug · {bot_debug} bot debug · {volume_down}/{volume_up} volume · {main_menu} main menu · {fullscreen} fullscreen";
+
     const string RangeHelp =
         "RIDGELINE — firing range prototype\n\n" +
         Moves +

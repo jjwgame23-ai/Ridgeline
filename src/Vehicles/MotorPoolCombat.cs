@@ -415,7 +415,7 @@ public sealed partial class MotorPool
                 anchorR = tank ? 250f : 150f;
                 (min, max) = tank ? (180f, 700f) : (120f, 450f);
                 why = $"support by fire for {inf.Name}";
-                if (inf.Phase == AssaultPhase.Assault)
+                if (inf.SupportOpen)
                 {
                     fireAt = AreaTarget(s.Team, obj);
                     fireWhy = fireAt == null ? "fire lifted: friendlies on the objective" : "fire on the objective";

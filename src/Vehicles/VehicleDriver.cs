@@ -21,6 +21,13 @@ public static class VehicleDriver
             d.Path = Array.Empty<Vector3>();
             return;
         }
+        // The gunner has called a halt: a missile is fired and guided from a standstill.
+        if (now < v.HaltUntil)
+        {
+            v.Throttle = 0f; v.Steer = 0f; v.Brake = true;
+            d.Note = "halted: the gunner's firing a missile";
+            return;
+        }
         var pos = v.GlobalPosition;
         var flat = goal - pos;
         flat.Y = 0f;

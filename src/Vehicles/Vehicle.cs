@@ -31,6 +31,8 @@ public partial class Vehicle : CharacterBody3D
     public double LastHit = -99, LastFired = -99;
     /// <summary>When its gunner last held fire because something stood right in front of the barrel (see CrewBrain.Masked).</summary>
     public double GunMaskedAt = -99;
+    /// <summary>Its gunner has called a halt until then, to fire and guide a missile (see VehicleDriver, CrewBrain).</summary>
+    public double HaltUntil = -99;
     /// <summary>Where the last hit came from, and how hard it hit (penetration, mm): 40+ is something that can kill armour.</summary>
     public Vector3 LastHitFrom;
     public float LastHitPen;
@@ -446,8 +448,9 @@ public partial class Vehicle : CharacterBody3D
         var t = Turrets[turret];
         if (idx == t.AmmoIdx || idx < 0 || idx >= t.Def.Ammo.Length) return;
         t.AmmoIdx = idx;
-        // A cannon has to unload and reload to change round; a dual-feed autocannon just switches belts.
-        if (t.Weapon.Mag == 1) { t.ReloadT = 60f / t.Weapon.Rpm; t.Loaded[idx] = 0; }
+        // A cannon has to unload and reload to change round; a dual-feed autocannon just switches belts, and a missile
+        // launcher beside the gun has its own round ready. (Switching to the missile emptied the launcher.)
+        if (t.Weapon.Mag == 1 && !t.Weapon.Guided) { t.ReloadT = 60f / t.Weapon.Rpm; t.Loaded[idx] = 0; }
     }
 
     /// <summary>A full load: every ammunition type topped up, in the gun and in the racks (rearming at a FOB, a truck or base).</summary>
@@ -516,7 +519,7 @@ public partial class Vehicle : CharacterBody3D
         Ballistics.I.Fire(from, dir, speed, w.Drag, gunner, w.Damage, w.Name, GetRid(), explosive: w.Explosive, armM: w.Explosive ? 8f : 0f,
             pen: w.Pen, vehDamage: w.VehDamage, crater: w.Crater, fragR: w.FragR, power: w.Power, rocket: w.Sound == Snd.Rocket, prox: w.Prox,
             whistle: t.Def.Indirect, shooterVehicle: this, heavyCrack: w.Sound is Snd.Hmg or Snd.Autocannon or Snd.Cannon or Snd.Rocket,
-            homing: w.Guided ? homing : null, guidedBy: w.Guided && !w.FireAndForget && homing != null ? this : null);
+            homing: w.Guided ? homing : null, guidedBy: w.Guided && !w.FireAndForget && homing != null ? this : null, lineOfSight: w.LineOfSight);
         if (w.Guided) Prof.Count(homing != null ? "missile:launched" : "missile:launched unguided");
         // Aboard, you're in the gun's near field (and may be hearing through a chase camera): no muzzle directivity.
         SoundWorld.I.Emit(w.Sound, from, 0f, gunner, facing: Player.I is { } pl && pl.Ride == this ? default : dir);

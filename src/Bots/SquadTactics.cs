@@ -25,6 +25,8 @@ public sealed partial class Squad
     {
         All.Clear();
         Drills = Breaks = Indirects = Consolidations = Flanks = 0;
+        Deliberate = false;
+        OwnFiresUntil = null;
     }
 
     public Squad() { All.Add(this); }

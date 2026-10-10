@@ -45,6 +45,15 @@ public sealed class Body
     const double MaxDown = 150.0; // lying there untreated this long, stable or not, they don't make it
 
     public float Bleeding => Wounds.Sum(w => w.Rate);
+
+    /// <summary>Someone else's state, as it is: blood, damage, pain and wounds (the player carrying on as a squadmate).</summary>
+    public void TakeOver(Body o)
+    {
+        Blood = o.Blood; Trauma = o.Trauma; Pain = o.Pain; Concussion = o.Concussion;
+        ArmHurt = o.ArmHurt; LegHurt = o.LegHurt; Lung = o.Lung;
+        Wounds.Clear();
+        Wounds.AddRange(o.Wounds);
+    }
     /// <summary>0 fine .. 1 deep in shock, from blood loss.</summary>
     public float Shock => Mathf.Clamp((1f - Blood) / (1f - DownBlood), 0f, 1f);
     /// <summary>A single 0..100 "how is he" number for HUDs and bot decisions.</summary>

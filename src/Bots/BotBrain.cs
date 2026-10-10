@@ -310,7 +310,7 @@ public sealed class BotBrain
             if (dist < 60f || (Now - _lastHurt < 3.0) || suppressed) Sq?.Engage(t.LastKnownPos);
             // Further off, the squad leader makes the call: take them on if they're in the way
             // (near our route or our objective), otherwise push on and fight at the objective.
-            else if (Sq != null && Sq.Leader == _b && !Sq.Engaged && Objective != null && dist < 300f)
+            else if (Sq != null && Sq.Leader == _b && !Sq.Engaged && Objective != null && dist < 300f && !Reconnoitring)
             {
                 var toObj = (Objective.Center - _b.FeetPos) with { Y = 0f };
                 var toThem = (t.LastKnownPos - _b.FeetPos) with { Y = 0f };
@@ -325,7 +325,10 @@ public sealed class BotBrain
             }
             // On the way to the objective, don't get pinned into a long-range duel with someone
             // who isn't even contesting it: push on and fight at the objective (unless the squad's fighting).
-            bool pushOn = Objective != null && !InZone && !suppressed && !Relevant(t, dist);
+            bool pushOn = Objective != null && !InZone && !suppressed && !Relevant(t, dist)
+                          // On the leader's recon, the enemy at the objective is what he's come to see: he watches, and
+                          // carries on with it, unless they're onto him.
+                          || Reconnoitring && dist > 60f && !suppressed && Now - _lastHurt > 3.0;
             // Once decided, it holds for a few seconds (unless it's gone wrong): otherwise a man flips between
             // "push on" and "take the fight" every time his suppression or the squad's state ticks over the line.
             if (pushOn || (Now < _pushOnUntil && dist > 60f && !suppressed && Now - _lastHurt > 3.0))
@@ -1089,6 +1092,10 @@ public sealed class BotBrain
     /// </summary>
     bool MayOpenFire(float d)
     {
+        // On the leader's recon: not a shot unless they're onto him or right there. (He saw the defenders from the support
+        // position, called "contact, engage", and the squad deployed off the back of it from its ORP. In the first test run
+        // every recon ended that way, within two minutes of setting out.)
+        if (Reconnoitring) return d < 60f || Now - _lastHurt < 8.0 || _b.Suppression > 0.15f;
         if (d < 150f) return true;
         if (Now - _lastHurt < 8.0 || Now - _lastShotAt < 8.0 || _b.Suppression > 0.15f) return true;
         bool longArm = Role == Role.Marksman || Sq?.Kind is SquadKind.Recon or SquadKind.Weapons || (Role == Role.AutoRifleman && d < 450f);
@@ -1761,7 +1768,10 @@ public sealed class BotBrain
         // Down on the ground and the ground in front is in the way of the barrel: up onto a knee for a while.
         if (_b.Prone && vis && _holdFire && _reacted) _proneBlockedUntil = Now + 6.0;
 
-        _b.SetStance(WantStance(t, vis));
+        var stance = WantStance(t, vis);
+        // Under a fighting position's overhead cover nobody stands: he fires from a knee through the slot under it.
+        if (stance == Posture.Stand && Fortifications.UnderRoof(_b.FeetPos)) stance = Posture.Crouch;
+        _b.SetStance(stance);
         _b.Hunched = State == BotState.InCover && !_peeking;
         WantsAds = State switch
         {
@@ -1967,6 +1977,7 @@ public sealed class BotBrain
             }
             case AssaultPhase.Orp:
             {
+                if (Sq.Recon != ReconStep.None) return LeadersRecon();
                 if (_b.FeetPos.DistanceTo(Sq.OrpAt) > 6f && Sq.PhaseAge < 30.0)
                 {
                     if (!_hasWaypoint || _waypoint.DistanceTo(Sq.OrpAt) > 3f) GoTo(Sq.OrpAt);
@@ -1976,6 +1987,13 @@ public sealed class BotBrain
                 // A few seconds at least: security out, the leader looks and gives his orders.
                 if ((near >= Sq.Alive * 0.75f && Sq.PhaseAge > 8.0) || Sq.PhaseAge > 30.0)
                 {
+                    if (Squad.Deliberate)
+                    {
+                        Sq.BeginRecon(_b, _b.GetWorld3D().DirectSpaceState, _rng);
+                        Say($"Hold here, all-round security. I'm going forward to take a look{(Sq.ReconMate != null ? $" with {Sq.ReconMate.Callsign}" : "")}. Back in ten; if I'm not, we go in on the plan.");
+                        GoTo(Sq.ReconAt);
+                        return true;
+                    }
                     Sq.BeginDeploy(_b.GetWorld3D().DirectSpaceState, Objective, _rng);
                     Say($"{Squad.TeamName(Sq.SbfTeam)}, support by fire from the {Comms.Bearing(so.Site.Center, Sq.SbfAt)}. {Squad.TeamName(Sq.SbfTeam ^ 1)}, on me to the line of departure.");
                     GoTo(Sq.LdAt);
@@ -1988,6 +2006,14 @@ public sealed class BotBrain
             case AssaultPhase.Deploy:
             {
                 bool atLd = _b.FeetPos.DistanceTo(Sq.LdAt) < 10f;
+                // At doctrine's pace the call to open fire and to go is the squad's (Squad.DeliberateDeploy): here he only
+                // gets to the line of departure and waits on it.
+                if (Squad.Deliberate)
+                {
+                    if (!atLd) { if (!_hasWaypoint || _waypoint.DistanceTo(Sq.LdAt) > 3f) GoTo(Sq.LdAt); }
+                    else { _b.Stop(); _hasWaypoint = false; }
+                    return true;
+                }
                 // Go when support is set, or at the latest after 90 s whatever's holding things up.
                 if ((atLd && (Sq.SupportSet || Sq.PhaseAge > 75.0)) || Sq.PhaseAge > 90.0)
                 {
@@ -2003,6 +2029,70 @@ public sealed class BotBrain
             case AssaultPhase.Assault:
                 if (InZone || Sq.PhaseAge > 90.0) Sq.EndAssault(InZone ? "leader on the objective" : "90 s");
                 return false;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The leader's recon, step by step (Squad.BeginRecon): out to his recon post with his buddy; three minutes
+    /// glassing the objective on a knee; back to the ORP; a minute of orders, and any preparation the plan has fired
+    /// and over; then the squad deploys on the plan he went to look at. A leader who isn't the one who went (he fell)
+    /// takes the squad in on the plan.
+    /// </summary>
+    bool LeadersRecon()
+    {
+        var sq = Sq!;
+        double now = Now;
+        if (sq.ReconBy != _b && sq.Recon != ReconStep.Orders) sq.StepRecon(ReconStep.Orders, 30.0);
+        switch (sq.Recon)
+        {
+            case ReconStep.Out:
+                // There, or as near as he's got in four minutes.
+                if (_b.FeetPos.DistanceTo(sq.ReconAt) > 4f && sq.ReconAge < 240.0)
+                {
+                    if (!_hasWaypoint || _waypoint.DistanceTo(sq.ReconAt) > 3f) GoTo(sq.ReconAt);
+                    return true;
+                }
+                sq.StepRecon(ReconStep.Watching, 180.0);
+                _b.Stop();
+                _hasWaypoint = false;
+                return true;
+            case ReconStep.Watching:
+                if (now < sq.ReconUntil)
+                {
+                    _b.Stop();
+                    _hasWaypoint = false;
+                    return true;
+                }
+                sq.StepRecon(ReconStep.Back, 0.0);
+                GoTo(sq.OrpAt);
+                return true;
+            case ReconStep.Back:
+                if (_b.FeetPos.DistanceTo(sq.OrpAt) > 6f && sq.ReconAge < 240.0)
+                {
+                    if (!_hasWaypoint || _waypoint.DistanceTo(sq.OrpAt) > 3f) GoTo(sq.OrpAt);
+                    return true;
+                }
+                sq.StepRecon(ReconStep.Orders, 60.0);
+                Say($"Listen up. {Squad.TeamName(sq.SbfTeam)}, support by fire from the {Comms.Bearing(Objective!.Center, sq.SbfAt)}, {Flat(sq.SbfAt - Objective.Center):0} meters out. {Squad.TeamName(sq.SbfTeam ^ 1)}, with me to the line of departure. We go when they're suppressed.");
+                _b.Stop();
+                _hasWaypoint = false;
+                return true;
+            case ReconStep.Orders:
+            {
+                // The preparation, if the plan has one, comes down now; nobody moves up under it.
+                double fires = Squad.OwnFiresUntil?.Invoke(_b.Team, Objective!.Center) ?? -1.0;
+                if (now < sq.ReconUntil || (now < fires + 10.0 && sq.ReconAge < 360.0))
+                {
+                    _b.Stop();
+                    _hasWaypoint = false;
+                    return true;
+                }
+                sq.BeginDeploy(_b.GetWorld3D().DirectSpaceState, Objective!, _rng, planned: true);
+                Say($"Move out. {Squad.TeamName(sq.SbfTeam)}, set when you're set.");
+                GoTo(sq.LdAt);
+                return true;
+            }
         }
         return false;
     }
@@ -2116,6 +2206,12 @@ public sealed class BotBrain
         _b.StrafeDir = _strafe;
     }
 
+    /// <summary>On the leader's recon, out, there or on the way back (he or his buddy).</summary>
+    bool Reconnoitring => Sq is { Recon: ReconStep.Out or ReconStep.Watching or ReconStep.Back } rs && (rs.ReconBy == _b || rs.ReconMate == _b);
+
+    /// <summary>On the leader's recon and there, watching the objective (he or his buddy).</summary>
+    bool OnRecon => Sq is { Recon: ReconStep.Watching } rs && (rs.ReconBy == _b || rs.ReconMate == _b);
+
     /// <summary>
     /// On his feet, on a knee or flat on the ground. Out in the open at range with nothing to get behind,
     /// a soldier fights lying down: a fraction of the target, much harder to pick out, and a steadier aim;
@@ -2160,6 +2256,8 @@ public sealed class BotBrain
                 return !_b.Arrived ? Posture.Stand : Note.EndsWith("cover") ? Posture.Crouch : Posture.Prone;
             case BotState.Advance when Note == AssistantGunner || Note == ToTheTube && _nearTube:
                 return Posture.Crouch; // kneeling at the tube, and shuffling round it on a knee
+            case BotState.Advance when OnRecon || Reconnoitring && Objective != null && FromObjective(_b.FeetPos) < 320f:
+                return Posture.Crouch; // on the leader's recon: low on the way up and back, and on a knee to look
             case BotState.Advance:
                 // At an observation post, stay low: a head on a ridgeline is what gets seen first.
                 return Overwatch && InZone && _pausing ? (mayLie ? Posture.Prone : Posture.Crouch) : Posture.Stand;
@@ -2593,6 +2691,13 @@ public sealed class BotBrain
         if (t != null && State != BotState.Advance && !movingFar)
         {
             aim.Goal = SuppressPoint(t); // pre-aim where they were
+            return;
+        }
+        if (State == BotState.Advance && OnRecon && Objective != null && Flat(Objective.Center - _b.FeetPos) > 1f)
+        {
+            // The leader's recon: glassing the objective, a little either side.
+            var wd = (Objective.Center - _b.FeetPos) with { Y = 0f };
+            aim.Goal = _b.EyePos + wd.Normalized().Rotated(Vector3.Up, Scan(0.3f)) * 40f + Vector3.Down * 1.5f;
             return;
         }
         if (State == BotState.Advance && _pausing)

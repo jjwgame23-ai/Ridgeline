@@ -64,6 +64,17 @@ public partial class WeaponRig : Node3D
         };
     }
 
+    /// <summary>Someone else's weapon as it is, if it's one carried here: the rounds in it and in his pouches.</summary>
+    public void Carry(WeaponDef d, int ammo, Magazines mags)
+    {
+        foreach (var s in _slots)
+        {
+            if (s.Def != d) continue;
+            s.Ammo = ammo;
+            s.Mags.CopyFrom(mags);
+        }
+    }
+
     /// <param name="deg">Camera rotation this event, (pitch, yaw) degrees.</param>
     public void AddLookDelta(Vector2 deg)
     {

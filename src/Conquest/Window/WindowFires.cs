@@ -10,7 +10,8 @@ namespace Ridgeline;
 ///   own people are within the gun's safe distance of the target (300 m for guns, 600 m for unguided rockets). The
 ///   side's nearest battery in range with rounds left in its day's allowance answers. The rounds land 6 minutes after
 ///   the call for guns (10 for BRAVO, whose fire control is more centralised; 15 for its rockets), as in the war.
-/// - A planned fire (a preparation): on a point given, from a set time, without waiting on a call.
+/// - A planned fire (a preparation): on a point given, from a set time, without waiting on a call; or on order, when the
+///   first squad attacking the point is ready to go in (OnOrder, Until).
 /// - Where they land. The observer knows the target to within 10 m plus 3% of his range from it, halved once the fire
 ///   is adjusted (a planned target is plotted to 10 m); each round then spreads by its weapon's dispersion (0.3% of range
 ///   for guns, 1.5% for unguided rockets, 5 m for guided ones). The tubes fire in volleys about 8 s apart.
@@ -42,6 +43,8 @@ public sealed class WindowFires
     }
 
     readonly List<Mission> _missions = new();
+    /// <summary>The missions coming and falling: whose, where, and when the first rounds land (the map).</summary>
+    public IEnumerable<(int Side, Vector3 Target, double At)> Missions => _missions.Select(m => (m.Side, m.Target, m.At));
     public readonly int[] Calls = new int[3], Rounds = new int[3], Planned = new int[3], Lifted = new int[3];
 
     public WindowFires(War war, ConquestWindow w)
@@ -63,6 +66,44 @@ public sealed class WindowFires
         if (Fire(u, target, 10f, at, true) is not { } m) return false;
         Planned[side]++;
         return true;
+    }
+
+    readonly List<(int Side, Vector3 At, int Missions)> _onOrder = new();
+
+    /// <summary>
+    /// A preparation planned on a point and fired on order: when the first squad attacking it is back from its leader's
+    /// recon and ready to go in (Squad.OwnFiresUntil asks Until). It's a planned target, so it comes in 90 s; its missions
+    /// two minutes apart. A preparation is the last thing before the assault moves, so the defenders have no time to
+    /// recover from it (FM 3-90).
+    /// </summary>
+    public void OnOrder(int side, Vector3 target, int missions) => _onOrder.Add((side, target, missions));
+
+    /// <summary>
+    /// Squad.OwnFiresUntil: when the side's fire about to fall or falling within its safe distance of a point will be over
+    /// (below zero: none). Fires any preparation on order on the point first.
+    /// </summary>
+    public double Until(int side, Vector3 at)
+    {
+        double now = Clock.Now;
+        for (int i = _onOrder.Count - 1; i >= 0; i--)
+        {
+            var o = _onOrder[i];
+            if (o.Side != side || (o.At - at with { Y = o.At.Y }).Length() > 200f) continue;
+            _onOrder.RemoveAt(i);
+            int n = 0;
+            for (int k = 0; k < o.Missions; k++) if (Plan(side, o.At, now + PlannedResponse + k * 120.0)) n++;
+            if (ConquestWindow.Verbose) GD.Print($"[{now:0}s] {_war.Sides[side].Name} preparation on {o.At.X:0},{o.At.Z:0} called: {n} mission{(n == 1 ? "" : "s")}, the first landing in {PlannedResponse / 60:0.0} min");
+        }
+        double until = -1.0;
+        foreach (var m in _missions)
+        {
+            if (m.Side != side) continue;
+            var g = Artillery.Gun(m.Side, m.Kind);
+            if ((m.Target - at with { Y = m.Target.Y }).Length() > Artillery.MinSafe(m.Kind, g.Guided)) continue;
+            // The last volley, and its flight.
+            until = Math.Max(until, m.At + ((m.Rounds - 1) / Math.Max(1, m.Tubes)) * 8.0 + 5.0);
+        }
+        return until;
     }
 
     public void Tick()

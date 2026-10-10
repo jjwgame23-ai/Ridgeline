@@ -58,10 +58,16 @@ public partial class HudOverlay : Control
         DrawSquadmates(p.Cam);
     }
 
+    /// <summary>
+    /// The player's squad in whatever is being played: a Conquest window or a battle map. (Only the battle map's was asked
+    /// for, so in a window nobody in your squad was marked.)
+    /// </summary>
+    public static Squad? MySquad => ConquestWindow.Current?.PlayerSquad ?? TerritoryMode.I?.PlayerSquad;
+
     /// <summary>Your squad: a small green triangle over each of them, so you can tell them from the rest of the side.</summary>
     void DrawSquadmates(Camera3D cam)
     {
-        var sq = TerritoryMode.I?.PlayerSquad;
+        var sq = MySquad;
         if (sq == null) return;
         foreach (var c in sq.Members)
         {

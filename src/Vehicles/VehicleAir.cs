@@ -418,6 +418,27 @@ public partial class Vehicle
     }
 
     /// <summary>Launch a missile from the pods at a vehicle, up at an angle so it climbs before it comes down on it.</summary>
+    /// <summary>The enemy vehicle under a ground gunner's crosshair (within a degree and a half), in reach and in sight, for a missile.</summary>
+    public Vehicle? Sighted(Vector3 eye, Vector3 look, float min, float max)
+    {
+        var space = GetWorld3D().DirectSpaceState;
+        Vehicle? best = null;
+        float bestAng = 1.5f;
+        foreach (var v in All)
+        {
+            if (v == this || v.Destroyed || !v.Crewed || v.CrewTeam == CrewTeam || !GodotObject.IsInstanceValid(v)) continue;
+            var to = v.Center - eye;
+            float d = to.Length();
+            if (d < min || d > max) continue;
+            float ang = Mathf.RadToDeg(look.AngleTo(to));
+            if (ang >= bestAng) continue;
+            if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, v.TopPoint, Layers.World)).Count > 0) continue;
+            bestAng = ang;
+            best = v;
+        }
+        return best;
+    }
+
     public bool LaunchMissile(Vehicle target)
     {
         int pods = Def.Turrets.FindIndex(t => t.Fixed), mi = MissileIdx;

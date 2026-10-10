@@ -8,6 +8,9 @@ public enum March { Travelling, Column, TravellingOverwatch, BoundingOverwatch, 
 /// <summary>The steps of a deliberate attack on an enemy-held point.</summary>
 public enum AssaultPhase { None, Orp, Deploy, Assault }
 
+/// <summary>The leader's reconnaissance from the ORP, at doctrine's pace (Squad.Deliberate).</summary>
+public enum ReconStep { None, Out, Watching, Back, Orders }
+
 /// <summary>
 /// Movement and the deliberate attack:
 /// - March order, picked by the leader: travelling (a wedge in the open, a file along his
@@ -26,7 +29,24 @@ public enum AssaultPhase { None, Orp, Deploy, Assault }
 /// </summary>
 public sealed partial class Squad
 {
-    public static int Orps, Deploys, BuddySwaps;
+    public static int Orps, Deploys, BuddySwaps, Recons;
+
+    /// <summary>
+    /// The deliberate attack at doctrine's pace, as the Conquest window fights it (FM 3-21.8 ch. 7; FM 3-21.71 for the
+    /// mechanised platoon). An attack on a prepared position takes its time, and the time goes on things soldiers do:
+    /// - bounding overwatch ends each bound with a halt to look and listen before the next (20-40 s);
+    /// - at the ORP the leader goes forward with one man to look at the objective from where his support will fire,
+    ///   watches it for three minutes (men in fighting positions show themselves for seconds at a time), comes back
+    ///   and gives his orders; a planned preparation is fired then, and nobody moves forward under it;
+    /// - deployed, the support opens fire once it's set and the assault team is at the line of departure, and the
+    ///   assault goes when the support has fire superiority: two minutes of its fire and the squad no longer under
+    ///   fire from the objective (at most six minutes).
+    /// This species doesn't lie pinned for fear, so none of it is waiting for nerve. The battle maps keep their compressed
+    /// attack (a squad takes a point in a few minutes): a 30-60 minute match is a game of many attacks. (In the window
+    /// the compressed attack carried a dug-in platoon's line in 7-9 minutes, start line to last man: 8 s at the ORP,
+    /// a minute deploying.)
+    /// </summary>
+    public static bool Deliberate;
 
     public March MarchOrder { get; private set; }
     /// <summary>A player leading the squad picked this march order (null: the ground decides).</summary>
@@ -47,6 +67,24 @@ public sealed partial class Squad
     double _bowWaitSince;
     double _closeUpSince = -1, _closeUpAgain = -1;
     public static int CloseUps;
+    double _bowLookUntil = -1;
+
+    /// <summary>The leader's recon (Deliberate): where it's got to, who went, and when the step is over.</summary>
+    public ReconStep Recon { get; private set; }
+    public ICombatant? ReconBy, ReconMate;
+    /// <summary>Where the leader looks at the objective from (ChooseReconPost).</summary>
+    public Vector3 ReconAt;
+    public double ReconUntil;
+    double _reconSince, _supportOpenAt = -1, _quietSince = -1;
+    /// <summary>
+    /// The side's own artillery about to fall or falling within its safe distance of a point: until when (Clock time), or
+    /// below zero for none. A planned preparation on the point not fired yet is called by the asking (the leader back
+    /// from his recon is ready for it). Set by the match that has guns off the map (the Conquest window).
+    /// </summary>
+    public static Func<int, Vector3, double>? OwnFiresUntil;
+
+    /// <summary>The support team is firing on the objective: in the assault, or once it's opened up while deploying.</summary>
+    public bool SupportOpen => Phase == AssaultPhase.Assault || Phase == AssaultPhase.Deploy && _supportOpenAt >= 0;
 
     /// <summary>How far off a human in the squad can be and still be a straggler catching up, not a man who's gone his own way.</summary>
     const float StragglerRange = 150f;
@@ -124,6 +162,101 @@ public sealed partial class Squad
         _phaseSince = _phaseReal = Clock.Now;
         _phaseAlive = Alive;
         _frozenFor = 0.0;
+        Recon = ReconStep.None;
+        ReconBy = ReconMate = null;
+        _supportOpenAt = _quietSince = -1;
+    }
+
+    // ---------------------------------------------------------------- the leader's recon (Deliberate)
+
+    /// <summary>
+    /// Formed up at the ORP: the plan off the map first (where support goes, the line of departure: PlanAttack), then the
+    /// leader goes forward with his buddy to the support position, which was picked for its view of the objective. The
+    /// rest hold the ORP. (FM 3-21.8, actions at the ORP: the leader's reconnaissance confirms the plan before the squad
+    /// moves on it.)
+    /// </summary>
+    public void BeginRecon(Bot lead, PhysicsDirectSpaceState3D space, RandomNumberGenerator rng)
+    {
+        PlanAttack(space, Objective!, rng);
+        ReconAt = ChooseReconPost(space, Objective!, rng);
+        Recons++;
+        ReconBy = lead;
+        ReconMate = BuddyOf(lead) is Bot bud && bud.Ride == null ? bud
+            : Members.OfType<Bot>().Where(m => m != lead && m.Alive && m.Ride == null).OrderBy(m => m.FeetPos.DistanceSquaredTo(lead.FeetPos)).FirstOrDefault();
+        StepRecon(ReconStep.Out, 0.0);
+    }
+
+    /// <summary>On to the next step of the recon; <paramref name="lasts"/> s is how long it's to take (0: till it's done).</summary>
+    public void StepRecon(ReconStep step, double lasts)
+    {
+        if (DuelMode.Verbose && step != Recon)
+            GD.Print($"[{Clock.Now:0}s] {Name} recon {step}" + (Recon != ReconStep.None ? $" (was {Recon} {Clock.Now - _reconSince:0} s)" : "")
+                     + (step == ReconStep.Out ? $": {ReconBy?.Callsign} and {ReconMate?.Callsign ?? "nobody"} to {Flat(ReconAt, Objective?.Center ?? ReconAt):0} m from it" : ""));
+        Recon = step;
+        _reconSince = Clock.Now;
+        ReconUntil = Clock.Now + lasts;
+    }
+
+    public double ReconAge => Clock.Now - _reconSince;
+
+    /// <summary>
+    /// Where the leader looks from on his recon: somewhere 170-320 m out on the ORP's side that sees some of the
+    /// objective from a knee (a sixth or more), with something in front to be behind, the nearest the ORP of the best;
+    /// failing one, the support position. A recon is made from concealment, back from the objective, not from where the support will
+    /// fire. (He went to the support position itself, picked to shoot from at 100-170 m, and walked up to it upright: in
+    /// the first runs a defender saw him and fired, and the squad deployed off the back of it, nearly every time. Looking
+    /// for a quarter of the objective in view from 190-300 m, six leaders in eight found nowhere at Froltosa's wooded edge.)
+    /// </summary>
+    Vector3 ChooseReconPost(PhysicsDirectSpaceState3D space, IObjective obj, RandomNumberGenerator rng)
+    {
+        var map = Valley.Current;
+        var targets = FightingPositions(space, obj, rng, 6, 8);
+        var back = (OrpAt - obj.Center) with { Y = 0f };
+        if (back.LengthSquared() < 1f) back = Vector3.Back;
+        back = back.Normalized();
+        var cands = new List<(Vector3 P, float Score)>();
+        for (int k = 0; k < 60; k++)
+        {
+            float ang = Mathf.DegToRad(rng.RandfRange(-70f, 70f));
+            var p = obj.Center + back.Rotated(Vector3.Up, ang) * rng.RandfRange(170f, 320f);
+            float y = map?.HeightAt(p.X, p.Z) ?? obj.Center.Y;
+            if (!CoverFinder.Standable(space, p with { Y = y }, y, out var g)) continue;
+            float kneel = ShareSeen(space, g, 1.1f, targets);
+            if (kneel < 0.16f) continue;
+            cands.Add((g, kneel * 10f + (HasCoverToward(space, g, obj.Center) ? 3f : 0f) - Flat(g, OrpAt) * 0.02f));
+        }
+        cands.Sort((x, y) => y.Score.CompareTo(x.Score));
+        for (int k = 0; k < Math.Min(6, cands.Count); k++)
+            if (CanWalk(OrpAt, cands[k].P)) return cands[k].P;
+        return SbfAt;
+    }
+
+    /// <summary>
+    /// Deployed (Deliberate): the support opens fire once it's set and the assault team is at the line of departure, and
+    /// the assault goes when the support has fire superiority: it has fired two minutes and nobody in the squad has been
+    /// under fire for 20 s (the objective's fire has died down), or it has fired six. Run whatever the leader is busy with:
+    /// in contact he's fighting, not walking the plan.
+    /// </summary>
+    void DeliberateDeploy(Bot lead)
+    {
+        double now = Clock.Now;
+        bool atLd = lead.FeetPos.DistanceTo(LdAt) < 10f;
+        if (_supportOpenAt < 0)
+        {
+            if (!((atLd && SupportSet) || (Engaged && SupportFiring()) || PhaseAge > 360.0)) return;
+            _supportOpenAt = now;
+            if (DuelMode.Verbose) GD.Print($"[{now:0}s] {Name} support opens fire ({(atLd && SupportSet ? "set, assault team at the LD" : Engaged ? "in contact" : "6 minutes")}, {PhaseAge:0} s deployed)");
+            Comms.Say(lead, $"{TeamName(SbfTeam)}, open fire!");
+        }
+        bool underFire = Members.Any(m => m.Alive && m is Bot { Suppression: > 0.25f });
+        if (underFire) _quietSince = -1;
+        else if (_quietSince < 0) _quietSince = now;
+        double firing = now - _supportOpenAt;
+        string why = firing > 120.0 && _quietSince >= 0 && now - _quietSince > 20.0 ? $"fire superiority: {firing:0} s of support fire, quiet {now - _quietSince:0} s"
+            : firing > 360.0 ? "6 minutes of support fire" : "";
+        if (why == "") return;
+        BeginAssault(why);
+        Comms.Say(lead, $"{TeamName(SbfTeam ^ 1)}, on line — assault, go!");
     }
 
     /// <summary>Past the limit of advance: 50 m beyond the objective, during the assault or while consolidating. Don't chase out there.</summary>
@@ -142,14 +275,16 @@ public sealed partial class Squad
 
         AdaptToContact();
         // Time limits that hold even while the leader is busy fighting: an attack that's gone stale
-        // is called off (or, once the teams are deployed, launched).
-        if (Phase == AssaultPhase.Orp && PhaseAge > 60.0) EndAssault("ORP timed out");
-        else if (Phase == AssaultPhase.Deploy && PhaseAge > 120.0) BeginAssault("deploy timed out");
+        // is called off (or, once the teams are deployed, launched). At doctrine's pace the ORP has the leader's recon in it
+        // (about ten minutes), and deploying has the support's fight for fire superiority.
+        if (Phase == AssaultPhase.Orp && PhaseAge > (Deliberate && Recon != ReconStep.None ? 1200.0 : 60.0)) EndAssault("ORP timed out");
+        else if (Phase == AssaultPhase.Deploy && PhaseAge > (Deliberate ? 900.0 : 120.0)) BeginAssault("deploy timed out");
+        else if (Phase == AssaultPhase.Deploy && Deliberate) DeliberateDeploy(lead);
         // In contact while deploying, the leader is fighting rather than walking the plan (the plan only runs when he's on the
         // move), so the call to go can't wait on him reaching the line of departure. The support's rounds are already on the
         // objective from where they are, and fire is what the assault goes in under. (It used to wait for the clock, or for a
         // lull, and a squad pinned short of the objective sat there while the defenders picked it apart.)
-        else if (Phase == AssaultPhase.Deploy && Engaged && PhaseReal > 20.0 && SupportFiring()) BeginAssault("contact: support already firing on it");
+        else if (Phase == AssaultPhase.Deploy && Engaged && PhaseReal > 20.0 && SupportFiring() && !Deliberate) BeginAssault("contact: support already firing on it");
         else if (Phase == AssaultPhase.Assault && PhaseAge > 100.0) EndAssault("assault timed out");
         if (Phase == AssaultPhase.Orp) { MarchOrder = March.Herringbone; return; }
         if (Phase == AssaultPhase.Assault) { MarchOrder = March.AssaultLine; return; }
@@ -241,7 +376,15 @@ public sealed partial class Squad
         float gap = ((c - lead.FeetPos) with { Y = 0f }).Length();
         if (_bowWaiting)
         {
-            if (gap < 15f || Clock.Now - _bowWaitSince > 30.0) { _bowWaiting = false; return false; }
+            if (gap < 15f || Clock.Now - _bowWaitSince > 30.0)
+            {
+                // At doctrine's pace the bound ends in a halt: both teams look and listen before the next (Deliberate).
+                if (Deliberate && _bowLookUntil < 0) _bowLookUntil = Clock.Now + PlanRng.RandfRange(20f, 40f);
+                if (Deliberate && Clock.Now < _bowLookUntil) return true;
+                _bowWaiting = false;
+                _bowLookUntil = -1;
+                return false;
+            }
             return true;
         }
         if (gap > 55f)
@@ -261,6 +404,9 @@ public sealed partial class Squad
     Vector3? OrderSlot(ICombatant b, ICombatant lead, int i, Vector3 fwd, Vector3 right)
     {
         if (CrossSlot(b) is Vector3 cs) return cs;
+        // The leader's recon: his buddy goes with him, a few metres back and to the side.
+        if (Phase == AssaultPhase.Orp && Recon is ReconStep.Out or ReconStep.Watching or ReconStep.Back && b == ReconMate && lead == ReconBy)
+            return lead.FeetPos - fwd * 3f + right * 2.5f;
         int t = TeamOf(b);
         int alive = Members.Count(m => m.Alive) - 1;
         float side = i % 2 == 0 ? -1f : 1f;
@@ -433,7 +579,16 @@ public sealed partial class Squad
     /// ended within 30 m of it, which any wall at the edge of a town satisfied: most support positions saw next
     /// to nothing of the objective, and some were not somewhere a man could walk to.)
     /// </summary>
-    public void BeginDeploy(PhysicsDirectSpaceState3D space, IObjective obj, RandomNumberGenerator rng)
+    public void BeginDeploy(PhysicsDirectSpaceState3D space, IObjective obj, RandomNumberGenerator rng, bool planned = false)
+    {
+        if (!planned) PlanAttack(space, obj, rng);
+        Deploys++;
+        SetPhase(AssaultPhase.Deploy);
+        if (DuelMode.Verbose) Audit(space, obj);
+    }
+
+    /// <summary>Where support goes and the line of departure (see BeginDeploy), without moving off yet.</summary>
+    public void PlanAttack(PhysicsDirectSpaceState3D space, IObjective obj, RandomNumberGenerator rng)
     {
         var map = Valley.Current;
         var axis = ((obj.Center - OrpAt) with { Y = 0f });
@@ -523,9 +678,6 @@ public sealed partial class Squad
         var plain = obj.Center - axis * MathF.Min(120f, axisLen - 20f);
         LdAt = ld ?? (lds.Count > 0 ? lds[0].P : map?.Ground(plain) ?? plain);
         LdSlots = Spread(space, LdAt, rng, 8, null, false, obj);
-        Deploys++;
-        SetPhase(AssaultPhase.Deploy);
-        if (DuelMode.Verbose) Audit(space, obj);
     }
 
     /// <summary>Where each of a team goes at a point: the point and standable ground round it (3 m or more apart), with a view of the objective for the support.</summary>
@@ -679,7 +831,7 @@ public sealed partial class Squad
     public bool RecentlyAssaulted(IObjective? o) => AssaultOn == o && (Phase != AssaultPhase.None || Clock.Now - AssaultEndedAt < 90.0);
 
     /// <summary>Support-by-fire, firing on the objective: this man is in the support team during the assault.</summary>
-    public bool FiringInSupport(ICombatant c) => Phase == AssaultPhase.Assault && TeamOf(c) == SbfTeam;
+    public bool FiringInSupport(ICombatant c) => SupportOpen && TeamOf(c) == SbfTeam;
 
     // ---------------------------------------------------------------- buddy pairs
 

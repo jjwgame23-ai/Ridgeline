@@ -28,8 +28,13 @@ public sealed class VWeapon
     public bool Guided;
     /// <summary>Guided by its own seeker once launched; otherwise the aircraft has to keep the target in sight until it hits.</summary>
     public bool FireAndForget;
-    /// <summary>How far a guided missile reaches (m).</summary>
-    public float Range;
+    /// <summary>How far a guided missile reaches (m), and how close it can be used (it has to gather itself and be gathered onto the line of sight).</summary>
+    public float Range, MinRange;
+    /// <summary>
+    /// Flies along the gunner's line of sight to the target (wire-guided SACLOS: TOW, Konkurs), not climbing to come down
+    /// on the roof as a helicopter's missile does. Fired from a halt.
+    /// </summary>
+    public bool LineOfSight;
     /// <summary>Tracer rounds: one in every <c>TracerEvery</c> (0: none; 1: every round), burning out at <c>TraceM</c> in normal flight (see Tracers).</summary>
     public int TracerEvery;
     public float TraceM;
@@ -173,6 +178,34 @@ public sealed class VehicleDef
         Guided = true, FireAndForget = radar, Range = 7000f,
     };
 
+    /// <summary>
+    /// An IFV's anti-tank missile, wire-guided along the gunner's line of sight: he holds the sight on the target and the
+    /// missile flies down it, so it goes wherever he keeps the crosshair until it strikes. Lose sight of the target (the
+    /// launcher is hit, the target goes behind something) and it flies on unguided. Fired from a halt. (The IFVs had only
+    /// their cannon and coax: they couldn't hurt a tank, fought each other with 30 mm at close range, and whichever came
+    /// through turned its cannon on the infantry. In the embodied assault test one BMP killed 31 attackers in three minutes
+    /// while six Bradleys failed to kill it.)
+    /// - TOW-2, the Bradley's twin launcher: to 3,750 m at about 190 m/s on average (20 s to full range), about 900 mm of
+    ///   armour, a 6 kg warhead. Seven carried; the launcher's two and two reloads of two are here (six). Reloading
+    ///   the launcher means the crew working through the roof hatch: a minute and a half here (an estimate).
+    /// - 9M113M Konkurs, on the BMP-2's turret roof: to 4,000 m at about 210 m/s (19 s), about 750 mm behind reactive
+    ///   armour, a 2.7 kg warhead. Four carried, one on the launcher; the gunner reloads it in about a minute.
+    /// Neither can be guided inside its first 65-75 m.
+    /// </summary>
+    public static VWeapon Tow() => new()
+    {
+        Name = "TOW-2", Sound = Snd.Rocket, Speed = 190f, Drag = 0f, Damage = 300f, VehDamage = 950f, Pen = 900f,
+        Explosive = true, Crater = 0.8f, FragR = 6f, Power = 2.5f, Rpm = 3f, Mag = 2, Mags = 2, Reload = 90f, SpreadDeg = 0.1f, Kick = 0f, Flash = 2f,
+        Guided = true, FireAndForget = false, LineOfSight = true, Range = 3750f, MinRange = 65f,
+    };
+
+    public static VWeapon Konkurs() => new()
+    {
+        Name = "9M113M Konkurs", Sound = Snd.Rocket, Speed = 210f, Drag = 0f, Damage = 280f, VehDamage = 800f, Pen = 750f,
+        Explosive = true, Crater = 0.7f, FragR = 5f, Power = 1.5f, Rpm = 1f, Mag = 1, Mags = 3, Reload = 60f, SpreadDeg = 0.1f, Kick = 0f, Flash = 2f,
+        Guided = true, FireAndForget = false, LineOfSight = true, Range = 4000f, MinRange = 75f,
+    };
+
     /// <summary>The Hind's 9M120 Ataka, out to 6 km: steered by radio from the aircraft, whose gunner has to keep the target in sight until it hits.</summary>
     public static VWeapon Ataka() => new()
     {
@@ -276,7 +309,7 @@ public sealed class VehicleDef
                 d.Hull = new Vector3(3.2f, 1.9f * hgt, 6.6f * len); d.GroundClear = 0.45f; d.Tracked = true; d.MaxSpeed = 15f; d.Reverse = 5f; d.Accel = 4f; d.TurnRate = 42f;
                 d.ArmorFront = 70f; d.ArmorSide = 35f; d.ArmorRear = 22f; d.ArmorTop = 15f; d.Hp = 1000f; d.Tickets = 7; d.Respawn = 240f;
                 d.Turrets.Add(new TurretDef { Mount = new Vector3(f == 1 ? 0f : 0.2f, 2.35f * hgt, f == 1 ? -0.9f : -0.4f), YawSpeed = 45f, PitchSpeed = 30f, PitchMin = -8f, PitchMax = 50f,
-                    Size = new Vector3(1.9f, 0.7f, 2.0f), BarrelLen = 2.6f, BarrelRadius = 0.05f, Ammo = Autocannon(), Coax = Coax() });
+                    Size = new Vector3(1.9f, 0.7f, 2.0f), BarrelLen = 2.6f, BarrelRadius = 0.05f, Ammo = Autocannon().Append(f == 1 ? Konkurs() : Tow()).ToArray(), Coax = Coax() });
                 d.Seats.Add(new SeatDef { Role = SeatRole.Driver, Pos = new Vector3(-0.8f, 2.0f * hgt, -2.4f * len) });
                 d.Seats.Add(new SeatDef { Role = SeatRole.Gunner, Pos = new Vector3(0.2f, 3.0f * hgt, -0.4f), Turret = 0 });
                 for (int i = 0; i < 6; i++) d.Seats.Add(new SeatDef { Role = SeatRole.Passenger, Pos = new Vector3(i % 2 == 0 ? -0.6f : 0.6f, 1.8f, (0.9f + (i / 2) * 0.6f) * len) });

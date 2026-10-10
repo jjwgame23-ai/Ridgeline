@@ -14,6 +14,7 @@ public static class Layers
     public const uint Trees = 16;     // solid, but left out of the navmesh
     public const uint Doors = 32;     // solid when shut; the navmesh treats every doorway as open
     public const uint Drones = 64;    // only bullets (and the drones' own checks) see these
+    public const uint Overhead = 128; // fighting positions' overhead cover: rounds and fragments hit it, men walk under it
     public const uint Solid = World | Trees | Vehicles | Doors;
 }
 

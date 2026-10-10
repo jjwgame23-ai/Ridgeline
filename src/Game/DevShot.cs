@@ -9,6 +9,8 @@ namespace Ridgeline;
 ///   shot=out.png [frames=N]                    save a screenshot after N frames and quit
 ///   [weapon=2] [ads] [grenade] [drill]         set up a pose for the screenshot
 ///   [view=eyes|free] [debug]                   spectator view / bot debug overlay
+///   [hurt=wounded|down|dead] [hurtat=N]         the player hurt at frame N (60)
+///   [map] [island]                             the map open (a Conquest window's on the island)
 /// Add `--headless --fixed-fps 60` for a smoke test with no window.
 /// </summary>
 public partial class DevShot : Node
@@ -17,6 +19,7 @@ public partial class DevShot : Node
     int _frames = 120, _n;
     bool _ads, _grenade, _drill, _debug, _map, _craters, _gadget;
     string _hurt = "", _board = "";
+    int _hurtAt = 60;
     int _seat = -1;
     bool _drive, _wreck;
     int _weapon;
@@ -109,6 +112,7 @@ public partial class DevShot : Node
             _craters = a.ContainsKey("craters"),
             _gadget = a.ContainsKey("gadget"),
             _hurt = a.TryGetValue("hurt", out var h) ? h : "",
+            _hurtAt = a.TryGetValue("hurtat", out var ha) ? int.Parse(ha) : 60,
             _board = a.TryGetValue("board", out var bd) ? bd : "",
             _seat = a.TryGetValue("seat", out var st) ? int.Parse(st) : 0,
             _drive = a.ContainsKey("drive"),
@@ -142,10 +146,10 @@ public partial class DevShot : Node
         if (_n == 90 && _ads) Input.ActionPress("aim");
         if (_n == 30 && _grenade) Player.I?.ThrowGrenade();
         if (_n == 30 && _drill) Hud.I?.Drill?.Toggle();
-        if (_hurt != "" && _n == 60 && Player.I is Player pl)
+        if (_hurt != "" && _n == _hurtAt && Player.I is Player pl)
         {
-            // Pose a wounded state for a screenshot: blood loss + a knock to the head, or down.
-            pl.Body.Blood = _hurt == "down" ? 0.5f : 0.68f;
+            // Pose a wounded state for a screenshot: blood loss + a knock to the head, down, or dead (hurtat=N: at frame N).
+            pl.Body.Blood = _hurt == "dead" ? 0.2f : _hurt == "down" ? 0.5f : 0.68f;
             pl.Body.Concussion = 0.8f;
             pl.Body.Hit(Region.Leg, 1f, new RandomNumberGenerator());
         }

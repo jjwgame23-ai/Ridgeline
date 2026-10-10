@@ -703,6 +703,49 @@ Each change is judged on three runs of the embodied assault test.
   - The embodied mortar is the 81 mm whatever the army's (the war's US and Russian battalion mortars are 120 mm).
   - Nothing in the window yet goes back to the war but the rounds fired (slice 3).
 
+**Doctrine's pace** (`Squad.Deliberate`, on in the window; the battle maps keep their compressed attack). The user wants a fight to take half an hour to an hour: shorter than history's hours, for a species that doesn't hang back, but not minutes. A deliberate attack on a prepared position takes its time on things soldiers do (FM 3-21.8 ch. 7, FM 3-21.71):
+- **Bounding overwatch** ends each bound with a halt to look and listen, 20–40 s, before the next.
+- **The leader's recon from the ORP.** Formed up, the leader plans the attack (support position, line of departure). He then goes forward with his buddy, crouched once inside 320 m, holding fire unless they're onto him. His recon post is somewhere 170–320 m out that sees some of the objective from a knee with something in front, failing that the support position. He watches three minutes, comes back and gives a minute of orders. A preparation planned on the objective is called then (`WindowFires.OnOrder`: a planned target, landing in 90 s), and nobody moves forward under it. A leader who falls on the recon leaves the squad to go in on the plan.
+- **Fire superiority.** Deployed, the support opens fire once it's set and the assault team is at the line of departure (or in contact, or after six minutes). The assault goes when the support has fired two minutes and nobody in the squad has been under fire for 20 s, or after six minutes of support fire. The vehicles fire on the objective from then too.
+- **Overhead cover.** A position dug in six hours or more (an estimate), or prepared on purpose as the assault test's is, has a roof: 45 cm of earth on logs (FM 3-21.8), raised about 1.4 m on posts. The men fire from a knee through the slot under it, and nobody stands up under it. It's on its own layer (`Layers.Overhead`): rounds and fragments hit it, men walk under it. A heavy shell's direct hit would bring a real one in; here it holds.
+- **Tried and fixed on the way.**
+  - Leaders on recon saw the defenders, called "contact, engage", and the squad deployed off it: every recon in the first run.
+  - Sent to the support position itself (100–170 m out, chosen to shoot from), they were seen there and fired on. Six leaders in eight found no post 190–300 m out with a quarter of the line in view, at Froltosa's wooded edge.
+- **The embodied assault test at doctrine's pace** (2 platoons on 1, each run about real time):
+
+| | Attackers lost | Defenders lost | Took |
+|---|---|---|---|
+| Before (fire support, walled positions) | 5%, 46%, 8% | 85–100% | 7–9 min |
+| Doctrine's pace | 17%; 56% (held) | 100%; 92% | 11 min each |
+| With recon posts, overhead cover, IFV missiles (the missiles never fired, see Combined arms) | 50%, 51% (both held) | 38%, 65% | 10–11 min |
+| Missiles fixed | 17%, 10%, 14% | 100%, 100%, 96% | 12, 12, 11 min, carried |
+| The abstract test (9 companies on 3) | 25% | 57% | 2¾ h |
+| History, 3:1 on a prepared position | 5–15% | more | hours |
+
+- **Where the time goes now.** The ORPs are reached at 6–8 minutes, recons take 2–6, and squads deploy at 8–11 minutes, most of them because the recon was seen. The defence then dies within a minute or two of the support opening up at 100–170 m. The killers are the Bradleys' 30 mm HE bursting at the firing slot of a kneeling man, and coax at 100–130 m. No squad got to its assault: the line was empty first.
+- **Still to do for fight length.**
+  - **One go and it's over.** The test ends at the first decision. A real fight of an hour is several goes: a held attack pulls back, reorganises, brings fire onto what stopped it and goes again; a lost position is counterattacked by the defence's reserve. The war's fights already do this. In the window it comes with the units round the fight being live (slice 3).
+  - **The cannon at the slot.** A 30 mm gunner puts HE onto a kneeling man in his firing slot at 400–600 m within a few bursts. This wants checking against gunnery data.
+  - **Recon parties are seen** at 120–180 m in most squads, and their squads deploy off it.
+  - The vehicle duel still swings runs: dug-in BMPs beat the Bradleys 4–0 and 4–1 in two runs before the missile fix.
+
+**Playing in the window** (`WindowHud`). The window had only the bare player HUD: no squad, no map, and nothing after dying.
+- **On screen:**
+  - the day and hour, and how many each side has on their feet in the window;
+  - who you are (rank and name from the war), your job and your unit up to the battalion;
+  - your squad's roster (hurt, down, low on ammunition, the leader starred), its order and the way to it, and the briefing (what the squad is doing and your part in it), shared with the battle maps (`SquadPanel`);
+  - the radio (your squad wherever they are, your side within 250 m) and the kill feed.
+- **Your squad on screen.** The green marks over your squadmates asked the battle map for your squad, so in a window nobody was marked. They now ask whichever is being played (`HudOverlay.MySquad`).
+- **The map** (M).
+  - **The window:** the ground and its towns; your side's squads and where they've been sent; your squad's plan (ORP, support position, line of departure); vehicles; the enemy your side has seen in the last minute; your side's fire missions and when they land. The wheel zooms in on you (1–8×, 2× to start): the fighting is a few hundred metres of a 4 km window.
+  - **The island** (Tab): the war's ground as each side holds it, a kilometre square at a time, with contested squares ringed; each side's share of the island; your side's battalions; and the window on it. The island's picture is drawn off the main thread when the window opens, and the holdings as one small picture made again only when the war moves on (drawn square by square, 10,000 a frame, the map ran at 12 FPS).
+  - Watching (`join=0`) shows every side.
+- **Killed, you carry on as a squadmate** (the design: one grunt, no respawn). For 10 s the camera is on the one you'll be: the nearest of your squad on their feet, not riding, and not the leader while anyone else is left. 1–9 pick another.
+  - You take his place as he is: his job and kit, the rounds in his weapon and pouches, and his wounds.
+  - The man you become leaves the world marked gone, hidden and still, and is freed a few seconds later, once every brain has dropped him. (Freed at once, he stayed among other bots' threats as a freed object; and the spectator kept him as its man, so the radio read where he was every time you were dead after that: thousands of exceptions a run. The camera's man is now checked before he's read.)
+  - Taking a squad leader's place, you're a rifleman: no promotions, and the squad is led by whoever is next.
+  - With your squad gone, you carry on in the nearest squad of your side that has anyone left, rifle squads first. Replacements by sea need the war running live (slice 3).
+
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
 - The town builder doesn't know about rivers, so a stream through a town can run under its blocks. There are no quays at ports.
@@ -905,6 +948,7 @@ At 33 a side each faction has one tank, one IFV/APC and one SPAA, so the working
   - In the assault the vehicle fires on the objective, avoiding any spot our men are within 35 m of, and lifts fire when they're on it.
 - **Gunnery discipline**
   - Engagement ranges: a tank gun 2.5 km against armour, an autocannon 1.6 km. Against infantry, HE 1.5 km and MGs 900 m.
+  - **IFVs' anti-tank missiles** (2026-10-10): the Bradley's TOW-2 (to 3,750 m, about 190 m/s, about 900 mm of armour; six of its seven here, two in the launcher) and the BMP-2's 9M113M Konkurs (to 4,000 m, about 210 m/s, about 750 mm; four, one on the launcher). Wire-guided down the gunner's sight: they fly the line of sight (not climbing for the roof as a helicopter's do), the gunner holds his sight on the target until it strikes and fires nothing else meanwhile, and the vehicle halts to fire and stays halted while it flies (`Vehicle.HaltUntil`). Lose sight of the target and the missile flies on unguided. The gunner takes the missile to armour the cannon can't get through, or beyond 1.5 km; nearer lighter armour gets the 30 mm. A player in the gunner's seat locks it on the enemy vehicle under the crosshair. The IFVs had only cannon and coax: they couldn't hurt a tank, and fought each other with 30 mm at close range.
   - Priority goes to a gun laid on us that can kill us, then to men with rockets, then to anyone within 80 m.
   - No firing with a friendly near the line of fire or within 14 m of where HE lands.
   - New armour targets are called out. Idle guns scan their sector.

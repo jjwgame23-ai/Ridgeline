@@ -234,8 +234,21 @@ public partial class Player
                 if (captured && Input.IsActionJustPressed("reload")) v.Reload(seat.Turret);
                 bool isCoax = GunSel >= t.Def.Ammo.Length;
                 var w = isCoax ? t.Def.Coax! : t.Def.Ammo[GunSel];
-                bool trigger = captured && (w.Mag > 1 ? Input.IsActionPressed("fire") : Input.IsActionJustPressed("fire"));
-                if (trigger) v.Fire(seat.Turret, isCoax, eye.DistanceTo(aim));
+                bool trigger = captured && (w.Mag > 1 && !w.Guided ? Input.IsActionPressed("fire") : Input.IsActionJustPressed("fire"));
+                if (trigger && !isCoax && w.Guided)
+                {
+                    // A wire-guided missile: onto the enemy vehicle under the crosshair, from a halt, steered there as long as
+                    // it stays in sight. (Fired like a shell, it went off unguided at the elevation for a 190 m/s round.)
+                    var mark = v.Sighted(eye, lookDir, w.MinRange, w.Range);
+                    if (mark == null) Hud.Toast($"{w.Name}: put the crosshair on an enemy vehicle", 1.5f);
+                    else if (MathF.Abs(v.Speed) > 0.5f) Hud.Toast($"{w.Name}: fired from a halt", 1.5f);
+                    else if (v.Fire(seat.Turret, false, 0f, homing: mark))
+                    {
+                        v.HaltUntil = Clock.Now + v.Center.DistanceTo(mark.Center) / w.Speed + 0.5;
+                        Hud.Toast("Missile away — keep the target in sight until it hits", 2f);
+                    }
+                }
+                else if (trigger) v.Fire(seat.Turret, isCoax, eye.DistanceTo(aim));
                 break;
             }
             default:

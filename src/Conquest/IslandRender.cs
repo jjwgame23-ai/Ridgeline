@@ -379,7 +379,9 @@ public static class IslandRender
             }
         }
 
-        public void Save(string path)
+        public void Save(string path) => ToImage().SavePng(path);
+
+        public Image ToImage()
         {
             var bytes = new byte[W * H * 3];
             for (int i = 0; i < _px.Length; i++)
@@ -388,7 +390,7 @@ public static class IslandRender
                 bytes[i * 3 + 1] = (byte)(Math.Clamp(_px[i].G, 0f, 1f) * 255f + 0.5f);
                 bytes[i * 3 + 2] = (byte)(Math.Clamp(_px[i].B, 0f, 1f) * 255f + 0.5f);
             }
-            Image.CreateFromData(W, H, false, Image.Format.Rgb8, bytes).SavePng(path);
+            return Image.CreateFromData(W, H, false, Image.Format.Rgb8, bytes);
         }
     }
 }

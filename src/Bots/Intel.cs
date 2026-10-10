@@ -15,6 +15,19 @@ public static class Intel
 
     public static void Reset() { _contacts.Clear(); _last.Clear(); }
 
+    /// <summary>Where each enemy a side has seen in the last <paramref name="maxAge"/> s was last seen, and when (the map).</summary>
+    public static IEnumerable<Contact> Recent(int team, double maxAge)
+    {
+        double now = Clock.Now;
+        var seen = new HashSet<ICombatant>();
+        for (int i = _contacts.Count - 1; i >= 0; i--)
+        {
+            var c = _contacts[i];
+            if (now - c.At > maxAge) yield break;
+            if (c.Team == team && c.Who.Alive && seen.Add(c.Who)) yield return c;
+        }
+    }
+
     public static void Report(int team, ICombatant who, Vector3 pos)
     {
         double now = Clock.Now;

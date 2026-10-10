@@ -33,6 +33,8 @@ public sealed class Projectile
     public Vehicle? Homing;       // a guided missile's target
     /// <summary>An anti-tank missile steered from its aircraft (laser, radio): it needs that aircraft to keep the target in sight.</summary>
     public Vehicle? GuidedBy;
+    /// <summary>A missile flying along the line of sight to its target, not climbing to come down on its roof (VWeapon.LineOfSight).</summary>
+    public bool LineOfSight;
     public double GuideCheckAt;
     public bool Decoyed;
     public float MaxLife = 6f;
@@ -115,7 +117,7 @@ public partial class Ballistics : Node3D
                      Rid ignore = default, bool silent = false, float intendedDist = 0f, string tag = "", bool explosive = false, float armM = 0f,
                      float pen = -1f, float vehDamage = -1f, float crater = 0.65f, float fragR = 7f, float power = 1f, bool rocket = false,
                      bool prox = false, bool whistle = false, Vehicle? shooterVehicle = null, Vehicle? homing = null, bool heavyCrack = false, uint mask = 0xFFFFFFFF,
-                     bool dropped = false, Vehicle? guidedBy = null, bool burst = false)
+                     bool dropped = false, Vehicle? guidedBy = null, bool burst = false, bool lineOfSight = false)
     {
         var p = new Projectile
         {
@@ -138,6 +140,7 @@ public partial class Ballistics : Node3D
             Whistle = whistle,
             Dropped = dropped,
             GuidedBy = guidedBy,
+            LineOfSight = lineOfSight,
             FromVehicle = shooterVehicle,
             Homing = homing,
             HeavyCrack = heavyCrack,
@@ -316,8 +319,9 @@ public partial class Ballistics : Node3D
         float speed = p.Vel.Length();
         var goal = tgt.Center + tgt.Velocity3 * (p.Pos.DistanceTo(tgt.Center) / MathF.Max(speed, 1f));
         float d = ((goal - p.Pos) with { Y = 0f }).Length();
-        // Aim above it while far off, so it comes down on it from above.
-        var aim = goal + Vector3.Up * Mathf.Clamp((d - 250f) * 0.18f, 0f, 160f);
+        // Aim above it while far off, so it comes down on it from above; a wire-guided missile flies down the gunner's
+        // line of sight to it instead.
+        var aim = p.LineOfSight ? goal : goal + Vector3.Up * Mathf.Clamp((d - 250f) * 0.18f, 0f, 160f);
         var want = (aim - p.Pos).Normalized();
         var cur = p.Vel / MathF.Max(speed, 1f);
         float maxTurn = Mathf.DegToRad(30f) * dt;
