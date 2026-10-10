@@ -40,6 +40,17 @@ public sealed class Magazines
         get { int b = 0; foreach (var r in _m) if (r > b) b = r; return b; }
     }
 
+    /// <summary>Carrying this many rounds in all: full magazines, and what's over in one more.</summary>
+    public void Hold(int rounds)
+    {
+        _m.Clear();
+        while (rounds > 0)
+        {
+            _m.Add(Math.Min(Size, rounds));
+            rounds -= Size;
+        }
+    }
+
     /// <summary>Someone else's magazines, as they are.</summary>
     public void CopyFrom(Magazines o)
     {

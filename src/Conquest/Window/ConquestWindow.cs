@@ -192,6 +192,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         Motor.Tick();
         Fires?.Tick();
         if (_diedAt > 0) WhileDead();
+        if (Live) LiveTick();
         Telemetry.Tick(this);
         if (Calibrate) Abstract();
         if (Assault) Judge();
@@ -208,11 +209,13 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
 
     Vector2 Local(float x, float z) => new(x - CX, z - CZ);
 
-    void Embody()
+    /// <summary>The fights going on: where each squad and soldier in them is, who's attacking, and where their enemy is.</summary>
+    void ReadFights()
     {
-        float edge = Map.Half - 150f;
-        // Every war unit with soldiers in it (squads, crews, headquarters sections), where it is in the window.
-        // The fights going on: where each squad and soldier in them is, who's attacking, and where their enemy is.
+        _squadAt.Clear();
+        _fighterAt.Clear();
+        _enemyAt.Clear();
+        _attacking.Clear();
         foreach (var f in War.Fights)
         {
             if (f.Over) continue;
@@ -230,6 +233,13 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
                 if (f.Attacking.Contains(mid)) _attacking.Add(mid);
             }
         }
+    }
+
+    void Embody()
+    {
+        float edge = Map.Half - 150f;
+        // Every war unit with soldiers in it (squads, crews, headquarters sections), where it is in the window.
+        ReadFights();
         var cands = new List<(Unit U, Unit M, Vector2 At, List<int> Fit)>();
         foreach (var u in War.Units)
         {
@@ -278,6 +288,12 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         else Spec.Activate(Bots.FirstOrDefault());
         Fires = new WindowFires(War, this);
         Squad.OwnFiresUntil = Fires.Until;
+        // Live (slice 3): the window has these companies from now on, and the war's fire on them comes in here.
+        if (Live)
+        {
+            foreach (int mid in movers) Hold(War.Units[mid]);
+            War.ShellHeld = Fires.Incoming;
+        }
         _points = Map.Sites.Select(s => new SiteObjective { Site = s, Map = Map, R = s.Radius }).ToArray();
         _owner = Enumerable.Repeat(-1, _points.Length).ToArray();
         if (Telemetry.PathFromArgs() is { } tp) Telemetry.Start(tp, this);
@@ -501,6 +517,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             if (crew.Count < need) { crew.AddRange(rest.Take(need - crew.Count)); rest = rest.Skip(need - crew.Count).ToList(); }
             if (crew.Count == 0) continue;
             var sq = NewSquad(side, MotorPool.CrewKind(kind.Value), u);
+            _vehicleOf[sq] = v;
             Give(sq, crewOrder ?? order);
             float a = k++ * 1.3f;
             var park = Map.Ground(new Vector3(vAt.X + MathF.Cos(a) * 14f, 0f, vAt.Y + MathF.Sin(a) * 14f));
@@ -545,6 +562,10 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         var b = new Bot { TeamId = so.Side, P = p, Role = role, Def = Roles.Primary(role), Squad = sq };
         GetParent().AddChild(b);
         b.GlobalPosition = Map.Ground(near) + Vector3.Up * 0.3f;
+        // What he has left of his basic load (the war's), in his own kit's magazines: a company that has been shooting
+        // all afternoon comes in short.
+        int load = Orbat.Load(so.Job).Ammo;
+        if (load > 0 && so.Ammo < load && b.Def.Mags > 0) b.Mags.Hold((int)(b.Def.MagSize * b.Def.Mags * Math.Max(0f, so.Ammo / (float)load)));
         if (sq.Objective is { } o) b.Aim.Yaw = Mathf.RadToDeg(MathF.Atan2(-(o.Center.X - near.X), -(o.Center.Z - near.Z)));
         sq.Join(b);
         Bots.Add(b);
@@ -734,14 +755,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             SoldierOf[p] = soldier;
             Me = War.Who(soldier);
         }
-        // He leaves the world. Others may know of him (in their threat lists, their sights), so he's marked gone first:
-        // every brain drops a man who isn't alive. Hidden, still and out of the physics, he's freed a few seconds later.
-        // (He was freed at once, and bots that had him among their threats went on reading a freed object.)
-        b.Body.Dead = true;
-        b.Visible = false;
-        b.ProcessMode = ProcessModeEnum.Disabled;
-        b.CollisionLayer = b.CollisionMask = 0;
-        GetTree().CreateTimer(5.0).Timeout += () => { if (IsInstanceValid(b)) b.QueueFree(); };
+        Retire(b);
         sq.Join(p);
         PlayerBody = p;
         PlayerSquad = sq;

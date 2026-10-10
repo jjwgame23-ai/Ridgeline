@@ -38,7 +38,7 @@ public sealed class WindowFires
         public Vector3 Target;
         public float Sigma;
         public double At;
-        public bool Planned;
+        public bool Planned, FromWar;
         public Vector3 From; // the battery, in window coordinates (far outside it): where the shells come from
     }
 
@@ -56,6 +56,24 @@ public sealed class WindowFires
 
     Vector3 Local(float x, float z) => new(x - _w.CX, 0f, z - _w.CZ);
     (float X, float Z) Island(Vector3 p) => (p.X + _w.CX, p.Z + _w.CZ);
+
+    /// <summary>
+    /// A war fire mission landing on a unit the window has (War.ShellHeld): the war chose the target, fired the rounds
+    /// (out of its tubes and allowance) and worked out where they fall; here they come down, starting now. Mortars too:
+    /// the war's mortars aren't embodied unless their unit is.
+    /// </summary>
+    public void Incoming(global::Ridgeline.Mission ms)
+    {
+        var fu = _war.Units[ms.Unit];
+        var (x, z) = Artillery.TubePos(_war, fu);
+        int tubes = Math.Max(1, Artillery.Tubes(_war, fu, out _));
+        _missions.Add(new Mission
+        {
+            Side = ms.Side, Unit = ms.Unit, Kind = ms.Kind, Target = Local(ms.X, ms.Z), Rounds = ms.Rounds, Tubes = Math.Min(tubes, ms.Rounds),
+            Sigma = ms.Sigma, At = Clock.Now, From = Local(x, z), FromWar = true,
+        });
+        if (ConquestWindow.Verbose) GD.Print($"[{Clock.Now:0}s] {_war.Sides[ms.Side].Name} {fu.Short} ({ms.Kind}) fires {ms.Rounds} rounds into the window at {ms.X - _w.CX:0},{ms.Z - _w.CZ:0} (the war's mission)");
+    }
 
     /// <summary>A planned fire on <paramref name="target"/> from <paramref name="side"/>'s nearest battery in range, landing at <paramref name="at"/> (Clock time).</summary>
     public bool Plan(int side, Vector3 target, double at)
@@ -237,9 +255,13 @@ public sealed class WindowFires
         float dive = Mathf.DegToRad(40f);
         var v0 = flat * (Speed * MathF.Cos(dive)) + Vector3.Down * (Speed * MathF.Sin(dive));
         var start = land - v0 * T + Vector3.Up * (0.5f * 9.8f * T * T);
-        bool rocket = m.Kind == VClass.Rocket;
-        string name = rocket ? (m.Side == 1 ? "220 mm rocket" : "GMLRS") : m.Side == 1 ? "152 mm HE" : "155 mm HE";
-        Ballistics.I.Fire(start, v0, Speed, 0f, null, 600f, name, explosive: true, armM: 0f, pen: 60f, vehDamage: 140f,
-            crater: 3.2f, fragR: rocket ? 55f : 50f, power: rocket ? 45f : 38f, whistle: true);
+        bool rocket = m.Kind == VClass.Rocket, mortar = m.Kind == VClass.Mortar;
+        // A battalion's mortar: 120 mm for ALPHA's and BRAVO's (M120, 2B11), 81 mm for CHARLIE's (L16). The 120 mm bomb
+        // carries about three times the 81's charge (2.2 kg of TNT against 0.7-0.9 kg).
+        bool big = m.Side != 2;
+        string name = rocket ? (m.Side == 1 ? "220 mm rocket" : "GMLRS") : mortar ? (big ? "120 mm HE" : "81 mm HE") : m.Side == 1 ? "152 mm HE" : "155 mm HE";
+        float fragR = rocket ? 55f : mortar ? (big ? 35f : 25f) : 50f, power = rocket ? 45f : mortar ? (big ? 12f : 4f) : 38f;
+        Ballistics.I.Fire(start, v0, Speed, 0f, null, 600f, name, explosive: true, armM: 0f, pen: 60f, vehDamage: mortar ? 60f : 140f,
+            crater: mortar ? 1.8f : 3.2f, fragR: fragR, power: power, whistle: true);
     }
 }

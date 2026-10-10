@@ -406,6 +406,8 @@ public static class Artillery
         if (ms.Target < 0) return;
         var t = war.Units[ms.Target];
         if (t.InFight >= 0 || t.People <= 0) return;
+        // On a unit the playable window has: the rounds come down there for real.
+        if (war.Held.Contains(t.Id)) { war.ShellHeld?.Invoke(ms); return; }
         Strike(war, t, ms, cause);
     }
 

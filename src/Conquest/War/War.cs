@@ -23,6 +23,14 @@ public sealed class War
     public Territory Ctl = null!;
     public readonly List<(double T, int Side, string Text, float X, float Z)> Events = new();
     public readonly List<Fight> Fights = new();
+    /// <summary>
+    /// Movers the playable window has (some of their squads are embodied there, ConquestWindow): the war still commands
+    /// them, plans their routes and counts their soldiers, but doesn't march them, start fights with them or resolve
+    /// fire on them. The window does that, and writes back where they are and what they've lost.
+    /// </summary>
+    public readonly HashSet<int> Held = new();
+    /// <summary>A fire mission landing on a held unit: the window brings the rounds down for real (WindowFires.Incoming).</summary>
+    public Action<Mission>? ShellHeld;
     public readonly WarIntel Intel = new();
     public readonly Random Rng;
     /// <summary>Each side's dead and evacuated wounded, all told.</summary>
@@ -292,7 +300,7 @@ public sealed class War
         bool light = MarchingHours;
         foreach (var u in Units)
         {
-            if (u.Path == null || u.InFight >= 0) continue;
+            if (u.Path == null || u.InFight >= 0 || Held.Contains(u.Id)) continue;
             // Getting out of contact isn't a march: it goes on by night, at two thirds of the day's pace (doctrine's
             // night rates), and past the day's limit. (Units used to sit where they'd been beaten off until morning,
             // and two of them 80 m apart fought every five minutes all night.)

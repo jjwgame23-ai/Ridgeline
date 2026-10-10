@@ -92,6 +92,8 @@ public static partial class WindowMode
                 Cap = a.TryGetValue("bots", out var bv) && int.TryParse(bv, out int bn) ? bn : 160,
                 PlayerJoins = assault ? a.TryGetValue("join", out var jv) && jv == "1" : !a.TryGetValue("join", out jv) || jv != "0",
                 Calibrate = a.TryGetValue("calib", out var cv) && cv != "0",
+                // The war runs on round the window (slice 3), unless it's a test that wants it still.
+                Live = !assault && !(a.TryGetValue("calib", out var cv2) && cv2 != "0") && !(a.TryGetValue("live", out var lv) && lv == "0"),
                 Assault = assault, Target = target,
                 AttackPlatoons = a.TryGetValue("attack", out var atv) && int.TryParse(atv, out int an) ? an : 2,
                 DefendPlatoons = a.TryGetValue("defend", out var dfv) && int.TryParse(dfv, out int dn) ? dn : 1,

@@ -178,6 +178,8 @@ public static class Combat
                     // doesn't march on into a fight. (Battalion headquarters used to fight 50 times a day, running into
                     // the enemy and pulling back over and over.)
                     // A supply convoy, knowing where the front runs, halts only for an enemy close ahead (1.5 km).
+                    // A unit the playable window has fights there, with its embodied soldiers: seen, but no abstract fight.
+                    if (war.Held.Contains(u.Id) || war.Held.Contains(v.Id)) continue;
                     if (seen && u.InFight < 0 && !Command.Manoeuvre(u) && Closing(u, v, d) && (!u.Hauls || d < 1500f)) Halt(war, u);
                     // Seen further off than rifles and guns reach, it's a sighting, not a fight. A fight takes one side
                     // coming on, or a first sighting inside 600 m, or the two within 200 m. Otherwise a unit pulling
@@ -1195,6 +1197,27 @@ public static class Combat
         else Resume(war, m, Standing(war, f));
         // Its soldiers and vehicles are out of this fight. (They used to stay on its roll and go on shooting from where
         // they'd been, out of reach of any reply, and twice over if the company came back.)
+        foreach (var s in mine)
+        {
+            foreach (int k in s.Fighters) f.F[k].Gone = true;
+            foreach (int k in s.Vehicles) f.V[k].Gone = true;
+            s.Fighters.Clear();
+            s.Vehicles.Clear();
+        }
+    }
+
+    /// <summary>
+    /// A company taken into the playable window (War.Held): its part in its fight is written back where it stands, as if
+    /// it held the field (its down go into the medical chain), and it leaves the fight keeping its orders. From now the
+    /// window fights it, its soldiers starting where the fight had them.
+    /// </summary>
+    public static void Hand(War war, Unit m)
+    {
+        if (m.InFight < 0) return;
+        var f = war.Fights[m.InFight];
+        var mine = f.S.Where(s => s.Mover == m.Id).ToList();
+        Settle(war, f, m, mine, true);
+        m.InFight = -1;
         foreach (var s in mine)
         {
             foreach (int k in s.Fighters) f.F[k].Gone = true;

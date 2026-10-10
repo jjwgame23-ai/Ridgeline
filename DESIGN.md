@@ -548,7 +548,7 @@ what turns abstract units into embodied squads and back, which is what calibrati
 **Slices**
 1. **The ground** (built): the window's terrain, water, roads, woods, fields and towns, read off the island.
 2. **The armies, frozen** (built): the war run headless to a chosen day, then the units nearest the window's middle embodied where they are, as squads of bots with their soldiers' names, their vehicles and their orders.
-3. **Live**: the abstract war runs on outside in real time. Units crossing the window's edge are promoted or demoted. What happens inside (casualties, ammunition, ground taken) is written back to the war's records.
+3. **Live** (built, see below): the abstract war runs on outside in real time. Units crossing the window's edge are promoted or demoted. What happens inside (casualties, ammunition, ground taken) is written back to the war's records.
 4. **The distant layer**: low-detail land and sea to the horizon, and what the war is doing out there (flashes, fires, smoke, flares, sound).
 5. **Moving the window**: rebuilt round the player as they near its edge, behind a load at first.
 
@@ -586,6 +586,41 @@ what turns abstract units into embodied squads and back, which is what calibrati
   - 164 soldiers came in (78 BRAVO, 87 CHARLIE) in 42 squads from 6 companies, with 17 vehicles. 1,368 more in the window were left abstract.
   - The rendered run played at 82 FPS; headless, 179 s of game took 121 s.
   - **The embodied fight is far bloodier than the abstract one.** 68 of the 164 were killed in 90 seconds, most by BRAVO's BMP gunners at about 220 m, and some crews died with their vehicles. The abstract fight it continues was calibrated to historical casualty rates, a few per cent an hour. Fitting the two together is the calibration this phase folds in. Bots in the open at 200 m in front of autocannons are the first suspects.
+
+**The window live** (slice 3, `WindowLive`; on by default, `live=0` freezes the war as before, and the tests keep it frozen). The war runs on round the window, a minute at a time in step with its clock, and the two hand units back and forth. The war still commands the window's units; the window fights them.
+- **Held units** (`War.Held`). A company with squads in the window is held.
+  - The war still plans for it: orders, routes, supply, sleep, and counting its soldiers.
+  - The war doesn't march it, start abstract fights with it, or resolve fire on it.
+  - Its squads in the window get the war's orders as they change. A squad in a fight finishes it first.
+  - So a company that's been beaten off is sent again, pulled back, or reinforced by its battalion as the war decides.
+  - The war's fire missions on it come in as real rounds (`WindowFires.Incoming`). This includes battalion mortars: 120 mm for ALPHA and BRAVO, 81 mm for CHARLIE.
+- **Each minute the window writes back:**
+  - the dead, at once;
+  - where each company is (the middle of its squads) and its squads' places in it;
+  - vehicles lost;
+  - a march that has arrived (within 150 m of where it was sent).
+  - The living keep their state until they leave the window, so the war's medical chain doesn't take men the window still has.
+- **Coming in.** War squads within 1.2 km of you come into the window where the war has them, whole, nearest first, up to the cap; each side's share of the cap goes by its strength there.
+  - A company in an abstract fight is handed over where the fight has its soldiers (`Combat.Hand`: its part is settled as if it held the field, and it leaves the fight keeping its orders). The fight carries on rather than restarting.
+  - Each soldier brings what he has left of his basic load, in his own kit's magazines.
+- **Going back.** A unit goes back to the war with each man's state when all its men on their feet are more than 1.7 km from you or at the window's edge, or when nobody is left on his feet.
+  - The dead are already written.
+  - The down go into the war's medical chain.
+  - The wounded go back with their blood, carrying what ammunition they have left.
+  - The unit keeps its place in its company, and the bodies of its dead stay where they fell.
+- **The bubble** is centred on you (or the man you'll carry on as, or the camera when watching). The window itself stays where it was opened; moving it is slice 5.
+- **Measured** (island 2, day 3, the BRAVO–CHARLIE fight, watched for 10 minutes):
+  - 72 units came in and 36 went back.
+  - Rocket missions from both ALPHA's and CHARLIE's batteries landed as real rounds.
+  - No exceptions; the player carrying on while units come and go works.
+- **The embodied fight is still far bloodier than the war's.** BRAVO lost 157 and CHARLIE 82 in those 10 minutes; CHARLIE's kills came at a median of 18 m.
+  - Most units that came in (56 of 72) were halted in the war's line, where the sides sit a few hundred metres apart. In the war that's a quiet front; embodied, both sides shoot whatever they see, and one side overruns the other piece by piece.
+  - With the war feeding units in, it doesn't stop. This is the calibration the window began with (the first embodied fight killed 68 of 164 in 90 seconds), and the user's playing is to say where the soldiers sell themselves short.
+- **Not done yet.**
+  - Replacements by sea: the war's replacements fill a held unit's roll, but don't walk into the window; a player whose side has nobody left in the window has no one to carry on as.
+  - What the window's soldiers see isn't reported to the war's intelligence; held units are still seen by the war's own looks.
+  - Grenades and rockets aren't written back, only rifle and machine-gun rounds.
+  - Moving the window (slice 5).
 
 **Calibration: the same fight both ways** (in progress). `calib=1` lets the war run on, abstractly, minute by minute beside the embodied fight from the same moment. Each minute the log sets the bubble's soldiers' fates side by side: how many the war's fight has killed, downed and wounded, against the embodied fight. `telemetry=` records the embodied fight as for the battle maps (`tools/telemetry.py`); `ITelemetryMatch` lets any match be recorded.
 - **The test fight** (island 2, day 3): BRAVO's 75th Motor Rifle Regiment against CHARLIE's 42nd Armoured Infantry Brigade.
