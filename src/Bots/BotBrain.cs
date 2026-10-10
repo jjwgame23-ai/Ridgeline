@@ -1875,8 +1875,9 @@ public sealed class BotBrain
         _hasWaypoint = true;
         _pausing = false;
         float gap = slot.DistanceTo(_b.FeetPos);
-        // Falling behind: sprint to catch up. Close: match the leader's pace.
-        var mode = gap > 10f || Sq?.CrossingNow == true && gap > 3f ? MoveMode.Sprint : MoveMode.Run;
+        // Falling well behind: hurry to catch up. Close: the leader's pace. (Everyone ran whatever the leader did.)
+        var leadPace = Sq?.Leader is Bot lb ? lb.Mode : MoveMode.Run;
+        var mode = gap > 25f || Sq?.CrossingNow == true && gap > 3f ? MoveMode.Sprint : gap > 8f ? (leadPace == MoveMode.Walk ? MoveMode.Run : MoveMode.Sprint) : leadPace;
         // Clear line to the slot: just go. Otherwise trail the leader along their route
         // (it's already been paid for), and only plan our own now and then.
         if (_b.CanWalkStraight(slot)) _b.MoveTo(slot, mode);
@@ -2011,14 +2012,17 @@ public sealed class BotBrain
         _waypoint = w;
         _hasWaypoint = true;
         _pausing = false;
-        // Sprint between positions; careful types jog. A squad leader on a long move jogs
-        // while the squad is strung out behind, so they can keep up.
+        // Out of contact, soldiers walk: a fighting load is carried at a walk, and a man who has run there is blown when he
+        // arrives (FM 3-21.8: movement is at a walk, rushes are for crossing fire). With a fight about, sprint between
+        // positions (careful types jog); a squad leader on a long move jogs while the squad is strung out behind, so
+        // they can keep up. (Everyone ran or sprinted everywhere outdoors: an attack crossed 600 m in two minutes.)
         bool far = w.DistanceTo(_b.FeetPos) > 15f;
         bool waitForSquad = Sq != null && Sq.Leader == _b && Sq.Alive > 1 && !InZone && SquadStrungOut();
         // Built-up ground with a fight about: no sprinting down the street; inside, walk with the gun up.
         bool hot = Now - _lastContact < 40.0 || InZone;
         if (hot && Env == EnvKind.Interior) { _b.MoveTo(w, MoveMode.Walk); return; }
         if (hot && Env == EnvKind.Urban) { _b.MoveTo(w, MoveMode.Run); return; }
+        if (!hot) { _b.MoveTo(w, MoveMode.Walk); return; }
         _b.MoveTo(w, far && _b.P.Aggression > 0.35f && !waitForSquad ? MoveMode.Sprint : MoveMode.Run);
     }
 

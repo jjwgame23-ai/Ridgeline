@@ -44,6 +44,8 @@ The report checks the island against laws measured on real landscapes, and each 
 
 **Assault test.** `<godot> --path . --headless -- mode=assault seed=2 runs=12 [attack=9] [defend=3] [arty=1]` fights the same attack on a dug-in position again and again. It writes `assault-N.txt`: losses on each side, how often the place is carried, and how long it takes, against historical marks. About 2 min for 12 runs.
 
+**Coherence.** `python tools/coherence.py run.jsonl [...]` reads a recorded fight for what a watching player would notice: when the shooting starts, the range each side fires at, how fast men move in and out of contact, and how much they stand, kneel or lie flat (under heavy fire too).
+
 **Reading a run.** `tools/telemetry.py` (class `Match`) reads the `.jsonl` file:
 - a sample of everyone every 0.5 s;
 - events: shot, hit, kill, down, boom, st (state change), drill, order, cross, reinf, radio, score.

@@ -601,7 +601,11 @@ public partial class Bot : CharacterBody3D, ICombatant
         if (Stamina < 0.05f) _winded = true;
         else if (_winded && Stamina > 0.4f) _winded = false;
         var mode = Mode == MoveMode.Sprint && (!Body.CanSprint || _winded) ? MoveMode.Run : Mode;
-        float speed = (mode switch { MoveMode.Sprint => 5.6f, MoveMode.Run => 3.4f, _ => 2.0f }) * Body.SpeedMult;
+        // Winded, he can't keep up a run either: a walk until his wind comes back.
+        if (mode == MoveMode.Run && _winded) mode = MoveMode.Walk;
+        // A walk under a fighting load is about 1.6 m/s (a road march is 4 km/h with halts, FM 3-21.18); a run 3.4, a
+        // sprint 5.6. (Walking was 2.0, faster than people walk unladen.)
+        float speed = (mode switch { MoveMode.Sprint => 5.6f, MoveMode.Run => 3.4f, _ => 1.6f }) * Body.SpeedMult;
         if (StrafeDir != null) speed = 2.2f;
         if (Crouched) speed = Mathf.Min(speed, 1.7f);
         if (Prone) speed = Mathf.Min(speed, 0.6f); // crawling
@@ -713,11 +717,22 @@ public partial class Bot : CharacterBody3D, ICombatant
         }
     }
 
+    /// <summary>
+    /// Wind. A sprint takes it in about 14 s (7 with a hole in a lung); a run under a fighting load in about two and a half
+    /// minutes. It comes back over a quarter of a minute or so standing, slower walking. (Only sprinting used to cost
+    /// anything, so a man could run under his full load for as long as the attack took: attacking squads covered 600 m
+    /// of open ground at 3.5-5 m/s, a third of the time it takes on foot.)
+    /// </summary>
     void UpdateStamina(float dt, float spd, MoveMode mode)
     {
         if (mode == MoveMode.Sprint && spd > 4f)
         {
             Stamina = MathF.Max(0f, Stamina - dt / (Body.Lung ? 7f : 14f));
+            _sinceSprint = 0f;
+        }
+        else if (mode == MoveMode.Run && spd > 2.5f)
+        {
+            Stamina = MathF.Max(0f, Stamina - dt / (Body.Lung ? 60f : 150f));
             _sinceSprint = 0f;
         }
         else

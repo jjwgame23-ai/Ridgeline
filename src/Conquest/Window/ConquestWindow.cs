@@ -301,6 +301,16 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             var hold = new AreaObjective { Center = Map.Ground(back), Radius = 25f, Threat = attackFrom, Map = Map };
             Bring(p, War.Units[p.Mover], at, Fit(p), (hold, null, true, "Defend", obj.Name), digIn: false);
         }
+        // The defended line as a place to take, so the attacking squads run the deliberate attack on it (ORP, support by
+        // fire, assault: SquadMovement), as they would on any enemy-held point. (Sent at a point on the ground, they just
+        // walked at it.)
+        var line = new Site
+        {
+            Name = $"the {obj.Name} line", Kind = "Position", Center = lineMid,
+            Radius = MathF.Max(40f, (linePts.Count - 1) * 25f + 30f),
+        };
+        foreach (var sq in Squads[1]) if (sq.Objective is AreaObjective ao) line.Points.AddRange(ao.Spots);
+        if (line.Points.Count == 0) line.Points.AddRange(linePts);
         // The attack: each platoon's squads on the start line opposite their stretch of the defence, 60 m apart.
         for (int pi = 0; pi < att.Count; pi++)
         {
@@ -310,17 +320,15 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             for (int si = 0; si < squads.Count; si++)
             {
                 var start = Map.Ground(attackFrom + new Vector3(0f, 0f, plat + (si - (squads.Count - 1) / 2f) * 60f));
-                var target = linePts.OrderBy(l => MathF.Abs(l.Z - start.Z)).First();
-                var go = new AreaObjective { Center = target, Radius = 25f, Threat = target, Map = Map };
-                Bring(squads[si], War.Units[squads[si].Mover], new Vector2(start.X, start.Z), Fit(squads[si]), (go, null, false, "Attack", obj.Name), digIn: false);
+                var go = new SiteObjective { Site = line, Map = Map, R = line.Radius };
+                Bring(squads[si], War.Units[squads[si].Mover], new Vector2(start.X, start.Z), Fit(squads[si]), (go, line, false, "Attack", line.Name), digIn: false);
             }
             var support = Map.Ground(lineMid + west * 450f + new Vector3(0f, 0f, plat));
             var sbf = new AreaObjective { Center = support, Radius = 30f, Threat = lineMid, Map = Map };
             var hq = Map.Ground(attackFrom + new Vector3(0f, 0f, plat) + west * 40f);
-            Bring(p, War.Units[p.Mover], new Vector2(hq.X, hq.Z), Fit(p), (new AreaObjective { Center = Opposite(plat), Radius = 30f, Threat = lineMid, Map = Map }, null, false, "Attack", obj.Name),
+            Bring(p, War.Units[p.Mover], new Vector2(hq.X, hq.Z), Fit(p), (new SiteObjective { Site = line, Map = Map, R = line.Radius }, line, false, "Attack", line.Name),
                   digIn: false, crewOrder: (sbf, null, true, "Support", obj.Name), parkAt: new Vector2(hq.X, hq.Z));
         }
-        Vector3 Opposite(float plat) => linePts.OrderBy(l => MathF.Abs(l.Z - (lineMid.Z + plat))).First();
         foreach (var b in Bots) _sides[b.Team].Add(b);
         int Vehicles(int t) => Motor.Slots.Count(s => s.Team == t);
         _setup = $"{att.Count} ALPHA platoons ({_sides[0].Count} soldiers, {Vehicles(0)} vehicles) against {def.Count} BRAVO platoon{(def.Count > 1 ? "s" : "")} "

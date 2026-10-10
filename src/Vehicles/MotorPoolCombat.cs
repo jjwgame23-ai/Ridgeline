@@ -220,7 +220,7 @@ public sealed partial class MotorPool
                 if (BoardingDone(s, v, inf, now, 20.0, 80.0, out int aboard))
                 {
                     if (aboard == 0) { EndCarry(s, v, inf); return false; }
-                    s.Drop = FindDismount(s.Team, obj.Center, v.GlobalPosition, v.Def.Kind == VKind.IFV ? 180f : 260f, v.Def.Kind == VKind.IFV ? 300f : 380f);
+                    s.Drop = FindDismount(s.Team, obj.Center, v.GlobalPosition, v.Def.Kind == VKind.IFV ? DismountNear : DismountNear + 50f, v.Def.Kind == VKind.IFV ? DismountFar : DismountFar + 50f);
                     s.DropFor = obj.Center;
                     s.Mech = 2;
                     s.JobSince = now;
@@ -237,7 +237,7 @@ public sealed partial class MotorPool
                 if (obj == null) { Dismount(s, v, inf, null, false); return false; }
                 if (obj.Center.DistanceTo(s.DropFor) > 150f)
                 {
-                    s.Drop = FindDismount(s.Team, obj.Center, v.GlobalPosition, v.Def.Kind == VKind.IFV ? 180f : 260f, v.Def.Kind == VKind.IFV ? 300f : 380f);
+                    s.Drop = FindDismount(s.Team, obj.Center, v.GlobalPosition, v.Def.Kind == VKind.IFV ? DismountNear : DismountNear + 50f, v.Def.Kind == VKind.IFV ? DismountFar : DismountFar + 50f);
                     s.DropFor = obj.Center;
                 }
                 v.Goal = s.Drop;
@@ -289,6 +289,15 @@ public sealed partial class MotorPool
         v.Boarding = false;
         s.Mech = 3;
     }
+
+    /// <summary>
+    /// How far short of the objective the squad gets out: outside the reach of the defenders' rifles and machine guns
+    /// aimed at men (300-500 m), so it fights forward on foot under its vehicle's fire, as doctrine has a mechanised
+    /// platoon do (FM 3-21.71). An APC, thinner skinned, stops 50 m further out. (It was 180-300 m, 260-380 for an APC,
+    /// set for compact battle-map fights: in an attack on a dug-in platoon the Bradleys carried their infantry to 150 m
+    /// of the position, and the fight was a five-minute brawl at close range.)
+    /// </summary>
+    const float DismountNear = 350f, DismountFar = 500f;
 
     /// <summary>
     /// A dismount point: this far short of the objective, on the side we're coming from,

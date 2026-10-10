@@ -647,6 +647,27 @@ what turns abstract units into embodied squads and back, which is what calibrati
 
   Each needs several runs per setting, at 5–10 minutes each.
 
+**The doctrine pass** (in progress). The battle engine was built for 30–60 minute battle-map matches. Calibrating it against the war is also a check that its soldiers sell as real soldiers to someone watching in real time. `tools/coherence.py run.jsonl` reads a recorded fight for what a watching player would notice:
+- when the first shot and kill come;
+- the range each side fires at;
+- how fast men move in and out of contact;
+- how much of the time they're up, on a knee or flat, overall and under heavy fire.
+
+Each change is judged on three runs of the embodied assault test.
+- **Round D1.**
+  - **Dismounting** 350–500 m short of the objective (APCs 50 m further), outside the defenders' small-arms reach, as doctrine has a mechanised platoon fight forward on foot (FM 3-21.71). It was 180–300 m. In the assault test the infantry walked anyway, so it changed nothing there: three runs held at half in 5–6 minutes, attackers 50–54%, defenders 65–81%.
+  - What it showed: attackers covered the ground at a median 3.5 m/s out of contact (sprinting to far waypoints, jogging otherwise), and running never tired them.
+- **Round D1b.**
+  - **Pace.** Out of contact, soldiers walk (FM 3-21.8: rushes are for crossing fire). The walk under a fighting load is 1.6 m/s, not 2.0 (a road march is 4 km/h with halts, FM 3-21.18). Men keep to the leader's pace, and hurry only to catch up.
+  - **Wind.** A run under the load takes a man's wind in about two and a half minutes, a sprint in 14 s; winded, he walks.
+  - **The test's attack** goes at the defended line as an enemy-held place, so the squads run the deliberate attack: an ORP out of sight 290–340 m out, support by fire, the assault.
+  - Three runs: carried in 8, 9 and 8 minutes; attackers lost 13%, 17% and 7% (history: 5–15%); defenders lost everyone, most of them to the Bradleys' 30 mm HE from their support positions. Out of contact men moved at a median 2.0–3.1 m/s.
+  - On a 33-a-side Valley battle: kills about the same (64 in 6 minutes against 56), moving out of contact 2.9 m/s against 3.4.
+- **Next: the defence.**
+  - For six minutes the defenders stayed out of contact while the attack came up out of their sight, and their positions saw only 110–170 m of the approach. They were placed by geometry at the town's edge. Doctrine sites fighting positions for observation and fields of fire (FM 3-21.8).
+  - They didn't stand to or return fire when the Bradleys' fire fell on them, and fired only 144–285 rounds a fight.
+  - The fight on the line lasted a minute or two.
+
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
 - The town builder doesn't know about rivers, so a stream through a town can run under its blocks. There are no quays at ports.
