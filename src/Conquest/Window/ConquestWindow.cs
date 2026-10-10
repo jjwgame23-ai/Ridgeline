@@ -333,7 +333,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         int Vehicles(int t) => Motor.Slots.Count(s => s.Team == t);
         _setup = $"{att.Count} ALPHA platoons ({_sides[0].Count} soldiers, {Vehicles(0)} vehicles) against {def.Count} BRAVO platoon{(def.Count > 1 ? "s" : "")} "
                  + $"dug in ({_sides[1].Count} soldiers, {Vehicles(1)} vehicles, {Dug} fighting positions)";
-        Log($"--- EMBODIED ASSAULT on {obj.Name}: {_setup}; start line 800 m out ---");
+        Log($"--- EMBODIED ASSAULT on {obj.Name}: {_setup}; start line 800 m out; the fighting positions see {100.0 * FieldSeen / Math.Max(1, FieldProbes):0}% of the ground toward the attack at 100-450 m ---");
         foreach (var p in att.Concat(def)) Log($"  {War.Sides[p.Side].Name} {p.Name}");
         if (PlayerJoins) JoinPlayer();
         else Spec.Activate(Bots.FirstOrDefault());
@@ -480,6 +480,41 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         facing = facing.Normalized();
         var right = facing.Cross(Vector3.Up);
         int walls = (men + 1) / 2;
+        // Sited for its field of fire: of the places within 30 m to either side and 20 m back (or 10 forward) of where the
+        // squad was, the one whose positions see the most of the ground toward the enemy. (Put down where the squad
+        // happened to be, a line at a town's edge saw 110-170 m of the approach, and the attack came up unseen.)
+        var space = Map.GetWorld3D().DirectSpaceState;
+        int Field(Vector3 centre)
+        {
+            int seen = 0;
+            for (int w = 0; w < walls; w++)
+            {
+                var at = Map.Ground(centre + right * ((w - (walls - 1) / 2f) * 4f));
+                var eye = at + Vector3.Up * 1.4f;
+                foreach (float ang in FieldAngles)
+                foreach (float r in FieldRanges)
+                {
+                    var dir = facing.Rotated(Vector3.Up, Mathf.DegToRad(ang));
+                    var p = at + dir * r;
+                    p.Y = Map.HeightAt(p.X, p.Z) + 0.9f; // a man on a knee out there
+                    if (space.IntersectRay(PhysicsRayQueryParameters3D.Create(eye, p, Layers.World | Layers.Trees)).Count == 0) seen++;
+                }
+            }
+            return seen;
+        }
+        var best = c;
+        int bestSeen = Field(c);
+        for (float lat = -30f; lat <= 30f; lat += 10f)
+        for (float dep = -20f; dep <= 10f; dep += 10f)
+        {
+            if (lat == 0f && dep == 0f) continue;
+            var cand = Map.Ground(c + right * lat + facing * dep);
+            int seen = Field(cand);
+            if (seen > bestSeen) { bestSeen = seen; best = cand; }
+        }
+        c = best;
+        FieldSeen += bestSeen;
+        FieldProbes += walls * FieldAngles.Length * FieldRanges.Length;
         var spots = new List<Vector3>();
         for (int w = 0; w < walls; w++)
         {
@@ -492,8 +527,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         return spots;
     }
 
-    /// <summary>Fighting positions built for dug-in squads.</summary>
-    public int Dug;
+    /// <summary>Fighting positions built for dug-in squads, and of the ground looked at from them toward the enemy, how much they see.</summary>
+    public int Dug, FieldSeen, FieldProbes;
+    static readonly float[] FieldAngles = { -30f, -15f, 0f, 15f, 30f }, FieldRanges = { 100f, 200f, 300f, 450f };
 
     /// <summary>The nearest enemy unit the war's side knows of within 3 km, in window coordinates.</summary>
     Vector3? Threat(Unit m)

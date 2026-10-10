@@ -663,10 +663,14 @@ Each change is judged on three runs of the embodied assault test.
   - **The test's attack** goes at the defended line as an enemy-held place, so the squads run the deliberate attack: an ORP out of sight 290–340 m out, support by fire, the assault.
   - Three runs: carried in 8, 9 and 8 minutes; attackers lost 13%, 17% and 7% (history: 5–15%); defenders lost everyone, most of them to the Bradleys' 30 mm HE from their support positions. Out of contact men moved at a median 2.0–3.1 m/s.
   - On a 33-a-side Valley battle: kills about the same (64 in 6 minutes against 56), moving out of contact 2.9 m/s against 3.4.
-- **Next: the defence.**
-  - For six minutes the defenders stayed out of contact while the attack came up out of their sight, and their positions saw only 110–170 m of the approach. They were placed by geometry at the town's edge. Doctrine sites fighting positions for observation and fields of fire (FM 3-21.8).
-  - They didn't stand to or return fire when the Bradleys' fire fell on them, and fired only 144–285 rounds a fight.
-  - The fight on the line lasted a minute or two.
+- **Round D2: sited for fields of fire.** A dug-in squad's positions go where they see the most of the ground toward the enemy (FM 3-21.8): of the places within 30 m either side and 20 m back (or 10 forward) of where the squad was, the one whose positions, from 1.4 m up, see the most of a kneeling man at 100–450 m across a 60° front. At Froltosa's edge, among woods and folds, they see 28% of it.
+  - Four runs: carried in about 9, 9, 8 and 6 minutes.
+  - Attackers lost about a third, 19%, 7% and 6%, mostly to the defenders' grenade launchers and rifles; the defenders lost everyone.
+  - The defence now opens fire as the attack comes up: in one run at a median 442 m.
+- **Still to do.**
+  - **The defence fires little,** 60–400 rounds a fight. The attack comes up mostly out of its sight: its ORPs see none of the line, and its support positions see the line from 110–170 m.
+  - **The fight is minutes long.** The deliberate attack's timings were set for battle-map matches: 8–30 s at the ORP; then the assault goes when support is set (at most 75–90 s), or once support has been firing for 20 s in contact.
+  - **No mortars or artillery** on either side in the embodied test yet.
 
 **Not done in the ground yet**
 - Towns are capped at 700 m across; a town of 9,300 is really about 1.5 km. Big towns will need building interiors only near the player, with shells beyond.
