@@ -1182,6 +1182,74 @@ Two tools read it (Python 3 with numpy and Pillow):
   - bounds and rushes;
   - fight length and closing.
 
+### Checking behaviour against a rulebook (built, 2026-10-11)
+
+Watching a 99-bot match to judge whether its soldiers act properly doesn't work. Nobody can watch everyone, and someone looking for faults reads right things as wrong; studies of experts judging simulated soldiers measured exactly that bias. So the rules are written down first, each with its source, and a program checks every bot against them (method and sources: `BOT-VERIFICATION.md`).
+
+- **The rulebook** (`tools/rules.toml`): 16 rules, each with a statement, a source, a threshold and the telemetry it needs.
+  - "Never" rules fail the run:
+    - friendly fire;
+    - one war soldier in the world twice;
+    - spawning inside something solid, under the ground or in deep water;
+    - a man handed back to the war wounded or dead coming back healed or alive.
+  - Norms are rates per 10 bot-minutes in contact, since doctrine is seldom kept in pure form:
+    - upright under heavy fire with nothing hard between him and his threat;
+    - long upright runs in the enemy's view (the 3–5 s rush);
+    - slow to return fire;
+    - a first round faster than a person can manage;
+    - bunched in contact;
+    - idle in contact;
+    - cut off from the squad;
+    - armour ahead of its infantry;
+    - too many moving at once;
+    - staying in sight of armour he can't hurt;
+    - aiming past the weapon's reach;
+    - spawning on top of the enemy.
+  - A norm gets a band (the most acceptable) only once a baseline of runs says what's normal.
+  - The rules judge bots: the player counts as someone's squadmate but isn't flagged himself.
+- **The checker** (`tools/doctrine_check.py run.jsonl`) prints, for each rule:
+  - PASS or FAIL, or the rate, with the worst moments: the time to look at in the replay and the bot's own reason at the time;
+  - "not checkable" for an older recording without the fields a rule needs.
+  It also prints patterns that aren't judged, to set beside real data:
+  - rounds per hit by weapon;
+  - the range of aimed fire;
+  - posture all the time and under heavy fire;
+  - how often a standing man goes to ground within 3 s of a round passing, by how close it came.
+  The exit code is 1 if a "never" rule failed. A 6-minute match takes a few seconds.
+- **Its tests** (`tools/test_doctrine_check.py`): every rule on made-up recordings, one it must flag and one it mustn't. They also check that every rule has a source and a test. (The first version flagged a man "upright under heavy fire for 58 s": he'd gone down in the first second and been revived a minute later, and his episode was never closed.)
+- **What telemetry records for it** (`Telemetry.cs`). Each sample row now also carries:
+  - his pace (walk, run, sprint, crawl);
+  - his fire team, and whether he leads;
+  - what his squad is doing (a drill, a step of the attack, its march order);
+  - how many enemies have him in sight by their own senses, and how many of those look out of armour;
+  - whether something hard stands between him and his threat (one ray);
+  - the war soldier he is.
+  Vehicle rows carry the crew's squad and the squad it works with. New events:
+  - `crack`: a round passing within a few metres, with the distance;
+  - `spot`: the moment a bot picks someone out, and with what;
+  - `spawn`: where each person first appears, whether inside something solid or under water, and the nearest enemy;
+  - `promote` and `release` for a Conquest window's handover.
+  None of it changes the game. The squad's leader and fire teams are read without the side effects their getters have (`Squad.LeaderQuiet`, `TeamQuiet`).
+- **Fixes in telemetry.**
+  - People with the same callsign in the world at once are named "#2", "#3". (Conquest's rank-and-surname callsigns repeat: 21 were shared among 193 men in one window, and every tool merged namesakes into one man.)
+  - A window that moves writes `-2`, `-3` files. (It reopened the same path and wiped its own recording.)
+- **First results** (Valley, 33 a side, 6 minutes, 98 bot-minutes in contact):
+  - from picking a man out to the first round at him: a median 5.3 s, the fastest tenth 0.8 s;
+  - a squad under effective fire took a median 5.1 s to fire back, with 12 cases of 20–32 s while someone in it could see the shooter;
+  - 88 long upright runs in the enemy's view (flanking teams for 20–25 s);
+  - 11 men upright under heavy fire for 5–13 s;
+  - 9 times most of a squad was moving at once in contact;
+  - nobody breached a "never" rule.
+  - Patterns:
+    - M4 9.4 rounds a hit;
+    - standing 83% of the time, and 40% under heavy fire;
+    - a standing man goes to ground within 3 s of a round passing 49% of the time within 1 m and 37% at 4–6 m. In field experiments suppression falls off linearly with miss distance (DTIC AD0519874); here it barely does.
+- **First results, Conquest window** (island 2, day 3, 3 minutes):
+  - **R13 failed: soldiers are cloned when units come in.** `ConquestWindow.Bring` borrows infantry to make up a vehicle's crew, but never takes them off the infantry list, so they crew the next vehicle too and fight on foot as well. One lieutenant colonel was nine people at once.
+  - 11 crewmen came in inside their own vehicle's hull: they're put within 3 m of its centre.
+  - Vehicle gunners fired 0.2–0.7 s after picking a man out at 300–500 m through the gun sight.
+  - A BMP "overwatching the transport truck", working with no infantry, came within 151 m of the enemy.
+
 ### What the telemetry turned up (fixed)
 
 - **Dithering.**

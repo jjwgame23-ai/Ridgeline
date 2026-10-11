@@ -1,0 +1,225 @@
+# The rulebook: what "proper behaviour" means, written down before anyone watches a match.
+# tools/doctrine_check.py reads it and checks every bot, every half-second sample of a telemetry recording, against it.
+# See BOT-VERIFICATION.md for where the method comes from.
+#
+# Each rule:
+#   id, name      how the checker reports it
+#   kind          "never": any occurrence fails the run (data integrity, safety).
+#                 "norm":  doctrine is a norm, seldom kept in pure form (NATO HFM-143), so it's a rate per 10 bot-minutes
+#                          in contact; with a band set, a rate above it is reported OUT OF BAND.
+#   statement     the rule in plain words
+#   source        where it comes from. A rule without a source is an opinion: give it one or leave it out.
+#   check         the checker's function that tests it
+#   min_seconds   how long a breach must last to count (half-second sampling makes shorter ones noise)
+#   band          (norms, optional) the most episodes per 10 bot-minutes in contact that's acceptable. Unset until a
+#                 baseline of runs says what's normal; set it from data, not from a feeling.
+#   needs         telemetry fields the check relies on (recordings from before 2026-10-11 lack some)
+#   params        the check's thresholds. They're first estimates: change them here, never in the code.
+
+# ------------------------------------------------------------------ the individual soldier
+
+[[rule]]
+id = "R01"
+name = "upright under heavy fire"
+kind = "norm"
+statement = "Nobody stays on his feet outdoors under heavy fire, with nothing hard between him and his threat, for more than a few seconds."
+source = "ATP 3-21.8 / FM 3-21.8 individual movement techniques: exposure to fire no longer than a 3-5 s rush"
+check = "upright_under_fire"
+min_seconds = 5.0
+needs = ["supp", "stance", "cover"]
+[rule.params]
+supp = 0.5          # suppression at or above which fire counts as heavy
+
+[[rule]]
+id = "R02"
+name = "upright run in the enemy's view"
+kind = "norm"
+statement = "Moving in an enemy's sight is done in short rushes or by crawling, not long upright runs."
+source = "ATP 3-21.8 individual movement techniques: the 3-5 s rush"
+check = "upright_run_in_view"
+min_seconds = 5.0
+needs = ["gait", "stance", "seenby"]
+[rule.params]
+speed = 1.2         # m/s: faster than this is moving, not shuffling
+
+[[rule]]
+id = "R03"
+name = "slow to return fire"
+kind = "norm"
+statement = "A squad that comes under effective fire, and can see who's firing, returns fire within seconds."
+source = "React to contact battle drill (its training and evaluation outline): return fire immediately"
+check = "return_fire"
+min_seconds = 0.0
+needs = ["crack", "seen"]
+[rule.params]
+crack_m = 3.0       # a round this close to a squad member (or a hit) is effective fire
+within = 10.0       # s: no round back from anyone in the squad by then is a breach
+
+[[rule]]
+id = "R04"
+name = "first round faster than a person"
+kind = "norm"
+statement = "From picking a man out to the first round at him takes a person time: raise the weapon, find him in the sights, fire."
+source = "US Army time-to-first-round studies (DTIC AD0713552): the interval from a target appearing to the first round. The 0.8 s floor is provisional until that report's numbers are taken in."
+check = "time_to_first_round"
+min_seconds = 0.0
+needs = ["spot"]
+[rule.params]
+floor = 0.8         # s: provisional
+within = 20.0       # s: a first round later than this isn't a response to the sighting
+
+# ------------------------------------------------------------------ the squad
+
+[[rule]]
+id = "R05"
+name = "bunched in contact"
+kind = "norm"
+statement = "Men in contact outdoors keep apart, so one burst or grenade can't find two."
+source = "ATP 3-21.8 formations and dispersion"
+check = "bunched"
+min_seconds = 5.0
+needs = ["supp", "seen"]
+[rule.params]
+metres = 2.0
+
+[[rule]]
+id = "R06"
+name = "idle in contact"
+kind = "norm"
+statement = "A man in a fight is firing, moving, or down behind something: not standing still and silent."
+source = "Battle drills (react to contact, the squad attack): every man has a task under fire"
+check = "idle_in_contact"
+min_seconds = 30.0
+needs = ["supp", "seen", "stance"]
+
+[[rule]]
+id = "R07"
+name = "cut off from his squad"
+kind = "norm"
+statement = "A squad member isn't left far from every squadmate for long."
+source = "Squad cohesion (ATP 3-21.8 movement formations); tools/behavior.py measures the same at 60 m"
+check = "cut_off"
+min_seconds = 60.0
+needs = []
+[rule.params]
+metres = 80.0
+
+[[rule]]
+id = "R08"
+name = "armour ahead of its infantry"
+kind = "norm"
+statement = "Armour supports its infantry from behind or beside them in close country, not well ahead of them near the enemy."
+source = "ATP 3-21.71 (mechanised infantry platoon and squad): the Bradley supports the dismounts' assault"
+check = "armour_ahead"
+min_seconds = 10.0
+needs = []
+[rule.params]
+enemy_m = 500.0     # only when an enemy is this close to the vehicle
+ahead_m = 150.0     # the vehicle this much nearer the enemy than any of its side's infantry within 800 m
+kinds = ["IFV", "APC", "MBT", "MGS"]
+
+[[rule]]
+id = "R09"
+name = "too many moving at once"
+kind = "norm"
+statement = "In a fight one fire team moves while the other covers it: most of the squad isn't on the move at once, outside the assault itself."
+source = "ATP 3-21.8 bounding overwatch and fire and movement"
+check = "bounding"
+min_seconds = 6.0
+needs = ["doing", "seenby", "supp"]
+[rule.params]
+share = 0.67        # more than this share of the squad's men moving at once is a breach
+speed = 1.0
+exempt = ["Assault", "AssaultLine", "DangerCrossing"]
+
+[[rule]]
+id = "R10"
+name = "in sight of armour he can't hurt"
+kind = "norm"
+statement = "A man without an anti-armour weapon, in sight of enemy armour, gets out of its sight."
+source = "Infantry against armour (the design's 2026-10-11 rule; ATP 3-21.8 on armoured threats)"
+check = "seen_by_armour"
+min_seconds = 10.0
+needs = ["seenby_armour"]
+[rule.params]
+can_hurt = ["LAT", "HAT"]
+
+# ------------------------------------------------------------------ fire
+
+[[rule]]
+id = "R11"
+name = "aimed beyond the weapon's reach"
+kind = "norm"
+statement = "Rounds aren't aimed past the weapon's maximum effective range."
+source = "Weapon manuals: M4 about 500 m on a point target and 600 m on an area; M249 about 800 m on an area; a 7.62 mm marksman's rifle about 800 m"
+check = "beyond_range"
+min_seconds = 0.0
+needs = []
+[rule.params]
+ranges = { "M4" = 600.0, "M249" = 800.0, "SR-25" = 800.0 }
+
+[[rule]]
+id = "R12"
+name = "friendly fire"
+kind = "never"
+statement = "Nobody hits his own side with aimed fire."
+source = "Basic fire discipline"
+check = "friendly_fire"
+min_seconds = 0.0
+needs = []
+
+# ------------------------------------------------------------------ the world and the handover
+
+[[rule]]
+id = "R13"
+name = "one body per soldier"
+kind = "never"
+statement = "Every war soldier is in the world at most once."
+source = "Data integrity (REVIEW.md: crews borrowed from the infantry were spawned twice)"
+check = "one_body"
+min_seconds = 0.0
+needs = ["sid"]
+
+[[rule]]
+id = "R14"
+name = "spawned somewhere impossible"
+kind = "never"
+statement = "Nobody comes into the world inside the ground or a building, under the ground, or in water too deep to wade. (Inside a vehicle's hull is reported, not failed: crews are put beside their vehicle to board it.)"
+source = "Data integrity; 1.2 m is the window's wading limit for a man with kit"
+check = "spawn_sane"
+min_seconds = 0.0
+needs = ["spawn"]
+[rule.params]
+wade_m = 1.2
+buried_m = 0.5
+
+[[rule]]
+id = "R15"
+name = "spawned on top of the enemy"
+kind = "norm"
+statement = "Nobody comes into the world within a few tens of metres of an enemy."
+source = "Handover: a unit promoted where the war has it shouldn't land among the enemy (REVIEW.md 2.2)"
+check = "spawn_near_enemy"
+min_seconds = 0.0
+needs = ["spawn"]
+[rule.params]
+metres = 50.0
+
+[[rule]]
+id = "R16"
+name = "healed or raised by the handover"
+kind = "never"
+statement = "A man handed back to the war wounded or dead doesn't come back healed or alive."
+source = "Handover (REVIEW.md 2.2: Spawn ignores the war's wounds)"
+check = "handover_keeps_state"
+min_seconds = 0.0
+needs = ["release", "spawn", "sid"]
+
+# ------------------------------------------------------------------ patterns (reported, not judged)
+# These aren't pass or fail: they're what a run looks like, to set beside real data (BOT-VERIFICATION.md, layer 3).
+# - rounds per hit by weapon
+# - the range aimed fire is at
+# - posture all the time, and under heavy fire
+# - going to ground within 3 s of a round passing, by how close it came (field experiments: suppression falls off
+#   linearly with miss distance, DTIC AD0519874)
+# - time from picking a man out to the first round at him

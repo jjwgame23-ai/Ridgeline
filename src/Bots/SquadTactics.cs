@@ -52,6 +52,9 @@ public sealed partial class Squad
         return _team.TryGetValue(c, out var t) ? t : -1;
     }
 
+    /// <summary>The team a man was last dealt into, without dealing again (for telemetry, which mustn't change the game).</summary>
+    public int TeamQuiet(ICombatant c) => _team.TryGetValue(c, out var t) ? t : -1;
+
     public static string TeamName(int t) => t == 0 ? "Alpha" : t == 1 ? "Bravo" : "HQ";
 
     /// <summary>

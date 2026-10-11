@@ -12,9 +12,12 @@ namespace Ridgeline;
 /// - The first line is the map: terrain heights, buildings, trees, the points and the bases, so a plot
 ///   can draw the ground under it; and the conditions (start hour, weather, clock speed, moon, visibility).
 /// - Twice a second, everyone: where they are, what they're doing (state, stance, target, suppression,
-///   health, ammo) and every vehicle and drone.
-/// - As they happen: every shot (from, towards, at whom, how), hit, casualty, explosion, change of
-///   state (with the reason), squad drill and capture.
+///   health, ammo, pace, fire team, whether he leads, what his squad is doing, how many enemies have him in sight and
+///   whether there's cover between him and his threat, the war soldier he is) and every vehicle and drone.
+/// - As they happen: every shot (from, towards, at whom, how), near miss, hit, casualty, explosion, change of
+///   state (with the reason), sighting, squad drill and capture; each person's first appearance; a Conquest window's
+///   units coming in and going back.
+/// These are what tools/doctrine_check.py checks against its rulebook (tools/rules.toml).
 /// Nothing here changes the game; with no telemetry= argument none of it runs.
 /// </summary>
 /// <summary>What telemetry reads of the match it records (TerritoryMode, or a Conquest window).</summary>
@@ -28,6 +31,8 @@ public interface ITelemetryMatch
     int[] Tickets { get; }
     bool[] Out { get; }
     float[] HQHold { get; }
+    /// <summary>The war soldier a person is (a Conquest window), or -1.</summary>
+    int SoldierId(ICombatant c) => -1;
 }
 
 public static class Telemetry
@@ -45,6 +50,34 @@ public static class Telemetry
     static string S(string s) => System.Text.Json.JsonSerializer.Serialize(s);
     static string P(Vector3 p) => $"[{F(p.X)},{F(p.Y)},{F(p.Z)}]";
 
+    static ITelemetryMatch? _match;
+    static readonly Dictionary<ICombatant, string> _label = new(ReferenceEqualityComparer.Instance);
+    static readonly Dictionary<string, ICombatant> _holder = new();
+    static readonly Dictionary<string, int> _starts = new();
+    static readonly Dictionary<ICombatant, int> _seenBy = new(ReferenceEqualityComparer.Instance), _seenByArmour = new(ReferenceEqualityComparer.Instance);
+    static readonly Dictionary<ICombatant, ICombatant> _watcher = new(ReferenceEqualityComparer.Instance);
+    static readonly Dictionary<Vehicle, Squad> _crewOf = new();
+    static readonly HashSet<ICombatant> _announced = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// The name a person goes by in the recording: his callsign, or "callsign #2" while someone else in the world goes by
+    /// it, so no two people in the world at once share one. A callsign whose holder has died passes to whoever takes it
+    /// up next (a battle map's man coming back is the same name, as before). (Conquest callsigns are rank and surname, and
+    /// they repeat: 21 were shared among 193 men in one window, and every tool that reads a recording merged the
+    /// namesakes into one man.)
+    /// </summary>
+    public static string Label(ICombatant c)
+    {
+        if (_label.TryGetValue(c, out var l)) return l;
+        l = c.Callsign;
+        for (int n = 2; _holder.TryGetValue(l, out var h) && h != c && !h.Dead && Combatants.Contains(h); n++) l = $"{c.Callsign} #{n}";
+        _holder[l] = c;
+        _label[c] = l;
+        return l;
+    }
+
+    static string LabelOr(ICombatant? c) => c == null ? "" : Label(c);
+
     public static string? PathFromArgs()
     {
         foreach (var a in OS.GetCmdlineUserArgs())
@@ -61,8 +94,20 @@ public static class Telemetry
             catch (Exception e) { GD.PrintErr($"telemetry: can't make {path}: {e.Message}"); return; }
             path = System.IO.Path.Combine(path, $"{m.Map.Spec.Id}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.jsonl");
         }
+        // A Conquest window built again round the player (a scene reload) starts telemetry again: each build gets its own
+        // file, -2, -3... (The same path was opened afresh each time, so a window that moved wiped its own recording.)
+        if (_starts.TryGetValue(path, out int built))
+        {
+            _starts[path] = built + 1;
+            path = System.IO.Path.ChangeExtension(path, null) + $"-{built + 1}" + System.IO.Path.GetExtension(path);
+        }
+        else _starts[path] = 1;
         try { _w = new StreamWriter(path, false, new UTF8Encoding(false), 1 << 16); }
         catch (Exception e) { GD.PrintErr($"telemetry: can't write {path}: {e.Message}"); return; }
+        _match = m;
+        _label.Clear();
+        _holder.Clear();
+        _announced.Clear();
         _nextSample = 0;
         _nextScore = 0;
         Combatants.Killed += OnKilled;
@@ -83,6 +128,7 @@ public static class Telemetry
         _w.Flush();
         _w.Dispose();
         _w = null;
+        _match = null;
     }
 
     static void Line(string s)
@@ -174,6 +220,11 @@ public static class Telemetry
     {
         if (_w == null || Clock.Now < _nextSample) return;
         _nextSample = Clock.Now + Every;
+        Watchers();
+        _crewOf.Clear();
+        foreach (var sq in m.Squads.SelectMany(l => l))
+            if (sq.Vehicle is { } cv && GodotObject.IsInstanceValid(cv)) _crewOf[cv] = sq;
+        PhysicsDirectSpaceState3D? space = null;
         _sb.Clear();
         _sb.Append("{\"k\":\"s\",\"t\":").Append(T).Append(",\"b\":[");
         bool first = true;
@@ -181,35 +232,55 @@ public static class Telemetry
         {
             if (c.Dead) continue;
             var p = c.FeetPos;
-            string state = "", stance = "S", target = "", squad = "", note = "";
-            int seen = 0, ammo = 100;
+            space ??= (c as Node3D)?.GetWorld3D()?.DirectSpaceState;
+            string state = "", stance = "S", target = "", squad = "", note = "", gait = "still", team = "", doing = "";
+            int seen = 0, ammo = 100, leads = 0;
             float supp = 0f;
+            Squad? sq = null;
             if (c is Bot b)
             {
                 state = b.Brain.State.ToString();
                 stance = b.Prone ? "P" : b.Crouched ? "C" : "S";
-                target = b.Brain.Target?.Who.Callsign ?? "";
+                target = b.Brain.Target is { } tt ? Label(tt.Who) : "";
                 seen = b.Brain.Target is { Visible: true } ? 1 : 0;
                 supp = b.Suppression;
-                squad = b.Squad?.Name ?? "";
+                sq = b.Squad;
                 ammo = (int)(b.AmmoLevel * 100f);
                 note = b.Brain.Note;
+                if (b.Moving) gait = b.Prone ? "crawl" : b.Gait.ToString().ToLowerInvariant();
             }
             else if (c is Player pl)
             {
                 state = "Player";
                 stance = pl.Stance == Player.StanceKind.Prone ? "P" : pl.Stance == Player.StanceKind.Crouch ? "C" : "S";
                 supp = pl.Suppression;
-                squad = m.PlayerSquad?.Name ?? "";
+                sq = m.PlayerSquad;
                 ammo = (int)(pl.AmmoLevel * 100f);
+                if (pl.Moving) gait = pl.Stance == Player.StanceKind.Prone ? "crawl" : pl.Sprinting ? "sprint" : "move";
+            }
+            if (sq != null)
+            {
+                squad = sq.Name;
+                int ft = sq.TeamQuiet(c);
+                team = ft == 0 ? "A" : ft == 1 ? "B" : "";
+                leads = sq.LeaderQuiet == c ? 1 : 0;
+                doing = Doing(sq);
             }
             _sb.Append(first ? "" : ",").Append('[')
-               .Append(S(c.Callsign)).Append(',').Append(c.Team).Append(',').Append(S(squad)).Append(',').Append(S(Roles.Short(c.Role))).Append(',')
+               .Append(S(Label(c))).Append(',').Append(c.Team).Append(',').Append(S(squad)).Append(',').Append(S(Roles.Short(c.Role))).Append(',')
                .Append(F(p.X)).Append(',').Append(F(p.Z)).Append(',').Append(F(p.Y)).Append(',')
                .Append(S(state)).Append(',').Append(S(stance)).Append(',').Append(c.Downed ? 1 : 0).Append(',')
                .Append(c.Ride != null ? 1 : 0).Append(',').Append(S(target)).Append(',').Append(seen).Append(',')
-               .Append(F2(supp)).Append(',').Append((int)c.Hp).Append(',').Append(ammo).Append(',').Append(S(note)).Append(']');
+               .Append(F2(supp)).Append(',').Append((int)c.Hp).Append(',').Append(ammo).Append(',').Append(S(note))
+               // 17 pace (still, walk, run, sprint, crawl, move), 18 fire team (A, B), 19 leads his squad, 20 what his squad is
+               // doing (a drill, a step of the attack, or its march order), 21 enemies who have him in sight, 22 of them from
+               // armour, 23 cover between him and his threat (1, 0; -1 no threat), 24 the war soldier he is (-1 none).
+               .Append(',').Append(S(gait)).Append(',').Append(S(team)).Append(',').Append(leads).Append(',').Append(S(doing))
+               .Append(',').Append(_seenBy.GetValueOrDefault(c)).Append(',').Append(_seenByArmour.GetValueOrDefault(c))
+               .Append(',').Append(c.Downed || c.Ride != null || space == null ? -1 : CoverFromThreat(c, space))
+               .Append(',').Append(m.SoldierId(c)).Append(']');
             first = false;
+            if (_announced.Add(c)) Spawned(c, sq, m, space);
         }
         _sb.Append("],\"v\":[");
         first = true;
@@ -217,13 +288,16 @@ public static class Telemetry
         {
             if (!GodotObject.IsInstanceValid(v)) continue;
             var p = v.GlobalPosition;
+            var crew = _crewOf.GetValueOrDefault(v);
             _sb.Append(first ? "" : ",").Append('[').Append(v.GetInstanceId()).Append(',').Append(S(v.Def.Name)).Append(',').Append(S(v.Def.Kind.ToString()))
                .Append(',').Append(v.Team).Append(',').Append(F(p.X)).Append(',').Append(F(p.Z)).Append(',').Append(F(p.Y))
                .Append(',').Append(v.Destroyed ? 1 : 0).Append(',').Append(v.Crewed ? 1 : 0).Append(',').Append(S(v.Task))
                // health %, and what's wrong with it: E engine hit, I immobile (a helicopter's tail rotor), X doomed (falling), L landed; a helicopter's collective
                .Append(',').Append((int)MathF.Round(v.Hp / v.Def.Hp * 100f))
                .Append(',').Append(S((v.EngineHit ? "E" : "") + (v.Immobile ? "I" : "") + (v.Def.Air && v.Doomed ? "X" : "") + (v.Def.Air && v.Landed ? "L" : "")))
-               .Append(',').Append(F(v.Def.Air ? v.Collective * 100f : 0f)).Append(']');
+               .Append(',').Append(F(v.Def.Air ? v.Collective * 100f : 0f))
+               // 13 its crew's squad, 14 the squad its crew works with (carries or supports)
+               .Append(',').Append(S(crew?.Name ?? "")).Append(',').Append(S(crew?.Supports?.Name ?? "")).Append(']');
             first = false;
         }
         _sb.Append("],\"d\":[");
@@ -248,19 +322,125 @@ public static class Telemetry
         if (Clock.Now > _nextFlush) { _nextFlush = Clock.Now + 5.0; _w.Flush(); }
     }
 
+    /// <summary>
+    /// Who has whom in sight, by the bots' own eyes this moment: for each person, how many enemies see him, how many of
+    /// them look out of armour, and the nearest of them (his threat when he has no target of his own).
+    /// </summary>
+    static void Watchers()
+    {
+        _seenBy.Clear();
+        _seenByArmour.Clear();
+        _watcher.Clear();
+        foreach (var c in Combatants.All)
+        {
+            if (c is not Bot ob || !ob.Alive || ob.Senses == null) continue;
+            bool armour = ob.Ride is { Destroyed: false, Def.Kind: VKind.APC or VKind.IFV or VKind.MBT or VKind.MGS or VKind.SPAA };
+            foreach (var th in ob.Senses.Threats)
+            {
+                if (!th.Visible || th.Who.Team == ob.Team || !th.Who.Alive) continue;
+                _seenBy[th.Who] = _seenBy.GetValueOrDefault(th.Who) + 1;
+                if (armour) _seenByArmour[th.Who] = _seenByArmour.GetValueOrDefault(th.Who) + 1;
+                if (!_watcher.TryGetValue(th.Who, out var w) || w.EyePos.DistanceSquaredTo(th.Who.ChestPos) > ob.EyePos.DistanceSquaredTo(th.Who.ChestPos))
+                    _watcher[th.Who] = ob;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Whether something hard stands between a man and his threat (the man he's fighting, else the nearest enemy who has
+    /// him in sight): 1 covered, 0 open to his fire, -1 no threat. One ray from the threat's eye to his chest, past the
+    /// threat's own vehicle; trees don't count (a trunk stops some rounds, not a burst).
+    /// </summary>
+    static int CoverFromThreat(ICombatant c, PhysicsDirectSpaceState3D space)
+    {
+        ICombatant? threat = c is Bot b && b.Brain.Target is { } t && t.Who.Alive ? t.Who : _watcher.GetValueOrDefault(c);
+        if (threat == null) return -1;
+        var q = PhysicsRayQueryParameters3D.Create(threat.EyePos, Combatants.PointOn(c, Combatants.Part.Chest),
+                                                   Layers.World | Layers.Vehicles | Layers.Doors | Layers.Overhead);
+        if (threat.Ride is { } rv && GodotObject.IsInstanceValid(rv)) q.Exclude = new Godot.Collections.Array<Rid> { rv.GetRid() };
+        return space.IntersectRay(q).Count > 0 ? 1 : 0;
+    }
+
+    /// <summary>What a squad is doing as a body: a drill under way, else the step of its attack, else its march order.</summary>
+    static string Doing(Squad sq) =>
+        sq.Drill != global::Ridgeline.Drill.None && Clock.Now <= sq.DrillUntil ? sq.Drill.ToString()
+        : sq.Phase != AssaultPhase.None ? sq.Phase.ToString()
+        : sq.MarchOrder.ToString();
+
+    /// <summary>
+    /// Someone appearing in the world (the match's start, a reinforcement, a war unit coming into a Conquest window, a man
+    /// joining): where, whether the spot is inside something solid (1 the ground or a building, 2 a vehicle's hull) or
+    /// under water, how far off the nearest enemy is, his health, and the war soldier he is. What the checker's spawn
+    /// rules look at.
+    /// </summary>
+    static void Spawned(ICombatant c, Squad? sq, ITelemetryMatch m, PhysicsDirectSpaceState3D? space)
+    {
+        var p = c.FeetPos;
+        int solid = 0;
+        if (space != null && c.Ride == null)
+        {
+            var q = new PhysicsPointQueryParameters3D { Position = Combatants.PointOn(c, Combatants.Part.Chest), CollisionMask = Layers.World, CollideWithAreas = false };
+            if (space.IntersectPoint(q, 1).Count > 0) solid = 1;
+            else
+            {
+                q.CollisionMask = Layers.Vehicles;
+                if (space.IntersectPoint(q, 1).Count > 0) solid = 2;
+            }
+        }
+        float ground = Effects.Ground?.HeightAt(p.X, p.Z) ?? p.Y;
+        float water = m.Map.Window is { } wg ? MathF.Max(0f, wg.WaterAt(p.X, p.Z) - ground) : 0f;
+        float enemy = float.MaxValue;
+        foreach (var o in Combatants.All)
+            if (o.Alive && o.Team != c.Team) enemy = MathF.Min(enemy, o.FeetPos.DistanceTo(p));
+        Line($"{{\"k\":\"spawn\",\"t\":{T},\"s\":{S(Label(c))},\"team\":{c.Team},\"sq\":{S(sq?.Name ?? "")},\"role\":{S(Roles.Short(c.Role))},\"p\":{P(p)}"
+             + $",\"ground\":{F(ground)},\"water\":{F2(water)},\"solid\":{solid},\"enemy\":{(enemy == float.MaxValue ? -1 : (int)enemy)},\"hp\":{(int)c.Hp}"
+             + $",\"ride\":{(c.Ride != null ? 1 : 0)},\"sid\":{m.SoldierId(c)}}}");
+    }
+
     // ---------------------------------------------------------------- events
+
+    /// <summary>
+    /// A round passing within a few metres of someone, or striking beside him: how close, whose, what, and how ("past",
+    /// "by the head", "through cover", "strike"); frag for fragments. What suppression is checked against.
+    /// </summary>
+    public static void Crack(ICombatant who, ICombatant? by, float dist, string weapon, string how, bool fragment)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"crack\",\"t\":{T},\"v\":{S(Label(who))},\"vt\":{who.Team},\"s\":{S(LabelOr(by))},\"st\":{by?.Team ?? -1},\"d\":{F2(dist)},\"w\":{S(weapon)},\"how\":{S(how)},\"frag\":{(fragment ? 1 : 0)}}}");
+    }
+
+    /// <summary>A bot picking someone out (a fresh contact, his awareness full): who, whom, how far, and with what (eye, a gun sight, goggles, thermal, a muzzle flash).</summary>
+    public static void Spot(ICombatant who, ICombatant whom, float dist, string by)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"spot\",\"t\":{T},\"s\":{S(Label(who))},\"team\":{who.Team},\"at\":{S(Label(whom))},\"d\":{F(dist)},\"by\":{S(by)}}}");
+    }
+
+    /// <summary>A Conquest window bringing a war unit in: its name, side, how many men, and how far from the player.</summary>
+    public static void Promote(string unit, int side, int men, float dist)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"promote\",\"t\":{T},\"unit\":{S(unit)},\"team\":{side},\"n\":{men},\"d\":{F(dist)}}}");
+    }
+
+    /// <summary>A man handed back to the war (his unit leaving the window, or the window moving), and the state he goes back in.</summary>
+    public static void Release(ICombatant c, int soldier, string state)
+    {
+        if (_w == null) return;
+        Line($"{{\"k\":\"release\",\"t\":{T},\"s\":{S(Label(c))},\"team\":{c.Team},\"sid\":{soldier},\"state\":{S(state)},\"hp\":{(int)c.Hp},\"ammo\":{(int)(c.AmmoLevel * 100f)},\"p\":{P(c.FeetPos)}}}");
+    }
 
     /// <summary>A round fired: from where, towards what point, at whom (if anyone), and how ("aimed", "suppress"...).</summary>
     public static void Shot(ICombatant? who, Vector3 from, Vector3 towards, string weapon, string how, ICombatant? at)
     {
         if (_w == null) return;
-        Line($"{{\"k\":\"shot\",\"t\":{T},\"s\":{S(who?.Callsign ?? "")},\"team\":{who?.Team ?? -1},\"p\":{P(from)},\"a\":{P(towards)},\"w\":{S(weapon)},\"m\":{S(how)},\"at\":{S(at?.Callsign ?? "")}}}");
+        Line($"{{\"k\":\"shot\",\"t\":{T},\"s\":{S(LabelOr(who))},\"team\":{who?.Team ?? -1},\"p\":{P(from)},\"a\":{P(towards)},\"w\":{S(weapon)},\"m\":{S(how)},\"at\":{S(LabelOr(at))}}}");
     }
 
     public static void Hit(ICombatant victim, ICombatant? by, Vector3 at, string zone, string weapon, float dist, bool fragment)
     {
         if (_w == null) return;
-        Line($"{{\"k\":\"hit\",\"t\":{T},\"v\":{S(victim.Callsign)},\"vt\":{victim.Team},\"s\":{S(by?.Callsign ?? "")},\"p\":{P(at)},\"z\":{S(zone)},\"w\":{S(weapon)},\"d\":{F(dist)},\"frag\":{(fragment ? 1 : 0)}}}");
+        Line($"{{\"k\":\"hit\",\"t\":{T},\"v\":{S(Label(victim))},\"vt\":{victim.Team},\"s\":{S(LabelOr(by))},\"p\":{P(at)},\"z\":{S(zone)},\"w\":{S(weapon)},\"d\":{F(dist)},\"frag\":{(fragment ? 1 : 0)}}}");
     }
 
     static void OnDowned(ICombatant victim, HitInfo hit) => Casualty("down", victim, hit);
@@ -269,19 +449,19 @@ public static class Telemetry
     static void Casualty(string kind, ICombatant victim, HitInfo hit)
     {
         if (_w == null) return;
-        Line($"{{\"k\":\"{kind}\",\"t\":{T},\"v\":{S(victim.Callsign)},\"vt\":{victim.Team},\"s\":{S(hit.Shooter?.Callsign ?? "")},\"st\":{hit.Shooter?.Team ?? -1},\"p\":{P(victim.FeetPos)},\"w\":{S(hit.Weapon ?? "")},\"d\":{F(hit.Distance)},\"z\":{S(hit.Zone.ToString())}}}");
+        Line($"{{\"k\":\"{kind}\",\"t\":{T},\"v\":{S(Label(victim))},\"vt\":{victim.Team},\"s\":{S(LabelOr(hit.Shooter))},\"st\":{hit.Shooter?.Team ?? -1},\"p\":{P(victim.FeetPos)},\"w\":{S(hit.Weapon ?? "")},\"d\":{F(hit.Distance)},\"z\":{S(hit.Zone.ToString())}}}");
     }
 
     public static void Explosion(Vector3 at, ICombatant? by, string weapon, float power, float fragR)
     {
         if (_w == null) return;
-        Line($"{{\"k\":\"boom\",\"t\":{T},\"p\":{P(at)},\"s\":{S(by?.Callsign ?? "")},\"team\":{by?.Team ?? -1},\"w\":{S(weapon)},\"pow\":{F2(power)},\"fr\":{F(fragR)}}}");
+        Line($"{{\"k\":\"boom\",\"t\":{T},\"p\":{P(at)},\"s\":{S(LabelOr(by))},\"team\":{by?.Team ?? -1},\"w\":{S(weapon)},\"pow\":{F2(power)},\"fr\":{F(fragR)}}}");
     }
 
     public static void State(Bot b, BotState from, BotState to, string note)
     {
         if (_w == null) return;
-        Line($"{{\"k\":\"st\",\"t\":{T},\"s\":{S(b.Callsign)},\"team\":{b.Team},\"from\":\"{from}\",\"to\":\"{to}\",\"n\":{S(note)},\"p\":{P(b.FeetPos)}}}");
+        Line($"{{\"k\":\"st\",\"t\":{T},\"s\":{S(Label(b))},\"team\":{b.Team},\"from\":\"{from}\",\"to\":\"{to}\",\"n\":{S(note)},\"p\":{P(b.FeetPos)}}}");
     }
 
     public static void Drill(Squad sq, Drill d, Vector3 at)
@@ -298,7 +478,7 @@ public static class Telemetry
     static void OnSaid(ICombatant who, string text)
     {
         if (who.Ride is not { Def.Air: true } v) return;
-        Line($"{{\"k\":\"say\",\"t\":{T},\"s\":{S(who.Callsign)},\"team\":{who.Team},\"veh\":{S(v.Def.Name)},\"text\":{S(text)}}}");
+        Line($"{{\"k\":\"say\",\"t\":{T},\"s\":{S(Label(who))},\"team\":{who.Team},\"veh\":{S(v.Def.Name)},\"text\":{S(text)}}}");
     }
 
     /// <summary>A squad's new orders (whoever gave them: the commander, the player).</summary>

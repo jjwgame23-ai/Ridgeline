@@ -465,8 +465,18 @@ public partial class Ballistics : Node3D
             p.Passed ??= new List<ICombatant>();
             if (p.Passed.Contains(c)) continue;
             p.Passed.Add(c);
-            c.OnNearMiss(d, p.Origin);
+            NearMiss(c, d, p, "past");
         }
+    }
+
+    /// <summary>
+    /// A round passing close to someone (or striking near him): he knows he's being shot at. Telemetry notes it with the
+    /// distance, which is what suppression is measured against.
+    /// </summary>
+    static void NearMiss(ICombatant c, float d, Projectile p, string how)
+    {
+        c.OnNearMiss(d, p.Origin);
+        Telemetry.Crack(c, p.Shooter, d, p.Weapon, how, p.Silent);
     }
 
     /// <summary>What a round does where it strikes. False if it didn't stop there (it went on past).</summary>
@@ -524,7 +534,7 @@ public partial class Ballistics : Node3D
                     if (!p.Silent && victim.Alive && !p.Passed.Contains(victim))
                     {
                         p.Passed.Add(victim);
-                        victim.OnNearMiss(0.2f, p.Origin);
+                        NearMiss(victim, 0.2f, p, "by the head");
                     }
                     return false;
                 }
@@ -567,7 +577,7 @@ public partial class Ballistics : Node3D
                     {
                         if (c == p.Shooter || !c.Alive) continue;
                         float dm = pos.DistanceTo(chest);
-                        if (dm < 4f) c.OnNearMiss(dm + 1f, p.Origin);
+                        if (dm < 4f) NearMiss(c, dm + 1f, p, "through cover");
                     }
                 }
                 p.ExitAt = exit;
@@ -598,7 +608,7 @@ public partial class Ballistics : Node3D
         {
             if (c == p.Shooter || c == collider || !c.Alive) continue;
             float d = pos.DistanceTo(chest);
-            if (d < 4f) c.OnNearMiss(d + 1f, p.Origin);
+            if (d < 4f) NearMiss(c, d + 1f, p, "strike");
         }
         return !glanced;
     }

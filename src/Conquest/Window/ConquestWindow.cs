@@ -127,6 +127,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     int[] ITelemetryMatch.Tickets => _tickets;
     bool[] ITelemetryMatch.Out => Out;
     float[] ITelemetryMatch.HQHold => _hold;
+    int ITelemetryMatch.SoldierId(ICombatant c) => SoldierOf.TryGetValue(c, out int s) ? s : -1;
     SiteObjective[] _points = Array.Empty<SiteObjective>();
     int[] _owner = Array.Empty<int>();
     readonly int[] _tickets = new int[3];

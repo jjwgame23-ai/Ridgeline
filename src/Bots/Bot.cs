@@ -65,6 +65,8 @@ public partial class Bot : CharacterBody3D, ICombatant
     public bool ChangingStance => _stanceT > 0f;
     public bool Reloading => _reloadT > 0f;
     public MoveMode Mode { get; private set; } = MoveMode.Run;
+    /// <summary>The pace he's actually going at: what was asked for, less what his legs and wind allow (for telemetry).</summary>
+    public MoveMode Gait { get; private set; } = MoveMode.Run;
     public bool Moving => new Vector2(Velocity.X, Velocity.Z).Length() > 0.5f;
     public bool Arrived => !_hasGoal;
     public Vector3 GoalPos => _goal;
@@ -606,6 +608,7 @@ public partial class Bot : CharacterBody3D, ICombatant
         var mode = Mode == MoveMode.Sprint && (!Body.CanSprint || _winded) ? MoveMode.Run : Mode;
         // Winded, he can't keep up a run either: a walk until his wind comes back.
         if (mode == MoveMode.Run && _winded) mode = MoveMode.Walk;
+        Gait = mode;
         // A walk under a fighting load is about 1.6 m/s (a road march is 4 km/h with halts, FM 3-21.18); a run 3.4, a
         // sprint 5.6. (Walking was 2.0, faster than people walk unladen.)
         float speed = (mode switch { MoveMode.Sprint => 5.6f, MoveMode.Run => 3.4f, _ => 1.6f }) * Body.SpeedMult;

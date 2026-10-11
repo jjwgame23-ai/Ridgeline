@@ -317,7 +317,11 @@ public sealed class BotSenses
                     t.TleRedraw = now; // a new sighting: a new picture of them
                 }
                 t.Tle = LocationError(d, n, now - t.VisibleSince, hidden, sight);
-                if (freshContact) CountContact(d, sight);
+                if (freshContact)
+                {
+                    CountContact(d, sight);
+                    Telemetry.Spot(_b, c, d, sight.Flash ? "flash" : sight.By == NightOptic.None ? (IsGunner ? "gunsight" : "eye") : sight.By.ToString().ToLowerInvariant());
+                }
                 if (now >= t.TleRedraw)
                 {
                     t.TleDir = new Vector2(_rng.Randfn(0f, 1f), _rng.Randfn(0f, 0.7f)); // the ground they're on pins the height down a little

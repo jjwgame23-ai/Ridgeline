@@ -153,18 +153,8 @@ public sealed partial class Squad
     {
         get
         {
-            // A player who picked squad leader leads; then the squad leader himself; failing
-            // him, the most experienced man left (a team leader), not whoever happens to be first.
-            ICombatant? best = null;
-            float bestScore = float.MinValue;
-            foreach (var m in Members)
-            {
-                if (!m.Alive || !GodotObject.IsInstanceValid((GodotObject)m)) continue;
-                if (m is Player { Kit: Role.Leader }) return m;
-                if (m is not Bot b) continue;
-                float score = (b.Role == Role.Leader ? 10f : 0f) + b.P.Skill;
-                if (score > bestScore) { bestScore = score; best = m; }
-            }
+            var best = PickLeader();
+            if (best is Player) return best;
             if (best != _lastLeader)
             {
                 if (_lastLeader != null && !_lastLeader.Alive && best is Bot nb) Comms.Say(nb, $"{_lastLeader.Callsign}'s down! I've got the squad!");
@@ -172,6 +162,28 @@ public sealed partial class Squad
             }
             return best;
         }
+    }
+
+    /// <summary>Who leads, worked out without announcing a change of leader (for telemetry, which mustn't change the game).</summary>
+    public ICombatant? LeaderQuiet => PickLeader();
+
+    /// <summary>
+    /// A player who picked squad leader leads; then the squad leader himself; failing him, the most experienced man
+    /// left (a team leader), not whoever happens to be first.
+    /// </summary>
+    ICombatant? PickLeader()
+    {
+        ICombatant? best = null;
+        float bestScore = float.MinValue;
+        foreach (var m in Members)
+        {
+            if (!m.Alive || !GodotObject.IsInstanceValid((GodotObject)m)) continue;
+            if (m is Player { Kit: Role.Leader }) return m;
+            if (m is not Bot b) continue;
+            float score = (b.Role == Role.Leader ? 10f : 0f) + b.P.Skill;
+            if (score > bestScore) { bestScore = score; best = m; }
+        }
+        return best;
     }
 
     public int Alive => Members.Count(m => m.Alive && GodotObject.IsInstanceValid((GodotObject)m));

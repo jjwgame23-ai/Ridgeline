@@ -46,9 +46,12 @@ The report checks the island against laws measured on real landscapes, and each 
 
 **Coherence.** `python tools/coherence.py run.jsonl [...]` reads a recorded fight for what a watching player would notice: when the shooting starts, the range each side fires at, how fast men move in and out of contact, and how much they stand, kneel or lie flat (under heavy fire too).
 
+**Rulebook.** `python tools/doctrine_check.py run.jsonl [...]` checks a recording against `tools/rules.toml`: every bot, every sample, against rules written down with their sources. A "never" rule fails the run (exit code 1); a norm gives a rate per 10 bot-minutes in contact and the worst moments, with the time to look at in the replay and the bot's reason. Change thresholds in `rules.toml`, not in the code; a new rule needs a source and a test in `tools/test_doctrine_check.py` (run it after any change to either). Method and sources: `BOT-VERIFICATION.md`.
+
 **Reading a run.** `tools/telemetry.py` (class `Match`) reads the `.jsonl` file:
-- a sample of everyone every 0.5 s;
-- events: shot, hit, kill, down, boom, st (state change), drill, order, cross, reinf, radio, score.
+- a sample of everyone every 0.5 s: position, state and why, stance, target, suppression, health, ammo, pace, fire team, leader, what the squad is doing, how many enemies see him (and from armour), cover from his threat, war soldier;
+- events: shot, crack (a near miss), hit, kill, down, boom, st (state change), spot (a sighting), drill, order, cross, reinf, radio, score, spawn, and in a Conquest window promote and release.
+- People are named by callsign, with "#2" while someone else in the world has the same one. A Conquest window that moves writes `-2`, `-3`... beside the first file.
 
 ## How the work is done
 

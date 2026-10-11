@@ -256,6 +256,7 @@ public partial class ConquestWindow
     void WriteMan(ICombatant c, int s, Unit m, ref bool? cut)
     {
         ref var so = ref War.Soldiers[s];
+        Telemetry.Release(c, s, c.Dead ? "dead" : !c.Alive ? "down" : c.Body.Wounds.Count > 0 ? "wounded" : "fit");
         if (c.Dead) { if (so.State != SoldierState.Dead) { so.State = SoldierState.Dead; so.Since = War.Time; } return; }
         if (!c.Alive)
         {
@@ -465,6 +466,7 @@ public partial class ConquestWindow
             total += c.Fit.Count;
             movers.Add(c.M.Id);
             Promoted++;
+            Telemetry.Promote(c.U.Short, t, c.Fit.Count, c.D);
             Log($"[{Clock.Now:0}s] into the window: {War.Sides[t].Name} {c.U.Short}, {c.Fit.Count} soldiers, {c.D:0} m from you ({Doing(c.M)})");
         }
         foreach (int mid in movers) Hold(War.Units[mid]);

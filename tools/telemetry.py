@@ -72,9 +72,14 @@ class Match:
                 elif k == "s":
                     rows = {}
                     for r in o["b"]:
+                        # 17 onward came later (pace, fire team, leader, what the squad is doing, enemies who see him,
+                        # of them from armour, cover from his threat, war soldier); older recordings lack them.
+                        x = r + [None] * (25 - len(r)) if len(r) < 25 else r
                         rows[r[0]] = {"team": r[1], "squad": r[2], "role": r[3], "x": r[4], "z": r[5], "y": r[6],
                                       "state": r[7], "stance": r[8], "down": r[9], "ride": r[10], "target": r[11],
-                                      "seen": r[12], "supp": r[13], "hp": r[14], "ammo": r[15], "note": r[16] if len(r) > 16 else ""}
+                                      "seen": r[12], "supp": r[13], "hp": r[14], "ammo": r[15], "note": x[16] or "",
+                                      "gait": x[17], "ft": x[18], "leads": x[19], "doing": x[20], "seenby": x[21],
+                                      "seenby_armour": x[22], "cover": x[23], "sid": x[24]}
                     self.samples.append((o["t"], rows, o.get("v", []), o.get("d", [])))
                 else:
                     self.ev[k].append(o)
