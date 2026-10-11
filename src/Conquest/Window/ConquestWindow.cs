@@ -83,6 +83,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     /// </summary>
     public bool Calibrate;
     public bool PlayerJoins = true;
+    /// <summary>What this window was built from: who the player is to be, and what to tell them on arriving.</summary>
+    public ConquestPlan Plan = new();
     public static bool Verbose;
     /// <summary>The window being played, while it is.</summary>
     public static ConquestWindow? Current { get; private set; }
@@ -138,6 +140,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     readonly int[] _numbers = new int[3];
     readonly int[] _killed = new int[3];
     bool _embodied;
+    static bool _edgeTested;
+    /// <summary>The armies have come in (the navmesh is up).</summary>
+    public bool Embodied => _embodied;
     double _nextLog, _startedAt, _warMinute;
     HashSet<int> _bubble = new();
     readonly int[] _down = new int[3], _hurt = new int[3];
@@ -193,6 +198,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         Fires?.Tick();
         if (_diedAt > 0) WhileDead();
         if (Live) LiveTick();
+        if (Live && PlayerJoins) NearTheEdge();
         Telemetry.Tick(this);
         if (Calibrate) Abstract();
         if (Assault) Judge();
@@ -261,10 +267,12 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         int n = 0, skipped = 0;
         var took = new int[3];
         var movers = new HashSet<int>();
-        foreach (var c in cands.OrderBy(c => c.At.LengthSquared()))
+        // The player's own unit, when they're a soldier already (a moved window, a replacement), first whatever the quotas.
+        int mine = Plan.Soldier >= 0 ? War.Soldiers[Plan.Soldier].Unit : -1;
+        foreach (var c in cands.OrderBy(c => c.U.Id == mine ? -1f : c.At.LengthSquared()))
         {
             int t = c.U.Side;
-            if (took[t] >= quota[t]) { skipped += c.Fit.Count; continue; }
+            if (took[t] >= quota[t] && c.U.Id != mine) { skipped += c.Fit.Count; continue; }
             took[t] += c.Fit.Count;
             n += c.Fit.Count;
             movers.Add(c.M.Id);
@@ -286,6 +294,12 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         }
         if (PlayerJoins) JoinPlayer();
         else Spec.Activate(Bots.FirstOrDefault());
+        // edgetest (a test of moving the window): the player put 400 m short of its east edge, once.
+        if (!_edgeTested && PlayerBody != null && OS.GetCmdlineUserArgs().Contains("edgetest"))
+        {
+            _edgeTested = true;
+            PlayerBody.GlobalPosition = Map.Ground(new Vector3(Map.Half - 400f, 0f, PlayerBody.FeetPos.Z)) + Vector3.Up * 0.3f;
+        }
         Fires = new WindowFires(War, this);
         Squad.OwnFiresUntil = Fires.Until;
         // Live (slice 3): the window has these companies from now on, and the war's fire on them comes in here.
@@ -721,7 +735,27 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     /// <summary>The player takes a rifleman's place in the embodied rifle squad nearest the middle (ALPHA's if it has one there).</summary>
     void JoinPlayer()
     {
-        var sq = Squads[0].Concat(Squads[1]).Concat(Squads[2]).Where(s => s.Kind == SquadKind.Rifle && s.Members.Count > 1)
+        // Already a soldier in this war (the window moved round him, or he's arrived as a replacement): himself, with his wounds.
+        if (Plan.Soldier >= 0 && SoldierOf.FirstOrDefault(kv => kv.Value == Plan.Soldier).Key is Bot self)
+        {
+            var own = self.Squad!;
+            Become(self);
+            if (Plan.Body != null) PlayerBody!.Body.TakeOver(Plan.Body);
+            // A moved window is centred where he stood: there, not with his squad wherever it is. (He was put with his
+            // squad, which may be anywhere: a man who'd gone 1.7 km ahead of it came in at the new window's edge, and
+            // it moved again.)
+            if (Plan.AtMiddle)
+            {
+                PlayerBody!.GlobalPosition = Map.Ground(Vector3.Zero) + Vector3.Up * 0.3f;
+                PlayerBody.SetYaw(Plan.Yaw);
+            }
+            Log($"the player is {Me}, {own.Name} ({UnitOf[own].Name}){(Plan.Arrival != "" ? ": " + Plan.Arrival : "")}");
+            _hud.Center(Plan.Arrival != "" ? Plan.Arrival : $"You are {Me}, {own.Name}", 6f);
+            return;
+        }
+        int side = Plan.Side;
+        // On the side picked, if one was (the window goes where that side is fighting); else ALPHA's first.
+        var sq = Squads[0].Concat(Squads[1]).Concat(Squads[2]).Where(s => s.Kind == SquadKind.Rifle && s.Members.Count > 1 && (side < 0 || s.Team == side))
             .OrderBy(s => s.Team == 0 ? 0 : 1).ThenBy(s => s.Position?.LengthSquared() ?? float.MaxValue).FirstOrDefault();
         if (sq == null)
         {
@@ -776,6 +810,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             return (men.Count > 0 ? men : l).OrderBy(b => b.FeetPos.DistanceTo(_fellAt)).ToList();
         }
         replacement = false;
+        // replacetest (a test of coming in as a replacement): nobody to carry on as.
+        if (OS.GetCmdlineUserArgs().Contains("replacetest")) return new List<Bot>();
         if (PlayerSquad != null && Fit(PlayerSquad) is { Count: > 0 } own) return Order(own);
         replacement = true;
         int side = PlayerBody?.Team ?? 0;
@@ -791,6 +827,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         Candidates = FindCandidates(out bool repl);
         Replacement = repl;
         if (CarryOnAs == null || !Candidates.Contains(CarryOnAs)) CarryOnAs = Candidates.FirstOrDefault();
+        // Nobody of yours left here: you come in as a replacement, by sea, once the time's up.
+        if (CarryOnAs == null && Live && now >= CarryOnAt) { Replace(); return; }
         if (now - _diedAt > 2.0 && (!Spec.Active || Spec.Target != CarryOnAs) && CarryOnAs != null)
         {
             PlayerHud.P = null;

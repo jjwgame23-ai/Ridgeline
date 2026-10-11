@@ -29,6 +29,18 @@ public static class Settings
     public static float TimeScale = 4f;
     public static readonly int[] MatchLengths = { 60, 120, 180, 0 };
 
+    // ---- Conquest (its own tab in the menu)
+    /// <summary>
+    /// The island (its seed: each is a different island and a different war), the day and hour the war is run to before
+    /// you join it, the side you fight for (-1: wherever the biggest fight is), how many soldiers are embodied round you,
+    /// and whether the war goes on round you.
+    /// </summary>
+    public static int ConquestSeed = 2, ConquestDay = 3, ConquestSide = -1, ConquestCap = 160;
+    public static double ConquestHour = 6.0;
+    public static bool ConquestLive = true;
+    /// <summary>The menu tab last open (0 the battle maps, 1 Conquest).</summary>
+    public static int MenuTab;
+
     // ---- graphics
     public enum DisplayMode { Windowed, Borderless, Exclusive }
     public static DisplayMode Display = DisplayMode.Windowed;
@@ -62,6 +74,13 @@ public static class Settings
         StartHour = cfg.GetValue("game", "start_hour", 12.0).AsDouble();
         Weather = cfg.GetValue("game", "weather", "Clear").AsString();
         TimeScale = (float)cfg.GetValue("game", "time_scale", 4.0).AsDouble();
+        ConquestSeed = cfg.GetValue("conquest", "seed", 2).AsInt32();
+        ConquestDay = cfg.GetValue("conquest", "day", 3).AsInt32();
+        ConquestHour = cfg.GetValue("conquest", "hour", 6.0).AsDouble();
+        ConquestSide = cfg.GetValue("conquest", "side", -1).AsInt32();
+        ConquestCap = cfg.GetValue("conquest", "cap", 160).AsInt32();
+        ConquestLive = cfg.GetValue("conquest", "live", true).AsBool();
+        MenuTab = cfg.GetValue("game", "menu_tab", 0).AsInt32();
         Display = (DisplayMode)cfg.GetValue("graphics", "display", 0).AsInt32();
         VSync = cfg.GetValue("graphics", "vsync", true).AsBool();
         MaxFps = cfg.GetValue("graphics", "max_fps", 0).AsInt32();
@@ -91,6 +110,13 @@ public static class Settings
         cfg.SetValue("game", "start_hour", StartHour);
         cfg.SetValue("game", "weather", Weather);
         cfg.SetValue("game", "time_scale", TimeScale);
+        cfg.SetValue("game", "menu_tab", MenuTab);
+        cfg.SetValue("conquest", "seed", ConquestSeed);
+        cfg.SetValue("conquest", "day", ConquestDay);
+        cfg.SetValue("conquest", "hour", ConquestHour);
+        cfg.SetValue("conquest", "side", ConquestSide);
+        cfg.SetValue("conquest", "cap", ConquestCap);
+        cfg.SetValue("conquest", "live", ConquestLive);
         cfg.SetValue("graphics", "display", (int)Display);
         cfg.SetValue("graphics", "vsync", VSync);
         cfg.SetValue("graphics", "max_fps", MaxFps);

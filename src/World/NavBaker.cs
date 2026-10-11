@@ -244,10 +244,13 @@ public partial class NavBaker : Node
 
     void AddRegion(NavigationMesh nm, string? savePath, bool seam, bool dense, Rect2 area)
     {
-        // Callbacks may arrive from a worker thread; touch the scene tree and disk on the main one.
+        // Callbacks may arrive from a worker thread; touch the scene tree and disk on the main one. The map may be gone by
+        // then (the game left, or the window built elsewhere, while it baked): the tile is still saved for next time.
+        // (It used to add its region to the freed baker, and threw.)
         Callable.From(() =>
         {
             if (savePath != null) ResourceSaver.Save(nm, savePath);
+            if (!IsInstanceValid(this) || !IsInsideTree()) return;
             int polys = nm.GetPolygonCount();
             Polygons += polys;
             if (dense) DensePolygons += polys;

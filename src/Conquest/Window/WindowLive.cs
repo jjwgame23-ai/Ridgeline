@@ -104,6 +104,30 @@ public partial class ConquestWindow
         }
         foreach (var (sq, v) in _vehicleOf)
             if (Motor.Slots.Find(s => s.Crew == sq) is not { Live: { Destroyed: false } }) LoseVehicle(v);
+        // Soldiers who've joined a unit while it's in the window (replacements landed by sea, men back from hospital: they
+        // come up with the night's resupply, Medical.Rejoin) walk up to their squad from about 120 m behind it.
+        var here = SoldierOf.Values.ToHashSet();
+        foreach (var (sq, u) in UnitOf.ToList())
+        {
+            if (_vehicleOf.ContainsKey(sq) || Middle(new[] { sq }) is not Vector3 at) continue;
+            var away = sq.Objective is AreaObjective { Threat: { } th } && ((at - th) with { Y = 0f }) is { } aw && aw.LengthSquared() > 1f ? aw.Normalized() : Vector3.Back;
+            foreach (int s in u.Members)
+            {
+                ref var so = ref War.Soldiers[s];
+                if (here.Contains(s) || so.State != SoldierState.Fit || so.Since < War.Time - 2 * WarStep) continue;
+                var from = at + away * 120f + new Vector3(_rng.RandfRange(-10f, 10f), 0f, _rng.RandfRange(-10f, 10f));
+                from = new Vector3(Math.Clamp(from.X, -Map.Half + 60f, Map.Half - 60f), 0f, Math.Clamp(from.Z, -Map.Half + 60f, Map.Half - 60f));
+                Spawn(s, sq, RoleOf(so.Job), from);
+                Log($"[{Clock.Now:0}s] {War.Who(s)} joins {sq.Name}, coming up from behind");
+            }
+        }
+        // What the window's soldiers have seen goes to their side's intelligence, which the war's commanders plan on: each
+        // enemy seen in the last minute, as his company. (Only the war's own looks reached it, so an enemy company fighting
+        // in the window could stay unknown to the battalion next door.)
+        for (int side = 0; side < 3; side++)
+            foreach (var c in global::Ridgeline.Intel.Recent(side, WarStep))
+                if (SoldierOf.TryGetValue(c.Who, out int es) && War.Units[War.Soldiers[es].Unit].Mover is int emid and >= 0)
+                    War.Intel.Saw(side, War.Units[emid], War.Time);
         foreach (var (mid, sqs) in SquadsByMover())
         {
             var m = War.Units[mid];
@@ -195,6 +219,34 @@ public partial class ConquestWindow
         _vehicleOf.Remove(sq);
     }
 
+    /// <summary>
+    /// One man back to the war as he is: the dead dead; the down into the medical chain, as a company holding the field
+    /// evacuates its down; the wounded with their blood; and what's left of his ammunition as a share of the war's basic load.
+    /// </summary>
+    void WriteMan(ICombatant c, int s, Unit m, ref bool? cut)
+    {
+        ref var so = ref War.Soldiers[s];
+        if (c.Dead) { if (so.State != SoldierState.Dead) { so.State = SoldierState.Dead; so.Since = War.Time; } return; }
+        if (!c.Alive)
+        {
+            so.State = SoldierState.Down;
+            so.Blood = c.Body.Blood;
+            so.Since = War.Time;
+            cut ??= !Supply.ClearToDepot(War, m);
+            Medical.Admit(War, s, cut.Value);
+            return;
+        }
+        so.Blood = c.Body.Blood;
+        if (c.Body.Wounds.Count > 0) so.State = SoldierState.Wounded;
+        var (rounds, kit) = c switch
+        {
+            Bot b when b.Def.Mags > 0 => (b.Mags.Rounds, b.Def.MagSize * b.Def.Mags),
+            Player p when p.Weapon.Def.Mags > 0 => (p.Weapon.Mags.Rounds, p.Weapon.Def.MagSize * p.Weapon.Def.Mags),
+            _ => (0, 0),
+        };
+        if (kit > 0) so.Ammo = (short)(Orbat.Load(so.Job).Ammo * Math.Clamp(rounds / (float)kit, 0f, 1f));
+    }
+
     /// <summary>A unit (its squads in the window) back to the war, with each man's state and the unit's place.</summary>
     void Release(List<Squad> sqs)
     {
@@ -212,25 +264,7 @@ public partial class ConquestWindow
             foreach (var c in sq.Members.ToList())
             {
                 if (!SoldierOf.TryGetValue(c, out int s)) continue;
-                ref var so = ref War.Soldiers[s];
-                if (c.Dead) { if (so.State != SoldierState.Dead) { so.State = SoldierState.Dead; so.Since = War.Time; } }
-                else if (!c.Alive)
-                {
-                    // Down: into the war's medical chain, as a company holding the field evacuates its down.
-                    so.State = SoldierState.Down;
-                    so.Blood = c.Body.Blood;
-                    so.Since = War.Time;
-                    cut ??= !Supply.ClearToDepot(War, m);
-                    Medical.Admit(War, s, cut.Value);
-                }
-                else
-                {
-                    so.Blood = c.Body.Blood;
-                    if (c.Body.Wounds.Count > 0) so.State = SoldierState.Wounded;
-                }
-                // What he has left of his kit, as a share of the war's basic load.
-                if (c is Bot rb && rb.Def.Mags > 0)
-                    so.Ammo = (short)(Orbat.Load(so.Job).Ammo * Math.Clamp(rb.Mags.Rounds / (float)(rb.Def.MagSize * rb.Def.Mags), 0f, 1f));
+                WriteMan(c, s, m, ref cut);
                 SoldierOf.Remove(c);
                 if (c is Bot b) { Bots.Remove(b); Retire(b); }
             }
@@ -269,6 +303,94 @@ public partial class ConquestWindow
         b.ProcessMode = ProcessModeEnum.Disabled;
         b.CollisionLayer = b.CollisionMask = 0;
         GetTree().CreateTimer(5.0).Timeout += () => { if (IsInstanceValid(b)) b.QueueFree(); };
+    }
+
+    // ---------------------------------------------------------------- moving the window (slice 5)
+
+    /// <summary>How near the window's edge you can go before it's built again round you.</summary>
+    const float EdgeMargin = 450f;
+    bool _moving;
+
+    /// <summary>
+    /// Near the window's edge, the window is built again round you, behind a load (slice 5): everything in it goes back to
+    /// the war as it is (each man's state and ammunition, each unit's place, vehicles lost), and the scene is reloaded on a
+    /// window centred where you stand, you the same soldier with the same wounds. The war goes on from where it was; the
+    /// units round you come in again where it has them.
+    /// </summary>
+    void NearTheEdge()
+    {
+        if (_moving || PlayerBody is not { Alive: true } p || p.Ride != null) return;
+        float lim = Map.Half - EdgeMargin;
+        if (MathF.Abs(p.FeetPos.X) < lim && MathF.Abs(p.FeetPos.Z) < lim) return;
+        _moving = true;
+        if (!SoldierOf.TryGetValue(p, out int me)) return;
+        HandBack();
+        var body = new Body();
+        body.TakeOver(p.Body);
+        var (x, z) = ToIsland(p.FeetPos);
+        Log($"[{Clock.Now:0}s] the window moves: {Me} at ({x / 1000f:0.0}, {z / 1000f:0.0}) km");
+        WindowMode.Launch(this, new ConquestPlan
+        {
+            War = War, At = (x, z), Soldier = me, Body = body, AtMiddle = true, Yaw = -p.Heading, Side = p.Team, Size = Map.Size, Cap = Cap, Join = true, Live = true,
+            Verbose = Verbose,
+        });
+    }
+
+    /// <summary>
+    /// Everything in the window back to the war as it is, before the window is built anew: each man's state and
+    /// ammunition, each unit's place, vehicles lost; nothing is held any more.
+    /// </summary>
+    void HandBack()
+    {
+        WriteBack();
+        bool? cut = null;
+        foreach (var (c, s) in SoldierOf.ToList())
+            WriteMan(c, s, War.Units[War.Units[War.Soldiers[s].Unit].Mover], ref cut);
+        foreach (var g in UnitOf.GroupBy(kv => kv.Value))
+            if (Middle(g.Select(kv => kv.Key)) is Vector3 at)
+            {
+                var m = War.Units[g.Key.Mover];
+                var (ux, uz) = ToIsland(at);
+                g.Key.OffX = ux - m.X;
+                g.Key.OffZ = uz - m.Z;
+            }
+        foreach (var mid in War.Held) War.Recount(War.Units[mid]);
+        War.Held.Clear();
+        War.ShellHeld = null;
+    }
+
+    /// <summary>
+    /// Nobody of yours left in the window to carry on as: you come in as a replacement, by sea, as the war's replacements
+    /// do (Medical). A new soldier, landed at your side's port into a place left empty in a rifle squad, the nearest such
+    /// to where you fell, travels up and reaches it with its nightly resupply. The war runs on meanwhile (WindowMode, a
+    /// day and a half at the most), and the window opens round your squad.
+    /// </summary>
+    void Replace()
+    {
+        if (_moving) return;
+        int side = PlayerBody?.Team ?? Plan.Side;
+        if (side < 0) return;
+        var (fx, fz) = ToIsland(_fellAt);
+        Unit? best = null;
+        float bestD = float.MaxValue;
+        foreach (var u in War.Units)
+        {
+            if (u.Side != side || u.Mover < 0 || KindOf(u) != SquadKind.Rifle || War.Units[u.Mover].People <= 0) continue;
+            if (!u.Members.Any(s => War.Soldiers[s].State is SoldierState.Dead or SoldierState.Invalided && !War.Soldiers[s].Replaced)) continue;
+            var m = War.Units[u.Mover];
+            float d = (m.X - fx) * (m.X - fx) + (m.Z - fz) * (m.Z - fz);
+            if (d < bestD) { bestD = d; best = u; }
+        }
+        if (best == null) { CarryOnAt = Clock.Now + 30.0; return; } // no place empty in a rifle squad: look again later
+        _moving = true;
+        HandBack();
+        int me = Medical.Replacement(War, best);
+        if (me < 0) return;
+        Log($"[{Clock.Now:0}s] the player comes in as a replacement: {War.Who(me)}, {best.Name}");
+        WindowMode.Launch(this, new ConquestPlan
+        {
+            War = War, Soldier = me, Joining = true, Side = side, Size = Map.Size, Cap = Cap, Join = true, Live = true, Verbose = Verbose,
+        });
     }
 
     /// <summary>

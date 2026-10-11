@@ -68,7 +68,8 @@ public partial class DevShot : Node
             "tspec12" => new GameSetup { Map = "valley", TeamSize = 12, PlayerJoins = false },
             "tspec20" => new GameSetup { Map = "valley", TeamSize = 20, PlayerJoins = false },
             "tspec33" => new GameSetup { Map = "valley", TeamSize = 33, PlayerJoins = false },
-            "window" => new GameSetup { Map = "window" },
+            // The window's sky keeps the war's hour (dawn unless hour= says otherwise) at the war's pace.
+            "window" => new GameSetup { Map = "window", Hour = 6.0, TimeScale = 1f },
             _ => null,
         };
         // level=alhamra etc.: which battlefield.

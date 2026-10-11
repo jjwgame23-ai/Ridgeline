@@ -91,33 +91,42 @@ public static class Medical
         {
             for (int k = 0; k < n && room > 0; k++)
             {
-                // The place of a soldier lost and not yet replaced: his job, at his rank up to a specialist's (NCO
-                // places are filled by promotion within the unit, which isn't modelled).
-                int gone = -1;
-                foreach (int m in u.Members)
-                {
-                    var so = war.Soldiers[m];
-                    if (so.State is SoldierState.Dead or SoldierState.Invalided && !so.Replaced)
-                    {
-                        gone = m;
-                        break;
-                    }
-                }
-                if (gone < 0) break;
-                war.Soldiers[gone].Replaced = true;
-                var g = war.Soldiers[gone];
-                var load = Orbat.Load(g.Job);
-                int id = war.AddSoldier(new Soldier
-                {
-                    Unit = u.Id, Side = (byte)side, Rank = Math.Min(g.Rank, (byte)4), Job = g.Job, State = SoldierState.Joining, Since = war.Time, Blood = 1f,
-                    Ammo = load.Ammo, Grenades = load.Grenades, Rockets = load.Rockets,
-                });
-                u.Members.Add(id);
-                war.Replacements[side]++;
+                if (Replacement(war, u) < 0) break;
                 room--;
             }
             if (room == 0) break;
         }
+    }
+
+    /// <summary>
+    /// A replacement into a unit, on his way to it (Joining): the place of a soldier lost and not yet replaced, his job, at
+    /// his rank up to a specialist's (NCO places are filled by promotion within the unit, which isn't modelled). -1 if
+    /// the unit has no such place.
+    /// </summary>
+    public static int Replacement(War war, Unit u)
+    {
+        int gone = -1;
+        foreach (int m in u.Members)
+        {
+            var so = war.Soldiers[m];
+            if (so.State is SoldierState.Dead or SoldierState.Invalided && !so.Replaced)
+            {
+                gone = m;
+                break;
+            }
+        }
+        if (gone < 0) return -1;
+        war.Soldiers[gone].Replaced = true;
+        var g = war.Soldiers[gone];
+        var load = Orbat.Load(g.Job);
+        int id = war.AddSoldier(new Soldier
+        {
+            Unit = u.Id, Side = g.Side, Rank = Math.Min(g.Rank, (byte)4), Job = g.Job, State = SoldierState.Joining, Since = war.Time, Blood = 1f,
+            Ammo = load.Ammo, Grenades = load.Grenades, Rockets = load.Rockets,
+        });
+        u.Members.Add(id);
+        war.Replacements[g.Side]++;
+        return id;
     }
 
     /// <summary>The soldiers on their way to a mover's units join it: back from hospital, or replacements.</summary>

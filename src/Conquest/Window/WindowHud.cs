@@ -151,6 +151,8 @@ public partial class WindowHud : CanvasLayer
         _brief.Text = SquadPanel.Brief(sq, me, false);
         if (me == null) HudOverlay.Marker = null;
 
+        // The ground's being got ready (the navmesh): the armies come in when it is.
+        if (!W.Embodied) { _center.Text = "Getting the ground ready: the war comes in when it is..."; _centerUntil = now + 0.5; }
         _center.Visible = now < _centerUntil;
         _kills.RemoveAll(k => now - k.at > 10);
         _feed.Text = string.Join("\n", _kills.Select(k => k.text));
@@ -170,7 +172,7 @@ public partial class WindowHud : CanvasLayer
                 carry = $"{(W.Replacement ? $"Your squad is gone. With {next.Squad?.Name}: " : "")}carrying on as {next.Callsign} ({Roles.Name(next.Role)}, {(next.Hp < 99f ? $"{next.Hp:0}% fit" : "unhurt")}) in {Math.Max(0, W.CarryOnAt - now):0}s\n"
                         + (c.Count > 1 ? $"Pick: {pick}\n" : "");
             }
-            else carry = "Nobody of yours is left in the window.\n";
+            else carry = W.Live ? $"Nobody of yours is left here. You'll come in as a replacement, by sea, in {Math.Max(0, W.CarryOnAt - now):0}s\n" : "Nobody of yours is left in the window.\n";
         }
         var b = W.Watched;
         string who = b == null ? "nobody" :

@@ -17,10 +17,17 @@ public partial class MainMenu : Control
         bg.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
         AddChild(bg);
 
+        // Two tabs: the battle maps (everything that was here), and Conquest, whose options are its own.
+        var tabs = new TabContainer();
+        tabs.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
+        AddChild(tabs);
         // Scrolls if the window is too short for everything.
-        var scroll = new ScrollContainer { HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
-        scroll.SetAnchorsAndOffsetsPreset(LayoutPreset.FullRect);
-        AddChild(scroll);
+        var scroll = new ScrollContainer { Name = "Battles", HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        tabs.AddChild(scroll);
+        tabs.AddChild(ConquestPage());
+        tabs.CurrentTab = Math.Clamp(Settings.MenuTab, 0, 1);
+        if (OS.GetCmdlineUserArgs().Contains("menutab=1")) tabs.CurrentTab = 1; // a screenshot of it (not saved)
+        tabs.TabChanged += t => { Settings.MenuTab = (int)t; Settings.Save(); };
         var center = new CenterContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
         scroll.AddChild(center);
         var box = new VBoxContainer();
@@ -181,6 +188,90 @@ public partial class MainMenu : Control
 
         var hint = new Label { Text = Controls.Fill("{main_menu} returns to this menu from anywhere"), HorizontalAlignment = HorizontalAlignment.Center, Modulate = new Color(1, 1, 1, 0.45f) };
         box.AddChild(hint);
+    }
+
+    // ---------------------------------------------------------------- Conquest
+
+    static readonly double[] ConquestHours = { 6.0, 9.0, 12.0, 15.0, 18.0, 22.0 };
+    static readonly int[] ConquestCaps = { 100, 160, 220 };
+
+    /// <summary>
+    /// The Conquest tab: you're one soldier in the war on an island, a grunt in one of its squads, wherever the fighting
+    /// is. The war is run to the day and hour picked, and you join it there (WindowMode, ConquestPlan).
+    /// </summary>
+    Control ConquestPage()
+    {
+        var scroll = new ScrollContainer { Name = "Conquest", HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled };
+        var center = new CenterContainer { SizeFlagsHorizontal = SizeFlags.ExpandFill, SizeFlagsVertical = SizeFlags.ExpandFill };
+        scroll.AddChild(center);
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 9);
+        center.AddChild(box);
+        var title = new Label { Text = "CONQUEST", HorizontalAlignment = HorizontalAlignment.Center };
+        title.AddThemeFontSizeOverride("font_size", 44);
+        box.AddChild(title);
+        Label Note(string text, float alpha) => new()
+        {
+            Text = text, AutowrapMode = TextServer.AutowrapMode.WordSmart, CustomMinimumSize = new Vector2(540, 0), Modulate = new Color(1, 1, 1, alpha),
+        };
+        box.AddChild(Note("An island at war: three armies of about 50,000 each, fighting for it. You're one soldier among them, a "
+                          + "grunt in one of the war's own squads, with the name and the unit the war gave you. The war goes on round "
+                          + "you: your squad does what its company is ordered to, and what happens near you is the war's. Killed, you "
+                          + "carry on as one of your squad; with nobody of yours left, you come in as a replacement, by sea.", 0.75f));
+        box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 6) });
+
+        var grid = new GridContainer { Columns = 2 };
+        grid.AddThemeConstantOverride("h_separation", 14);
+        grid.AddThemeConstantOverride("v_separation", 8);
+        box.AddChild(grid);
+        void Row(string label, Control c, string tip)
+        {
+            grid.AddChild(new Label { Text = label, TooltipText = tip, MouseFilter = MouseFilterEnum.Pass });
+            c.TooltipText = tip;
+            grid.AddChild(c);
+        }
+        var seed = new SpinBox { MinValue = 1, MaxValue = 999, Value = Settings.ConquestSeed, CustomMinimumSize = new Vector2(120, 0) };
+        seed.ValueChanged += v => { Settings.ConquestSeed = (int)v; Settings.Save(); };
+        Row("Island", seed, "Each number is a different island, and a different war on it. The same number is the same island and the same war.");
+        var when = new HBoxContainer();
+        when.AddThemeConstantOverride("separation", 8);
+        var day = new SpinBox { MinValue = 1, MaxValue = 30, Value = Settings.ConquestDay, Prefix = "day", CustomMinimumSize = new Vector2(120, 0) };
+        day.ValueChanged += v => { Settings.ConquestDay = (int)v; Settings.Save(); };
+        when.AddChild(day);
+        var hour = new OptionButton { CustomMinimumSize = new Vector2(150, 0) };
+        foreach (var h in new[] { "Dawn 06:00", "Morning 09:00", "Noon 12:00", "Afternoon 15:00", "Evening 18:00", "Night 22:00" }) hour.AddItem(h);
+        hour.Selected = Math.Max(0, Array.FindIndex(ConquestHours, h => Math.Abs(h - Settings.ConquestHour) < 0.01));
+        hour.ItemSelected += i => { Settings.ConquestHour = ConquestHours[i]; Settings.Save(); };
+        when.AddChild(hour);
+        Row("Join the war on", when, "The war is fought from its first day without you up to then (about 8 seconds a day to run), and you join it where it has got to.");
+        var side = new OptionButton { CustomMinimumSize = new Vector2(300, 0) };
+        foreach (var s in new[] { "Wherever the biggest fight is", "ALPHA (an army like the US's)", "BRAVO (an army like Russia's)", "CHARLIE (an army like Britain's)" }) side.AddItem(s);
+        side.Selected = Math.Clamp(Settings.ConquestSide + 1, 0, 3);
+        side.ItemSelected += i => { Settings.ConquestSide = (int)i - 1; Settings.Save(); };
+        Row("Your side", side, "Picking a side puts you where that side's biggest fight is. Otherwise you're in the biggest fight going, on whichever side has a squad nearest its middle.");
+        var cap = new OptionButton { CustomMinimumSize = new Vector2(200, 0) };
+        foreach (var c in new[] { "100 (lighter)", "160", "220 (heavy)" }) cap.AddItem(c);
+        cap.Selected = Math.Max(0, Array.IndexOf(ConquestCaps, Settings.ConquestCap));
+        cap.ItemSelected += i => { Settings.ConquestCap = ConquestCaps[i]; Settings.Save(); };
+        Row("Soldiers round you", cap, "How many of the war's soldiers are there in person round you (the rest of the war goes on as numbers). More is heavier on the computer.");
+        var live = new CheckBox { Text = "The war goes on round you", ButtonPressed = Settings.ConquestLive };
+        live.Toggled += on => { Settings.ConquestLive = on; Settings.Save(); };
+        Row("", live, "Off: the war stops where it was when you joined, and only the soldiers round you fight on.");
+
+        box.AddChild(new Control { CustomMinimumSize = new Vector2(0, 8) });
+        var enlist = new Button { Text = "ENLIST", CustomMinimumSize = new Vector2(540, 46) };
+        enlist.AddThemeFontSizeOverride("font_size", 22);
+        enlist.Pressed += () => WindowMode.Launch(this, new ConquestPlan
+        {
+            Seed = Settings.ConquestSeed, Day = Settings.ConquestDay, Hour = Settings.ConquestHour, Side = Settings.ConquestSide,
+            Cap = Settings.ConquestCap, Live = Settings.ConquestLive, Join = true,
+        });
+        box.AddChild(enlist);
+        box.AddChild(Note("Making the island takes about 20 seconds, and running its war to the day picked about 8 seconds a day. The first "
+                          + "time a stretch of the island is played its ground is baked for walking and driving (a minute or two); after that it loads in seconds.", 0.45f));
+        box.AddChild(Note(Controls.Fill("In the war: {map} the map (Tab in it: the whole island; the wheel zooms). Killed: 1-9 pick who you carry on as. "
+                                        + "Walk near the edge of the ground round you and it's built again round you. {main_menu} comes back here."), 0.45f));
+        return scroll;
     }
 
     // ---------------------------------------------------------------- controls

@@ -550,7 +550,7 @@ what turns abstract units into embodied squads and back, which is what calibrati
 2. **The armies, frozen** (built): the war run headless to a chosen day, then the units nearest the window's middle embodied where they are, as squads of bots with their soldiers' names, their vehicles and their orders.
 3. **Live** (built, see below): the abstract war runs on outside in real time. Units crossing the window's edge are promoted or demoted. What happens inside (casualties, ammunition, ground taken) is written back to the war's records.
 4. **The distant layer**: low-detail land and sea to the horizon, and what the war is doing out there (flashes, fires, smoke, flares, sound).
-5. **Moving the window**: rebuilt round the player as they near its edge, behind a load at first.
+5. **Moving the window** (built, behind a load; see below): rebuilt round the player as they near its edge, behind a load at first.
 
 **The ground** (`WindowGround`, `Valley.BuildWindow`, `WindowMode`). `-- mode=window [seed=2] [town=Name | at=x,z] [size=4096]` makes the island and builds a 4 km window round a town or a point (km east and south of the island's centre). The player stands at its middle; nobody else is there yet.
 - **Heights.** The island's 100 m grid, interpolated smoothly (Catmull-Rom), on a 5 m mesh. Finer relief is added: a few metres of outcrop and gully on steep, hard ground, half a metre on the flat, none under water.
@@ -616,11 +616,37 @@ what turns abstract units into embodied squads and back, which is what calibrati
 - **The embodied fight is still far bloodier than the war's.** BRAVO lost 157 and CHARLIE 82 in those 10 minutes; CHARLIE's kills came at a median of 18 m.
   - Most units that came in (56 of 72) were halted in the war's line, where the sides sit a few hundred metres apart. In the war that's a quiet front; embodied, both sides shoot whatever they see, and one side overruns the other piece by piece.
   - With the war feeding units in, it doesn't stop. This is the calibration the window began with (the first embodied fight killed 68 of 164 in 90 seconds), and the user's playing is to say where the soldiers sell themselves short.
-- **Not done yet.**
-  - Replacements by sea: the war's replacements fill a held unit's roll, but don't walk into the window; a player whose side has nobody left in the window has no one to carry on as.
-  - What the window's soldiers see isn't reported to the war's intelligence; held units are still seen by the war's own looks.
-  - Grenades and rockets aren't written back, only rifle and machine-gun rounds.
-  - Moving the window (slice 5).
+- **What the window's soldiers see** goes to the war's intelligence each minute: every enemy seen, as his company (`War.Intel.Saw`). The war's commanders plan on it; before, only the war's own looks reached them, so a company fighting in the window could stay unknown to the battalion next door.
+- **Replacements and men back from hospital** who join a unit while it's in the window (with the night's resupply, `Medical.Rejoin`) walk up to their squad from about 120 m behind it.
+- **The sky keeps the war's hour, at the war's pace.** The window took its hour from the menu's setting (or `hour=`), so the war could be at dawn under an afternoon sky. Its clock could also run at 4× or 12× against the war's minute a minute.
+- **Not done yet.** Grenades and rockets aren't written back, only rifle and machine-gun rounds.
+
+**Moving the window** (slice 5). Within 450 m of the window's edge (on foot), the window is built again round you, behind a load.
+- Everything in it goes back to the war as it is: each man's state and ammunition, each unit's place, vehicles lost. Nothing is held any more.
+- The scene is reloaded (`Main.Launch`) on a window centred where you stand, from a `ConquestPlan` that carries the war itself across the reload. You're the same soldier, standing where you stood, facing the same way, with the same wounds.
+- The war goes on from where it was, and the units round you come in again where it has them. Your own unit comes in first, whatever the side quotas.
+- **The load.** The island and the war are already made, so it's the ground and its navmesh.
+  - A stretch of the island played before loads in a few seconds: its tiles are cached.
+  - A new stretch bakes its tiles. On island 2 that was about 5 s for people and 20 s for vehicles, the vehicles' 2 m clearance making a mesh of a quarter of a million polygons.
+  - "Getting the ground ready" is on screen until the armies come in.
+- (You used to be put back with your squad wherever it was: one who'd gone 1.7 km ahead of it came in at the new window's edge, and it moved again.)
+
+**Replacements by sea** (the soldier's life). With nobody of your side left in the window to carry on as, you come in as a replacement, as the war's replacements do (`Medical`).
+- **Who you become.** A new soldier, landed at your side's port, in the place of a soldier lost and not yet replaced. It's the rifle squad with such a place nearest where you fell (`Medical.Replacement`, the same code the troopships use).
+- **The journey.** You travel up and reach the squad with its nightly resupply (`Medical.Rejoin`). The war runs on meanwhile, a day and a half at the most; cut off, you make your own way up. The window then opens round your squad, and you're told who you are and how you got there.
+- **Measured** (island 2, day 3):
+  - "You are Ryadovoy Nikolay Korolyov, a replacement. Landed at Porto Naullacas on day 3, 06:00; with 1st Squad, 2nd Platoon, 1st Company since day 3, 22:00."
+  - The war ran the 16 hours in 9 s, the new ground baked in about 25 s, and he came in with his squad.
+
+**The Conquest tab** (`MainMenu.ConquestPage`). The menu now has two tabs: Battles (everything that was there) and Conquest. Conquest's options are its own:
+- the island (a seed: each is a different island and a different war);
+- the day and hour to join the war on;
+- your side (or wherever the biggest fight is);
+- how many soldiers are embodied round you (100, 160 or 220);
+- whether the war goes on round you.
+
+Enlist runs the war to that day and puts you in it. The choices are saved, and so is the tab last open.
+
 
 **Calibration: the same fight both ways** (in progress). `calib=1` lets the war run on, abstractly, minute by minute beside the embodied fight from the same moment. Each minute the log sets the bubble's soldiers' fates side by side: how many the war's fight has killed, downed and wounded, against the embodied fight. `telemetry=` records the embodied fight as for the battle maps (`tools/telemetry.py`); `ITelemetryMatch` lets any match be recorded.
 - **The test fight** (island 2, day 3): BRAVO's 75th Motor Rifle Regiment against CHARLIE's 42nd Armoured Infantry Brigade.
