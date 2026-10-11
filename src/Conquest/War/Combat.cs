@@ -658,8 +658,9 @@ public static class Combat
         }
         float steady = (0.5f + fi.Skill) * (1f - 0.75f * fi.Supp) * (so.State == SoldierState.Wounded ? 0.7f : 1f) * Aim(war) * Supply.Fed(war, war.Units[sq.Mover])
                        * Rest.Fresh(war.Units[sq.Mover]);
-        // An anti-tank gunner goes for a vehicle in sight.
-        int vt = so.Job == Job.AntiTank && so.Rockets > 0 && d < 500f ? VehicleTarget(war, f, t) : -1;
+        // Anyone with a rocket goes for a vehicle in sight: an anti-tank gunner within 500 m, a rifleman's disposable
+        // launcher within 300 m (an AT4's or RPG-26's reach against a vehicle).
+        int vt = so.Rockets > 0 && d < (so.Job == Job.AntiTank ? 500f : 300f) ? VehicleTarget(war, f, t) : -1;
         if (vt >= 0)
         {
             so.Rockets--;

@@ -464,7 +464,11 @@ public static class Orbat
         Job.Grenadier => (210, 24, 0),
         Job.AntiTank => (210, 2, 2),
         Job.Marksman => (140, 2, 0),
-        Job.Rifleman or Job.TeamLeader or Job.SquadLeader or Job.Medic or Job.Scout or Job.Commander or Job.Sergeant or Job.Engineer => (210, 2, 0),
+        // A rifleman carries a disposable anti-tank launcher besides his rifle: an AT4 in a US squad, an RPG-26 in a Russian
+        // one, an NLAW or LAW in a British section. (Only the anti-tank gunner had a rocket, and US rifle squads and British
+        // sections have none: they had nothing to answer an IFV with but to hide.)
+        Job.Rifleman => (210, 2, 1),
+        Job.TeamLeader or Job.SquadLeader or Job.Medic or Job.Scout or Job.Commander or Job.Sergeant or Job.Engineer => (210, 2, 0),
         _ => (120, 1, 0),
     };
 

@@ -638,6 +638,34 @@ what turns abstract units into embodied squads and back, which is what calibrati
   - "You are Ryadovoy Nikolay Korolyov, a replacement. Landed at Porto Naullacas on day 3, 06:00; with 1st Squad, 2nd Platoon, 1st Company since day 3, 22:00."
   - The war ran the 16 hours in 9 s, the new ground baked in about 25 s, and he came in with his squad.
 
+**From playing it (2026-10-11).** The user played the window and reported four things:
+- day 1 didn't load;
+- APCs and IFVs drove straight at the enemy;
+- men under their guns only went flat and stayed there, and were mown down;
+- their squad had no anti-tank weapon at all.
+
+The fixes:
+- **Day 1.** With no fight going (the war's first morning, a lull), the window opens with the player's side's infantry company nearest the enemy, and the player joins a rifle squad or section rather than a headquarters. It used to open midway between the two nearest enemy companies: on the first morning that was open country kilometres from either army, nobody came in, and there was nobody to join.
+- **Vehicles.**
+  - Each side now has a home in the window, off its edge toward the middle of its army (`Map.Bases`). The window had none, so every side's home was the window's middle, and vehicles chose firing positions on the far side of the enemy and drove through it to get there.
+  - Each vehicle's crew is paired with infantry of its own company (`PairVehicles`): its own squad first (a BMP and its squad), then its platoon's (a Bradley platoon's four and the platoon's squads), one vehicle a squad where it can be. The combined-arms logic (`MotorPoolCombat`) then carries them, puts them down short of the enemy, and supports them from behind, never out in front. Unpaired, a crew had only its unit's order (attack the enemy there) and overwatched it from wherever its gun could see it.
+- **Infantry and armour** (everywhere, the battle maps too). A man who can't hurt an armed vehicle within 700 m gets out of its sight behind something solid, up to 40 m off (14 m within 160 m). Before, only a vehicle within 250 m (160 m once out of sight) was hidden from, and only behind something within 14 m, so men went flat in the open in front of IFVs at 300–500 m and were killed where they lay. The cover search's rings went out to 16 m whatever was asked; they now go to 40 m, searched only when asked for.
+- **Disposable anti-tank launchers** (the war and the window).
+  - A rifleman carries one besides his rifle: an AT4 in a US squad, an RPG-26 in a Russian one, an NLAW or LAW in a British section. Embodied, it's the M72-style LAW all round; the real ones get through somewhat more.
+  - Before, only the anti-tank gunner had a rocket, and US rifle squads and British sections have none.
+  - In the war, anyone with a rocket goes for a vehicle in sight: a rifleman's disposable within 300 m, an anti-tank gunner's within 500 m. Tanks still single out only the anti-tank gunner as worth a shell: a rifleman's launcher can't be told from his rifle until it's fired.
+  - Embodied, a soldier carries what the war says he has left and takes back what he hasn't fired. A player who takes a rifleman's place carries his launcher.
+  - **The war changes.** On island 2 by day 3, ALPHA lost 2,071 dead against 1,594, and vehicles lost to rockets went from 39 to 70. The war's course diverged, with more brigade attacks (264 fights against 104) and fewer skirmishes along fronts (4 against 213). One run of a chaotic war; the rates are to be watched.
+- **Measured.** Fight 1 of island 2's war (Rocca Vemara, day 1 from 11:30: an ALPHA company against BRAVO with BTRs), 10 minutes watched, one run each:
+
+| | ALPHA killed | BRAVO killed | Killed by the BTRs' 12.7 mm |
+|---|---|---|---|
+| Before | 89 | 16 | 78 |
+| After | 16 | 15 | 14 |
+
+  - The BTRs kept a median 420–480 m from the nearest enemy infantry in both runs.
+  - On a 33-a-side Valley battle: 22 kills in 161 s, as before.
+
 **The Conquest tab** (`MainMenu.ConquestPage`). The menu now has two tabs: Battles (everything that was there) and Conquest. Conquest's options are its own:
 - the island (a seed: each is a different island and a different war);
 - the day and hour to join the war on;

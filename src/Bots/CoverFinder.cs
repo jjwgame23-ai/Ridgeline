@@ -20,7 +20,9 @@ public static class CoverFinder
 {
     const uint World = Layers.Solid; // characters don't count as cover; trees do
     static readonly SphereShape3D Probe = new() { Radius = 0.32f };
-    static readonly float[] Radii = { 0f, 1.5f, 3f, 5f, 7.5f, 10f, 13f, 16f };
+    // Out to 40 m for a man getting out of an armoured vehicle's sight (BotBrain.TryAntiArmor); the rest ask for 16 m or
+    // less, and the outer rings are only searched when asked for. (The rings stopped at 16 m whatever was asked.)
+    static readonly float[] Radii = { 0f, 1.5f, 3f, 5f, 7.5f, 10f, 13f, 16f, 20f, 25f, 32f, 40f };
 
     /// <summary>Anything at all between a and b: for seeing, and for a clear line to shoot along.</summary>
     static bool Blocked(PhysicsDirectSpaceState3D s, Vector3 a, Vector3 b) =>

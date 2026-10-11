@@ -51,6 +51,36 @@ public partial class ConquestWindow
         Reorder();
         Demote();
         Promote();
+        PairVehicles();
+    }
+
+    /// <summary>
+    /// Each vehicle works with infantry, as doctrine has armour and mechanised infantry fight together: a crew with
+    /// nobody to support is paired with a rifle squad of its own company, its own squad's first (a BMP and its squad),
+    /// then its platoon's (a Bradley platoon's four and the platoon's squads), one vehicle a squad where it can be. The
+    /// motor pool then carries them, puts them down short of the enemy and supports them from behind, never out in front
+    /// (MotorPoolCombat). (Unpaired, a crew had only its unit's order, to attack the enemy there, and overwatched it from
+    /// wherever its gun could see it: in front of its own infantry, or through the enemy and out the other side.)
+    /// </summary>
+    void PairVehicles()
+    {
+        var rifles = Squads.SelectMany(l => l).Where(s => s.Kind == SquadKind.Rifle && s.Alive > 0 && !_vehicleOf.ContainsKey(s) && UnitOf.ContainsKey(s)).ToList();
+        var load = new Dictionary<Squad, int>();
+        foreach (var crew in _vehicleOf.Keys)
+            if (crew.Supports is { } sp) load[sp] = load.GetValueOrDefault(sp) + 1;
+        foreach (var crew in _vehicleOf.Keys)
+        {
+            if (crew.Alive == 0 || crew.Supports is { Alive: > 0 } || !UnitOf.TryGetValue(crew, out var cu)) continue;
+            var at = crew.Position ?? Vector3.Zero;
+            var pick = rifles.Where(s => s.Team == crew.Team && UnitOf[s].Mover == cu.Mover)
+                .OrderBy(s => UnitOf[s].Id == cu.Id ? 0 : UnitOf[s].Parent == cu.Id || UnitOf[s].Parent == cu.Parent ? 1 : 2)
+                .ThenBy(s => load.GetValueOrDefault(s))
+                .ThenBy(s => s.Position is Vector3 p ? p.DistanceSquaredTo(at) : float.MaxValue)
+                .FirstOrDefault();
+            if (pick == null) continue;
+            crew.Supports = pick;
+            load[pick] = load.GetValueOrDefault(pick) + 1;
+        }
     }
 
     /// <summary>A company comes into the window: the war stops marching and fighting it, and the window has it.</summary>
@@ -245,6 +275,7 @@ public partial class ConquestWindow
             _ => (0, 0),
         };
         if (kit > 0) so.Ammo = (short)(Orbat.Load(so.Job).Ammo * Math.Clamp(rounds / (float)kit, 0f, 1f));
+        if (c is Bot rb && (rb.Disposable || rb.RocketDef is { } rdef && rdef != WeaponDef.Manpad)) so.Rockets = (byte)Math.Clamp(rb.Rockets, 0, 255);
     }
 
     /// <summary>A unit (its squads in the window) back to the war, with each man's state and the unit's place.</summary>

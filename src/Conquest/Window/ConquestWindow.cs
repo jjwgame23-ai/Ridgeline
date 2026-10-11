@@ -165,6 +165,17 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         Motor = new MotorPool(this);
         Spec = new Spectator { Mode = this };
         AddChild(Spec);
+        // Each side's home, for whatever asks which way that is (where a vehicle's firing position should be, which side
+        // of a truck a FOB goes): well outside the window, toward the middle of its army. (The window had none, so every
+        // side's home was the window's middle, and vehicles chose firing positions on the far side of the enemy and drove
+        // through it to get there.)
+        for (int t = 0; t < 3; t++)
+        {
+            var mine = War.MoverIds.Select(id => War.Units[id]).Where(u => u.Side == t && u.People > 0).ToList();
+            if (mine.Count == 0) continue;
+            var dir = new Vector3(mine.Average(u => u.X) - CX, 0f, mine.Average(u => u.Z) - CZ);
+            Map.Bases[t] = (dir.LengthSquared() > 1f ? dir.Normalized() : Vector3.Forward) * (Map.Half + 3000f);
+        }
         // A town district is hostile with an enemy in it.
         Squad.Hostile = (site, team) => Combatants.All.Any(c => c.Alive && c.Team != team && (c.FeetPos - site.Center with { Y = c.FeetPos.Y }).Length() < site.Radius + 30f);
         Combatants.Killed += OnKilled;
@@ -302,6 +313,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         }
         Fires = new WindowFires(War, this);
         Squad.OwnFiresUntil = Fires.Until;
+        PairVehicles();
         // Live (slice 3): the window has these companies from now on, and the war's fire on them comes in here.
         if (Live)
         {
@@ -580,6 +592,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         // all afternoon comes in short.
         int load = Orbat.Load(so.Job).Ammo;
         if (load > 0 && so.Ammo < load && b.Def.Mags > 0) b.Mags.Hold((int)(b.Def.MagSize * b.Def.Mags * Math.Max(0f, so.Ammo / (float)load)));
+        // His rockets: an anti-tank gunner's that are left, a rifleman's disposable launcher if he still has it.
+        if (b.RocketDef is { } rd0 && rd0 != WeaponDef.Manpad) b.Rockets = Math.Min(b.Rockets, (int)so.Rockets);
+        else if (b.RocketDef == null && so.Rockets > 0) { b.Disposable = true; b.Rockets = so.Rockets; }
         if (sq.Objective is { } o) b.Aim.Yaw = Mathf.RadToDeg(MathF.Atan2(-(o.Center.X - near.X), -(o.Center.Z - near.Z)));
         sq.Join(b);
         Bots.Add(b);
@@ -755,8 +770,9 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         }
         int side = Plan.Side;
         // On the side picked, if one was (the window goes where that side is fighting); else ALPHA's first.
+        // A rifle squad or section, not a headquarters (which the window counts as rifle squads too: they fight on foot).
         var sq = Squads[0].Concat(Squads[1]).Concat(Squads[2]).Where(s => s.Kind == SquadKind.Rifle && s.Members.Count > 1 && (side < 0 || s.Team == side))
-            .OrderBy(s => s.Team == 0 ? 0 : 1).ThenBy(s => s.Position?.LengthSquared() ?? float.MaxValue).FirstOrDefault();
+            .OrderBy(s => UnitOf.TryGetValue(s, out var su) && su.Echelon == Echelon.Squad ? 0 : 1).ThenBy(s => s.Team == 0 ? 0 : 1).ThenBy(s => s.Position?.LengthSquared() ?? float.MaxValue).FirstOrDefault();
         if (sq == null)
         {
             Spec.Activate(Bots.FirstOrDefault());
@@ -776,12 +792,15 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     void Become(Bot b)
     {
         var sq = b.Squad!;
-        var p = new Player { TeamId = b.Team, Kit = b.Role == Role.Leader ? Role.Rifleman : b.Role };
+        // A rifleman with a disposable launcher has a launcher's kit: the rifle and the one rocket.
+        var kit = b.Role == Role.Leader ? Role.Rifleman : b.Disposable && b.Rockets > 0 ? Role.AntiTank : b.Role;
+        var p = new Player { TeamId = b.Team, Kit = kit };
         GetParent().AddChild(p);
         p.GlobalPosition = b.GlobalPosition;
         p.SetYaw(b.Aim.Yaw);
         p.Body.TakeOver(b.Body);
         p.Weapon.Carry(b.Def, b.Ammo, b.Mags);
+        if (b.RocketDef is { } rd && rd.Mags > 0) p.Weapon.Carry(rd, Math.Min(1, b.Rockets), new Magazines(rd.MagSize, Math.Max(0, b.Rockets - 1)));
         sq.Members.Remove(b);
         Bots.Remove(b);
         if (SoldierOf.Remove(b, out int soldier))

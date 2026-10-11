@@ -209,13 +209,17 @@ public static partial class WindowMode
                 GD.Print($"[window] at the front, ({fight.X / 1000f:0.0}, {fight.Z / 1000f:0.0}) km, fight {fight.Id} of {fight.Movers.Count} companies");
                 return (fight.X, fight.Z, null);
             }
+            // No fight (the war's first morning, a lull): with the infantry company of the player's side nearest the enemy,
+            // where he'll be. (It went midway between the two nearest enemy companies: on the first morning that was open
+            // country kilometres from either army, nobody came into the window, and there was nobody to join.)
             var front = war.MoverIds.Select(id => war.Units[id]).Where(u => u.People > 0 && Command.Manoeuvre(u)).ToList();
-            var pair = front.SelectMany(p => front.Where(q => q.Side != p.Side && (side < 0 || p.Side == side)).Select(q => (p, q, d: (p.X - q.X) * (p.X - q.X) + (p.Z - q.Z) * (p.Z - q.Z))))
+            var pair = front.Where(p => (side < 0 || p.Side == side) && p.Arm is Arm.Infantry or Arm.Mechanised or Arm.Motorised)
+                .SelectMany(p => front.Where(q => q.Side != p.Side).Select(q => (p, q, d: (p.X - q.X) * (p.X - q.X) + (p.Z - q.Z) * (p.Z - q.Z))))
                 .OrderBy(x => x.d).FirstOrDefault();
             if (pair.p != null)
             {
-                GD.Print($"[window] at the front, between the nearest enemies");
-                return ((pair.p.X + pair.q.X) / 2f, (pair.p.Z + pair.q.Z) / 2f, null);
+                GD.Print($"[window] with {war.Sides[pair.p.Side].Name} {pair.p.Name}, its side's infantry nearest the enemy ({MathF.Sqrt(pair.d) / 1000f:0.0} km off)");
+                return (pair.p.X, pair.p.Z, null);
             }
         }
         var town = plan.Town != "" ? isl.Towns.FirstOrDefault(t => t.Name.Equals(plan.Town, StringComparison.OrdinalIgnoreCase)) : null;

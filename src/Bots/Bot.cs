@@ -40,7 +40,10 @@ public partial class Bot : CharacterBody3D, ICombatant
     public int SmokeGrenades = 1;
     public Role Role = Role.Rifleman;
     public int LauncherRounds, Medkits, Sandbags, Rockets;
-    public WeaponDef? RocketDef => Role == Role.AntiTank ? WeaponDef.Lat : Role == Role.HeavyAT ? WeaponDef.Hat : Role == Role.AntiAir ? WeaponDef.Manpad : null;
+    public WeaponDef? RocketDef => Role == Role.AntiTank ? WeaponDef.Lat : Role == Role.HeavyAT ? WeaponDef.Hat : Role == Role.AntiAir ? WeaponDef.Manpad
+        : Disposable && Rockets > 0 ? WeaponDef.Lat : null;
+    /// <summary>A rifleman's disposable anti-tank launcher (AT4, RPG-26, NLAW: Conquest), fired once and thrown away.</summary>
+    public bool Disposable;
     public float LeanTarget;   // -1 left .. 1 right, set by the brain when peeking a corner
     /// <summary>Posted at a window or on a roof: which way to watch (set when the post is picked).</summary>
     public Vector3? LookOut;
@@ -896,7 +899,7 @@ public partial class Bot : CharacterBody3D, ICombatant
             return true;
         }
         bool need = Mags.Rounds < Def.MagSize * Def.Mags || Grenades < Roles.Frags(Role) || (Role == Role.Grenadier && LauncherRounds < 8)
-                    || (Rockets < (RocketDef?.Mags ?? -1) + 1) || (Role == Role.Medic && Medkits < 10) || (Role == Role.Engineer && Sandbags < 3);
+                    || (!Disposable && Rockets < (RocketDef?.Mags ?? -1) + 1) || (Role == Role.Medic && Medkits < 10) || (Role == Role.Engineer && Sandbags < 3);
         if (!need || !Alive) return false;
         Mags.Refill(Def.Mags);
         Stock();

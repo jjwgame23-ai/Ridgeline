@@ -969,12 +969,16 @@ public sealed class BotBrain
             }
             return true;
         }
-        // No way to hurt it: stay out of its sight.
-        if (bestD < 250f) _armorWaryUntil = Now + 1.0;
-        if (bestD < 250f && Now > _armorCoverAt && State is not (BotState.TakeCover or BotState.InCover or BotState.Aid))
+        // No way to hurt it: stay out of its sight, behind something solid, as for one remembered (RememberedArmor): an
+        // armed vehicle within 700 m, cover up to 40 m off. (Only one within 250 m was hidden from, and only behind
+        // something within 14 m: under an IFV's cannon at 300-500 m men went flat in the open and were killed there.)
+        bool armed = v.Def.Turrets.Count > 0;
+        float wary = armed ? 700f : 250f;
+        if (bestD < wary) _armorWaryUntil = Now + 1.0;
+        if (bestD < wary && Now > _armorCoverAt && State is not (BotState.TakeCover or BotState.InCover or BotState.Aid))
         {
             _armorCoverAt = Now + 6.0;
-            var spot = CoverFinder.Find(_b, v.TopPoint, 14f, _rng);
+            var spot = CoverFinder.Find(_b, v.TopPoint, bestD < 160f ? 14f : 40f, _rng);
             if (spot is CoverSpot s)
             {
                 SetState(BotState.TakeCover, $"armour! {v.Def.ClassName}");
@@ -1123,12 +1127,13 @@ public sealed class BotBrain
             float d = ev.LastKnownPos.DistanceTo(_b.EyePos);
             if (d < memD) { memD = d; mem = ev; }
         }
-        if (mem == null || memD > 350f) return false;
+        if (mem == null || memD > 700f) return false;
         var v = mem.Who;
         var rd = _b.RocketDef;
         bool canHurt = rd != null && rd != WeaponDef.Manpad && _b.Rockets > 0 && rd.Pen * 1.1f > v.ArmorToward(_b.EyePos) * 0.8f;
         if (canHurt)
         {
+            if (memD > 350f) return false;
             if (Now > _armorHuntAt && State is not (BotState.Flank or BotState.TakeCover or BotState.Aid or BotState.Evade))
             {
                 _armorHuntAt = Now + 10.0;
@@ -1143,12 +1148,17 @@ public sealed class BotBrain
             }
             return false;
         }
-        if (memD > 160f) return false;
+        // Everyone else gets out of its sight: behind something solid, from where it was. Its cannon and machine gun
+        // reach far past 500 m through a thermal sight, and a man lying flat in the open is still in it, so it's cover or
+        // dead ground, up to 40 m off for one further away (a run under a vehicle's guns is short). (Only one within 160 m
+        // was hidden from, and only behind something within 14 m: men went flat in the open in front of IFVs at 300 m
+        // and were killed where they lay.)
+        if (memD > 700f || v.Def.Turrets.Count == 0) return false;
         _armorWaryUntil = Now + 1.0;
         if (Now > _armorCoverAt && State is not (BotState.TakeCover or BotState.InCover or BotState.Aid or BotState.Evade))
         {
             _armorCoverAt = Now + 6.0;
-            if (CoverFinder.Find(_b, mem.LastKnownPos + Vector3.Up * 2.5f, 14f, _rng) is CoverSpot s)
+            if (CoverFinder.Find(_b, mem.LastKnownPos + Vector3.Up * 2.5f, memD < 160f ? 14f : 40f, _rng) is CoverSpot s)
             {
                 SetState(BotState.TakeCover, $"{v.Def.ClassName} nearby");
                 Cover = s;
