@@ -186,8 +186,6 @@ public sealed class War
         }
         foreach (var u in Units)
             if (u.IsMover) MoverIds.Add(u.Id);
-        var seats = new int[Units.Count];
-        var tracks = new bool[Units.Count];
         foreach (var u in Units)
         {
             if (u.Mover < 0) continue;
@@ -199,21 +197,13 @@ public sealed class War
             }
             m.People += u.Members.Count;
             m.Carries.Add(u.Id);
-            foreach (int vi in u.Vehicles)
-            {
-                var v = Vehicles[vi];
-                if (v.Class is VClass.Helicopter or VClass.Gunship) continue;
-                seats[m.Id] += MoveGrid.Seats(v.Class) + Crew(v.Class);
-                tracks[m.Id] |= MoveGrid.TrackedClass(v.Class);
-                m.Armed |= v.Class is VClass.Ifv or VClass.Tank or VClass.LightTank or VClass.Apc or VClass.Ltv;
-            }
         }
         foreach (var u in Units)
             u.Raised = u.People;
         foreach (var u in Units)
             u.Establishment = u.Members.Count;
         foreach (var u in Units)
-            if (u.IsMover) u.Mob = seats[u.Id] >= u.People * 0.75f && seats[u.Id] > 0 ? (tracks[u.Id] ? Mobility.Tracked : Mobility.Wheeled) : Mobility.Foot;
+            if (u.IsMover) Remount(u);
         Ctl = new Territory(Isl);
         Move = new MoveGrid(Isl);
         Command.Objectives(this);
@@ -229,7 +219,7 @@ public sealed class War
     /// <summary>Fit soldiers a mover carries.</summary>
     public int Fit(Unit u) => u.People;
 
-    /// <summary>Count a mover's fit soldiers again (the lightly wounded among them).</summary>
+    /// <summary>Count a mover's fit soldiers again (the lightly wounded among them), and what it can ride in for that.</summary>
     public void Recount(Unit m)
     {
         int n = 0;
@@ -237,6 +227,39 @@ public sealed class War
             foreach (int s in Units[c].Members)
                 if (Soldiers[s].State is SoldierState.Fit or SoldierState.Wounded) n++;
         m.People = n;
+        Remount(m);
+    }
+
+    /// <summary>
+    /// A mover's mobility and whether it fights from vehicles, from the vehicles it still has: it rides if they seat three
+    /// in four of its people (on tracks if any of them is tracked), and it's armed with an IFV, tank, APC or armed light
+    /// vehicle. Worked out again whenever it loses a vehicle or its strength is counted again. (Both were set once, when
+    /// the armies were raised: a company that lost its carriers went on at tracked or wheeled speed with no fuel, and
+    /// kept an armed unit's 2.5 km reach for contact.)
+    /// </summary>
+    public void Remount(Unit m)
+    {
+        int seats = 0;
+        bool tracks = false, armed = false;
+        foreach (int ci in m.Carries)
+            foreach (int vi in Units[ci].Vehicles)
+            {
+                var v = Vehicles[vi];
+                if (v.Lost || v.Class is VClass.Helicopter or VClass.Gunship) continue;
+                seats += MoveGrid.Seats(v.Class) + Crew(v.Class);
+                tracks |= MoveGrid.TrackedClass(v.Class);
+                armed |= v.Class is VClass.Ifv or VClass.Tank or VClass.LightTank or VClass.Apc or VClass.Ltv;
+            }
+        m.Mob = seats >= m.People * 0.75f && seats > 0 ? (tracks ? Mobility.Tracked : Mobility.Wheeled) : Mobility.Foot;
+        m.Armed = armed;
+    }
+
+    /// <summary>A vehicle is lost: its mover's mobility follows.</summary>
+    public void VehicleLost(int vi)
+    {
+        System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Vehicles)[vi].Lost = true;
+        var u = Units[Vehicles[vi].Unit];
+        if (u.Mover >= 0) Remount(Units[u.Mover]);
     }
 
     /// <summary>Set a mover off toward a point: false if there's no way there for it.</summary>

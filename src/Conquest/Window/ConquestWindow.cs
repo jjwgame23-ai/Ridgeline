@@ -142,6 +142,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
     readonly int[] _killed = new int[3];
     bool _embodied;
     static bool _edgeTested;
+    /// <summary>windowsecs=N (tests): quit N s after the armies come in, however long the ground took.</summary>
+    double _quitAt = -1;
     /// <summary>The armies have come in (the navmesh is up).</summary>
     public bool Embodied => _embodied;
     double _nextLog, _startedAt, _warMinute;
@@ -210,6 +212,7 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         Fires?.Tick();
         if (_diedAt > 0) WhileDead();
         if (Live) LiveTick();
+        if (_quitAt > 0 && Clock.Now >= _quitAt) GetTree().Quit();
         if (Live && PlayerJoins) NearTheEdge();
         Telemetry.Tick(this);
         if (Calibrate) Abstract();
@@ -306,6 +309,8 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
         }
         if (PlayerJoins) JoinPlayer();
         else Spec.Activate(Bots.FirstOrDefault());
+        foreach (var a in OS.GetCmdlineUserArgs())
+            if (a.StartsWith("windowsecs=") && double.TryParse(a[11..], out double qs)) _quitAt = Clock.Now + qs;
         // edgetest (a test of moving the window): the player put 400 m short of its east edge, once.
         if (!_edgeTested && PlayerBody != null && OS.GetCmdlineUserArgs().Contains("edgetest"))
         {
@@ -541,7 +546,15 @@ public partial class ConquestWindow : Node, IMatch, IMotorHost, ITelemetryMatch
             int need = MotorPool.Crew(kind!.Value);
             var crew = crewJobs.Take(need).ToList();
             crewJobs.RemoveRange(0, crew.Count);
-            if (crew.Count < need) { crew.AddRange(rest.Take(need - crew.Count)); rest = rest.Skip(need - crew.Count).ToList(); }
+            // Short of crewmen: the rest of the crew from the infantry, taken off it. (The count was taken after they'd
+            // been added, so none were taken off: the same man crewed several vehicles and fought on foot as well, one
+            // lieutenant colonel nine times over in a day-3 window.)
+            if (crew.Count < need)
+            {
+                int borrow = need - crew.Count;
+                crew.AddRange(rest.Take(borrow));
+                rest = rest.Skip(borrow).ToList();
+            }
             if (crew.Count == 0) continue;
             var sq = NewSquad(side, MotorPool.CrewKind(kind.Value), u);
             _vehicleOf[sq] = v;

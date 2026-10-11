@@ -64,6 +64,8 @@ public sealed class Fight
     public readonly HashSet<int> Movers = new();
     /// <summary>For each mover, what it came in with (fit soldiers), so its losses are known.</summary>
     public readonly Dictionary<int, int> Strength = new();
+    /// <summary>For each mover, the armed vehicles it came in with (counted with its men when it judges its losses: Decide).</summary>
+    public readonly Dictionary<int, int> Armour = new();
     public float[,] Sight = new float[0, 0];
     public readonly int[] Shots = new int[3], Killed = new int[3], Down = new int[3], Hurt = new int[3], Lost = new int[3];
     /// <summary>How it started: 0 a planned offensive, 1 a brigade's own attack, 2 units meeting on the march, 3 units holding still along a front.</summary>
@@ -332,7 +334,7 @@ public static class Combat
         f.In[m.Side] = true;
         var rng = war.Rng;
         bool dug = m.Path == null && war.Time - m.HaltedAt > 7200;
-        int fit = 0;
+        int fit = 0, armed = 0;
         float fx = ex - m.X, fz = ez - m.Z, fl = MathF.Max(1f, MathF.Sqrt(fx * fx + fz * fz));
         fx /= fl;
         fz /= fl;
@@ -377,10 +379,12 @@ public static class Combat
                 {
                     sq.Vehicles.Add(f.V.Count);
                     f.V.Add(new FightVehicle { Vehicle = vi, Squad = si, Side = (byte)m.Side, Ready = (float)rng.NextDouble() * 8f });
+                    if (Armed(war.Vehicles[vi].Class)) armed++;
                 }
             if (sq.Fighters.Count > 0 || sq.Vehicles.Count > 0) f.S.Add(sq);
         }
         f.Strength[m.Id] = fit;
+        f.Armour[m.Id] = armed;
         f.NextSight = war.Time; // new squads: work out what they can see
     }
 
@@ -879,8 +883,7 @@ public static class Combat
     {
         if (fv.Dead || rng.NextDouble() >= kill) return;
         fv.Dead = true;
-        var span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(war.Vehicles);
-        span[fv.Vehicle].Lost = true;
+        war.VehicleLost(fv.Vehicle);
         f.Lost[fv.Side]++;
         war.Wrecked[fv.Side, (int)cause]++;
         f.WreckedBy[(int)cause]++;
@@ -1077,7 +1080,10 @@ public static class Combat
             ex /= seen.Count;
             ez /= seen.Count;
             Artillery.Call(war, f, m, mine, seen);
-            int came = f.Strength.GetValueOrDefault(mid, own);
+            // What it came in with, counted as its strength now is: its men, and four for each armed vehicle. (Only its men
+            // were counted coming in, against men and vehicles now, so while its vehicles ran a company could never have
+            // lost half: one with 75 armed vehicles couldn't break until nearly every vehicle was gone.)
+            int came = f.Strength.TryGetValue(mid, out int men) ? men + 4 * f.Armour.GetValueOrDefault(mid) : own;
             // Pull back when outnumbered two to one, or after losing three in ten.
             // Troops dug in hold against six to one, what a prepared position is worth by the three to one an attack
             // needs. (Every company pulled back at two to one, so a dug-in company left its trenches at its first sight

@@ -240,7 +240,7 @@ public partial class ConquestWindow
             }
     }
 
-    void LoseVehicle(int v) => System.Runtime.InteropServices.CollectionsMarshal.AsSpan(War.Vehicles)[v].Lost = true;
+    void LoseVehicle(int v) => War.VehicleLost(v);
 
     /// <summary>A squad all of whose men are dead: out of the window's books (the bodies stay).</summary>
     void Forget(Squad sq)

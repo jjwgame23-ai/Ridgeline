@@ -539,6 +539,13 @@ Not done yet:
 - **Artillery without drones or air observation.** Fire on what's been seen uses the side's ground sightings within 3 km. Drones, which find most targets for artillery in Ukraine, would add their own. There's no smoke or illumination, and no fire planned ahead of an attack.
 - **Calibration against the battle maps (phase 3).** The battle maps' own hit rates are still high (see "Not done" under the quality pass), so real casualty rates stay the yardstick for the war as a whole.
 
+**Correctness fixes from the review** (REVIEW.md, 2026-10-11; each checked against the code first).
+- **Soldiers cloned coming into the window** (§2.4). A vehicle short of crewmen borrowed men from the infantry, but the count of how many to take off was made after they'd been added, so none were. The same man crewed several vehicles and fought on foot as well: one lieutenant colonel nine times over in a day-3 window, 20 of 193 bodies. The rulebook's R13 (one body per soldier) now passes: 163 came in against a cap of 160.
+- **Armour at three-quarters** (B1). Rounded to the nearest per template line, a line of one vehicle always came to one: BRAVO's BMP for every squad, every tank crew's tank, and every army's gunships came at full establishment. It's now rounded at random, up with the chance of the fraction. On island 2 BRAVO raises 438 tanks, not 600.
+- **Fighting on to half** (B2). A company's strength coming into a fight was counted in men only, but judged against men and four for each armed vehicle still running, so while its vehicles ran a tank or mechanised company could never have lost half. The armed vehicles it came in with are now counted too (`Fight.Armour`).
+- **Mobility worked out again** (B3). A company's mobility and whether it's armed were set once, when the armies were raised. One that lost its carriers marched on at vehicle speed with no fuel, and kept an armed unit's 2.5 km reach for contact. `War.Remount` works both out from the vehicles it still has, whenever it loses one (`War.VehicleLost`) or its strength is counted again.
+- **The war over 7 days on island 2** after these: ALPHA 2.9% of the army a day, BRAVO 1.6%, CHARLIE 1.3%. The review measured 3.5%, 1.8% and 2.0% before.
+
 ### The playable window (phase 4, in progress)
 
 The player is one soldier in the abstract war. Round them, a window a few kilometres across is built from the island and

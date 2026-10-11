@@ -437,8 +437,12 @@ public static class Orbat
             u.Commander = u.Members.OrderByDescending(m => war.Soldiers[m].Rank).First();
         foreach (var (v, n, tier) in t.Vehicles)
         {
-            // Armour starts at three-quarters of its establishment; the rest comes with money.
-            int have = v is VClass.Tank or VClass.Ifv or VClass.Gunship ? (int)Math.Round(n * 0.75 + rng.NextDouble() * 0.5 - 0.25) : n;
+            // Armour starts at three-quarters of its establishment; the rest comes with money. Rounded at random, up with
+            // the chance of the fraction, so a line of one vehicle is there three times in four and a line of four has
+            // three. (It was rounded to the nearest with a little noise, and a line of one always came to one: BRAVO's
+            // BMP for every squad and every tank crew's tank, and every gunship, came at full establishment, 600 tanks
+            // against the 450 the rule meant.)
+            int have = v is VClass.Tank or VClass.Ifv or VClass.Gunship ? (int)Math.Floor(n * 0.75 + rng.NextDouble()) : n;
             for (int k = 0; k < have; k++) u.Vehicles.Add(war.AddVehicle(new WarVehicle { Unit = u.Id, Class = v, Side = (byte)side, Tier = tier, Ammo = VehicleLoad(v), Mg = MgLoad(v) }));
         }
         var counts = new Dictionary<string, int>();
